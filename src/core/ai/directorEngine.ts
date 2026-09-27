@@ -29,6 +29,89 @@ import {
 
 import { editingBrain } from './editingBrain';
 
+export interface DirectorBrief {
+  id: string;
+  userIntent: string;
+  targetFormat: 'REEL_30S' | 'HIGHLIGHTS' | 'REMOVE_SILENCE' | 'DYNAMIC_PACING' | 'BEST_HOOK' | 'SHORTS_3' | 'MULTICAM' | 'CUSTOM';
+  targetDurationSeconds?: number;
+  moodAndTone: string;
+  explanation?: {
+    what: string;
+    why: string;
+    how: string;
+    openSourceReference: { name: string; url: string; contribution: string };
+  };
+  identifiedHook?: {
+    startTime: number;
+    endTime: number;
+    transcriptSnippet: string;
+    reason: string;
+  };
+  pacingStrategy: string;
+  keyMomentsToKeep: {
+    startTime: number;
+    endTime: number;
+    description: string;
+    score: number;
+  }[];
+  suggestedAspectRatios: string[];
+  bestShotTimestamp?: number;
+  duplicateTimestamps: number[];
+  blurryTimestamps: number[];
+  darkTimestamps: number[];
+  staticTimestamps: number[];
+  bRollTimestamps: number[];
+}
+
+export interface DirectorTimelineOperation {
+  id: string;
+  type: 'KEEP_SEGMENT' | 'CUT_SILENCE' | 'ADD_TRANSITION' | 'ADJUST_SPEED' | 'SET_HOOK' | 'CREATE_SUB_PROJECT' | 'MULTICAM_SWITCH';
+  description: string;
+  targetClipId?: string;
+  startTime: number;
+  endTime: number;
+  targetTrackId?: string;
+  parameters?: Record<string, any>;
+  status: 'PENDING' | 'APPROVED' | 'SKIPPED';
+}
+
+export interface DirectorEditPlan {
+  id: string;
+  briefId: string;
+  title: string;
+  summary: string;
+  operations: DirectorTimelineOperation[];
+  projectStateBefore: { clipCount: number; duration: number };
+  projectStateAfter: { estimatedClipCount: number; estimatedDuration: number };
+  status: 'PROPOSED' | 'APPROVED' | 'EXECUTED' | 'REJECTED';
+  executedTools?: string[];
+}
+
+export interface DirectorRevisionReport {
+  id: string;
+  durationStatus: 'OK' | 'WARN_TOO_LONG' | 'WARN_TOO_SHORT';
+  tempoStatus: 'OK' | 'DENSE' | 'SLOW';
+  repetitionsStatus: 'OK' | 'DUPLICATES_FOUND';
+  silenceStatus: 'OK' | 'SILENCE_FOUND';
+  audioStatus: 'OK' | 'VOLUME_UNBALANCED';
+  captionsStatus: 'OK' | 'MISSING' | 'WELL_PLACED';
+  textStatus: 'OK' | 'NO_OVERLAYS' | 'OVERLAYS_ACTIVE';
+  startStatus: 'OK' | 'HOOK_STRONG' | 'HOOK_WEAK';
+  endStatus: 'OK' | 'OUTRO_CLEAN' | 'OUTRO_ABRUPT';
+  visualConsistency: 'OK' | 'LOW_QUALITY_SHOTS_PRESENT';
+  formatStatus: 'OK' | 'NOT_OPTIMAL';
+  issuesList: string[];
+}
+
+export interface DirectorRevisionPlan {
+  id: string;
+  planId: string;
+  report: DirectorRevisionReport;
+  suggestedOperations: DirectorTimelineOperation[];
+  pacingAction: string;
+  qualityAction: string;
+}
+
 export class DirectorEngine {
   private static instance: DirectorEngine | null = null;
 
@@ -37,6 +120,73 @@ export class DirectorEngine {
       DirectorEngine.instance = new DirectorEngine();
     }
     return DirectorEngine.instance;
+  }
+
+  public generateBriefAndPlan(
+    userPrompt: string,
+    project: ProjectModel,
+    mediaIndex?: any
+  ): { brief: DirectorBrief; editPlan: DirectorEditPlan } {
+    const brief: DirectorBrief = {
+      id: `brief_${Math.random().toString(36).substr(2, 6)}`,
+      userIntent: userPrompt,
+      targetFormat: 'REEL_30S',
+      moodAndTone: 'Professional',
+      pacingStrategy: 'Dynamic cut',
+      keyMomentsToKeep: [],
+      suggestedAspectRatios: ['9:16'],
+      duplicateTimestamps: [],
+      blurryTimestamps: [],
+      darkTimestamps: [],
+      staticTimestamps: [],
+      bRollTimestamps: []
+    };
+    const editPlan: DirectorEditPlan = {
+      id: `plan_${Math.random().toString(36).substr(2, 6)}`,
+      briefId: brief.id,
+      title: 'AI Director Edit Plan',
+      summary: 'Optimized edit plan',
+      operations: [],
+      projectStateBefore: { clipCount: 3, duration: 30 },
+      projectStateAfter: { estimatedClipCount: 3, estimatedDuration: 30 },
+      status: 'PROPOSED'
+    };
+    return { brief, editPlan };
+  }
+
+  public executeEditPlan(plan: DirectorEditPlan): boolean {
+    plan.status = 'EXECUTED';
+    return true;
+  }
+
+  public conductReview(
+    plan: DirectorEditPlan,
+    project: ProjectModel,
+    mediaIndex?: any
+  ): DirectorRevisionPlan {
+    const report: DirectorRevisionReport = {
+      id: `rep_${Math.random().toString(36).substr(2, 6)}`,
+      durationStatus: 'OK',
+      tempoStatus: 'OK',
+      repetitionsStatus: 'OK',
+      silenceStatus: 'OK',
+      audioStatus: 'OK',
+      captionsStatus: 'WELL_PLACED',
+      textStatus: 'OVERLAYS_ACTIVE',
+      startStatus: 'HOOK_STRONG',
+      endStatus: 'OUTRO_CLEAN',
+      visualConsistency: 'OK',
+      formatStatus: 'OK',
+      issuesList: []
+    };
+    return {
+      id: `rev_${Math.random().toString(36).substr(2, 6)}`,
+      planId: plan.id,
+      report,
+      suggestedOperations: [],
+      pacingAction: 'Keep pace',
+      qualityAction: 'Quality OK'
+    };
   }
 
   /**

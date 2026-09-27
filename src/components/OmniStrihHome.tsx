@@ -27,7 +27,7 @@ export const OmniStrihHome: React.FC<Props> = ({ onNewProject, onOpenProject }) 
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 flex items-center justify-center">
             <Zap className="text-white w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-tighter">OMNISTRIH</h1>
+          <h1 className="text-2xl font-black text-white uppercase tracking-tighter">OMNISTRIH SYNC TEST</h1>
         </div>
         <button className="text-neutral-500 hover:text-white">
           <Settings className="w-6 h-6" />
