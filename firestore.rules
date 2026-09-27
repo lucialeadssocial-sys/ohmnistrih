@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if the user is authenticated and accessing their own document
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profile documents - strict user-scoped ownership
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // User projects subcollection - strict user-scoped ownership
+      match /projects/{projectId} {
+        allow read, write: if isOwner(userId);
+
+        // Project settings and lightweight metadata (NO raw media, NO full exports)
+        match /{subcollection}/{document=**} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+    }
+
+    // Default deny all other collections to prevent unauthorized access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

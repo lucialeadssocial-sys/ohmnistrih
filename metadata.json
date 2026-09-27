@@ -1,0 +1,7 @@
+{
+  "name": "AutoClip AI — Video Studio",
+  "description": "Automatický 95% OmniStrih video editor: Submagic titulky v SK/EN, CapCut punch-in zoom, Opus AI virality skóre, inteligentný B-Roll podľa obsahu, Canva farebné palety a štúdiový zvuk s auto-ducking hudbou bez poplatkov.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
