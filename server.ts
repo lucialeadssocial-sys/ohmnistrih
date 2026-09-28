@@ -510,53 +510,95 @@ app.post("/api/keys/test", async (req, res) => {
     const { provider, providerLabel } = detectKeyProvider(trimmed);
 
     if (provider === "gemini") {
-      try {
-        const testAi = new GoogleGenAI({
-          apiKey: trimmed,
-          httpOptions: { headers: { "User-Agent": "aistudio-build" } },
-        });
+      // Model vhodný na test: najprv model kľúča, potom overené záložné modely.
+      // Rôzne kľúče/tarify majú dostupnú inú sadu modelov, preto skúšame postupne.
+      const keyItemForTest = id ? apiKeyPool.find((k) => k.id === id) : undefined;
+      const requestedModel = keyItemForTest?.model || "gemini-3.8-flash";
+      const testModels = Array.from(new Set([
+        requestedModel,
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
+      ]));
 
-        // Lightweight test prompt
-        const result = await testAi.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: "Respond with only one word: OK",
-        });
+      let lastErrStr = "";
+      let workingModel: string | null = null;
 
-        if (result.text) {
-          if (id) {
-            const found = apiKeyPool.find((k) => k.id === id);
-            if (found) {
-              found.lastTestResult = "CONNECTED";
-              found.status = "active";
-            }
+      for (const modelId of testModels) {
+        try {
+          const testAi = new GoogleGenAI({
+            apiKey: trimmed,
+            httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+          });
+
+          // Lightweight test prompt
+          const result = await testAi.models.generateContent({
+            model: modelId,
+            contents: "Respond with only one word: OK",
+          });
+
+          if (result.text) {
+            workingModel = modelId;
+            break;
+          }
+          lastErrStr = "Model nevrátil žiadnu odpoveď.";
+        } catch (modelErr: any) {
+          lastErrStr = String(modelErr?.message || modelErr);
+        }
+      }
+
+      if (workingModel) {
+        const found = id ? apiKeyPool.find((k) => k.id === id) : undefined;
+        let switchedModelNote = "";
+        if (found) {
+          found.lastTestResult = "CONNECTED";
+          found.status = "active";
+          found.lastError = undefined;
+          // Ak kľúč funguje na inom modeli, než má uložený, prepneme ho –
+          // inak by rovnakou chybou padali aj samotné AI operácie.
+          if (found.model !== workingModel) {
+            found.model = workingModel;
+            switchedModelNote = ` Model kľúča bol nastavený na ${workingModel}.`;
           }
           persistKeys();
-          return res.json({
-            success: true,
-            valid: true,
-            status: "CONNECTED",
-            provider,
-            providerLabel,
-            message: "API kľúč je 100% platný a pripravený na použitie!",
-          });
         }
-      } catch (geminiErr: any) {
-        const errStr = String(geminiErr?.message || geminiErr);
+        return res.json({
+          success: true,
+          valid: true,
+          status: "CONNECTED",
+          provider,
+          providerLabel,
+          model: workingModel,
+          message: `API kľúč je platný a pripravený na použitie (model ${workingModel}).${switchedModelNote}`,
+        });
+      }
+
+      {
+        const errStr = lastErrStr;
+        const lowered = errStr.toLowerCase();
         let status = "ERROR";
         let message = `Test zlyhal: ${errStr}`;
 
-        if (errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("quota")) {
+        if (errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED") || lowered.includes("quota")) {
           status = "QUOTA";
           message = "Kvóta pre tento projekt je vyčerpaná (429 RESOURCE_EXHAUSTED).";
-        } else if (errStr.includes("API_KEY_INVALID") || errStr.includes("400") || errStr.includes("not valid")) {
+        } else if (
+          errStr.includes("API_KEY_INVALID") ||
+          lowered.includes("api key not valid") ||
+          lowered.includes("api_key_invalid") ||
+          errStr.includes("PERMISSION_DENIED")
+        ) {
           status = "INVALID";
           message = "API kľúč je neplatný alebo bol zrušený.";
-        } else if (errStr.includes("BILLING") || errStr.includes("billing")) {
+        } else if (lowered.includes("billing")) {
           status = "BILLING_REQUIRED";
           message = "Projekt vyžaduje aktiváciu platobného účtu (Billing).";
-        } else if (errStr.includes("NOT_FOUND") || errStr.includes("model")) {
+        } else if (errStr.includes("NOT_FOUND") || lowered.includes("is not found") || lowered.includes("not supported")) {
           status = "MODEL_UNAVAILABLE";
           message = "Požadovaný model nie je pre tento kľúč dostupný.";
+        } else if (lowered.includes("location") || lowered.includes("region") || lowered.includes("country")) {
+          status = "REGION_UNSUPPORTED";
+          message = "Kľúč nefunguje v tejto geografickej oblasti.";
         }
 
         if (id) {
@@ -578,6 +620,10 @@ app.post("/api/keys/test", async (req, res) => {
           valid: false,
           status,
           error: message,
+          // Presná odpoveď od Googlu – pomáha diagnostikovať (napr. vypnuté API,
+          // nesprávny model, obmedzenie regiónu). Skracujeme na 400 znakov.
+          rawError: errStr.slice(0, 400),
+          testedModels: testModels,
         });
       }
     }

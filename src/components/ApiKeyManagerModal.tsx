@@ -34,6 +34,7 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
   const [keys, setKeys] = useState<AIProviderCredential[]>([]);
   const [sharedProjects, setSharedProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [newKeyInput, setNewKeyInput] = useState("");
   const [newNameInput, setNewNameInput] = useState("");
   const [newProjectId, setNewProjectId] = useState("");
@@ -54,6 +55,8 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
   const [testResult, setTestResult] = useState<{
     valid: boolean;
     message: string;
+    /** Presná odpoveď poskytovateľa (napr. od Googlu) – na diagnostiku. */
+    detail?: string;
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,9 +73,16 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
       if (data.success) {
         setKeys(data.keys || []);
         setSharedProjects(data.sharedProjects || []);
+        setLoadError(null);
+      } else {
+        setLoadError(data.error || "Server vrátil chybu pri načítaní kľúčov.");
       }
     } catch {
-      // ignore
+      // Predtým sa chyba ticho ignorovala a zoznam zostal prázdny – vyzeralo to,
+      // akoby žiadne kľúče neboli, hoci v skutočnosti nebežal server.
+      setLoadError(
+        "Nepodarilo sa spojiť so serverom aplikácie. Server pravdepodobne nebeží – kľúče sa vtedy nedajú načítať ani pridať."
+      );
     } finally {
       setLoading(false);
     }
@@ -157,12 +167,17 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
         setTestResult({
           valid: false,
           message: data.error || data.message || "Kľúč sa nepodarilo overiť.",
+          // Detail od poskytovateľa – umožní presne zistiť príčinu
+          // (napr. vypnuté Gemini API v projekte, obmedzenie regiónu…).
+          detail: data.rawError ? String(data.rawError).slice(0, 240) : undefined,
         });
       }
     } catch (err: any) {
       setTestResult({
         valid: false,
-        message: err.message || "Sieťová chyba pri teste.",
+        message:
+          "Nepodarilo sa spojiť so serverom aplikácie (server pravdepodobne nebeží). Skontroluj, či je dev server spustený.",
+        detail: err?.message,
       });
     } finally {
       setIsTesting(false);
@@ -485,6 +500,11 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                   <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
                 )}
                 <span>{testResult.message}</span>
+                {testResult.detail && (
+                  <span className="ml-auto text-[10px] font-mono text-slate-500 max-w-[45%] truncate" title={testResult.detail}>
+                    {testResult.detail}
+                  </span>
+                )}
               </div>
             )}
 
@@ -554,10 +574,19 @@ export const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
               </button>
             </div>
 
+            {loadError && (
+              <div className="px-3 py-2 rounded-lg border text-xs flex items-start gap-2 bg-red-50 text-red-800 border-red-200">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span>{loadError}</span>
+              </div>
+            )}
+
             <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 bg-white">
               {keys.length === 0 ? (
                 <div className="p-6 text-center text-slate-400 text-xs">
-                  V poole sa zatiaľ nenachádzajú žiadne credentials. Používa sa offline OmniStrih algoritmus.
+                  V poole sa zatiaľ nenachádzajú žiadne kľúče. Vlož kľúč do poľa vyššie a klikni na
+                  <strong className="text-slate-500"> „Pridať Credential“</strong> — bez uloženého
+                  kľúča bežia len lokálne (offline) funkcie. Samotné „Otestovať Kľúč“ kľúč neukladá.
                 </div>
               ) : (
                 keys.map((k, idx) => (
