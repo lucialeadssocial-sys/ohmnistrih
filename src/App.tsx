@@ -17,6 +17,8 @@ import { AIOrchestrator } from "./utils/aiRouter";
 import { PipelineExecutor } from "./utils/pipelineExecutor";
 import { ToolSuspenseFallback } from "./components/ToolSuspenseFallback";
 import { RenderEngineManager } from "./utils/renderEngineManager";
+import { ShortsEnginePanel } from "./components/ShortsEnginePanel";
+import { ShortsEngineResult, ShortsProposal, buildShortsProposals } from "./core/ai/shortsEngine";
 import { RenderBackendSelector } from "./render/RenderBackendSelector";
 import { ExportPresetId } from "./types/renderEngine";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -1124,6 +1126,85 @@ function MainApp() {
    * an actual Blob. The previous implementation advanced a progress bar with
    * `Math.random()` and reported COMPLETED without ever creating a file.
    */
+  /**
+   * Long-form → Shorts export.
+   *
+   * Each selected proposal is rendered as its own window (`sourceRange`) through the same backends
+   * as the normal export and downloaded as a .webm. Failures are reported per proposal — never
+   * swallowed and never counted as produced.
+   */
+  const handleExportShorts = async (proposals: ShortsProposal[]) => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+
+    if (proposals.length === 0) return;
+    if (!canvas || !video) {
+      showToast(
+        isSk
+          ? "Export Shorts nie je možný: chýba renderovacie plátno alebo video element."
+          : "Shorts export not possible: the render canvas or video element is missing."
+      );
+      return;
+    }
+
+    setIsExportingShorts(true);
+    setShortsFailures([]);
+    let produced = 0;
+    const failures: string[] = [];
+
+    for (let i = 0; i < proposals.length; i++) {
+      const proposal = proposals[i];
+      setShortsProgress({
+        current: i,
+        total: proposals.length,
+        label: isSk
+          ? `Renderujem ${proposal.start}s–${proposal.end}s (${proposal.duration}s)`
+          : `Rendering ${proposal.start}s–${proposal.end}s (${proposal.duration}s)`,
+      });
+
+      try {
+        const plan = RenderEngineManager.createRenderPlan(
+          "current-project",
+          "SOCIAL_VERTICAL",
+          undefined,
+          undefined,
+          { start: proposal.start, end: proposal.end }
+        );
+        const backend = await RenderBackendSelector.selectBackend(plan);
+        await backend.prepare(plan, () => {});
+        const artifact = await backend.render(plan, canvas, video, () => {});
+
+        const safeTitle = (isSk ? proposal.titleSk : proposal.titleEn)
+          .replace(/[^\p{L}\p{N}]+/gu, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 40) || "short";
+        const link = document.createElement("a");
+        link.href = artifact.blobUrl;
+        link.download = `${safeTitle}_${proposal.duration}s_9x16.webm`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        produced++;
+      } catch (err: any) {
+        failures.push(`${proposal.start}s–${proposal.end}s: ${err?.message || String(err)}`);
+      }
+
+      setShortsProgress({
+        current: i + 1,
+        total: proposals.length,
+        label: isSk ? "Hotovo" : "Done",
+      });
+    }
+
+    setShortsFailures(failures);
+    setIsExportingShorts(false);
+    showToast(
+      isSk
+        ? `Shorts export: ${produced} z ${proposals.length} vyrenderovaných (.webm)${failures.length > 0 ? `, ${failures.length} zlyhalo` : ""}.`
+        : `Shorts export: ${produced} of ${proposals.length} rendered (.webm)${failures.length > 0 ? `, ${failures.length} failed` : ""}.`
+    );
+  };
+
   const handleStartMultiExport = async () => {
     setIsExportingMulti(true);
     showToast(isSk ? "🚀 Spúšťam Multi-platformový export..." : "🚀 Starting Multi-platform export...");
@@ -2741,10 +2822,17 @@ function MainApp() {
     () => buildSmartClips(coreEngine.getProject()) as unknown as SmartClipHighlight[]
   );
 
+  // Long-form → Shorts proposals (measured hooks + the real end of the material).
+  const [shortsResult, setShortsResult] = useState<ShortsEngineResult>(() => buildShortsProposals(coreEngine.getProject()));
+  const [isExportingShorts, setIsExportingShorts] = useState(false);
+  const [shortsProgress, setShortsProgress] = useState<{ current: number; total: number; label: string } | null>(null);
+  const [shortsFailures, setShortsFailures] = useState<string[]>([]);
+
   useEffect(() => {
     const syncMeasured = () => {
       setVirality(buildViralityAnalysis(coreEngine.getProject()));
       setSmartClips(buildSmartClips(coreEngine.getProject()) as unknown as SmartClipHighlight[]);
+      setShortsResult(buildShortsProposals(coreEngine.getProject()));
     };
     syncMeasured();
     const unsubscribe = coreEngine.commandManager.subscribe(syncMeasured);
@@ -4404,7 +4492,20 @@ function MainApp() {
                         onUploadVideo={handleUploadVideo}
                       />
                     )}
-                    {activeTab === "opus" && <OpusStudio virality={virality} smartClips={smartClips} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />}
+                    {activeTab === "opus" && (
+                      <div className="space-y-6">
+                        <OpusStudio virality={virality} smartClips={smartClips} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />
+                        <ShortsEnginePanel
+                          result={shortsResult}
+                          isExporting={isExportingShorts}
+                          progress={shortsProgress}
+                          failures={shortsFailures}
+                          onExport={handleExportShorts}
+                          onSeek={(start) => handleSeek(start)}
+                          language={language}
+                        />
+                      </div>
+                    )}
                     {activeTab === "canva" && <CanvaAudioSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} onApplyCategoryPreset={(cat) => setSettings((prev: any) => ({ ...prev, category: cat }))} language={language} />}
                     {activeTab === "thumbnail" && <AIThumbnailStudio project={thumbnailProject} rawAnalysis={rawAnalysis} isGenerating={isGeneratingThumbnails} onUpdateProject={setThumbnailProject} onGenerateConcepts={handleGenerateThumbnailConcepts} language={language} showToast={showToast} />}
                     {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={handleToggleRule} reviewItems={reviewItems} onReviewItem={handleReviewItem} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={[

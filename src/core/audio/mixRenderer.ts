@@ -50,7 +50,12 @@ function resolveMediaUrl(project: ProjectModel, clip: { assetId?: string }): str
 export async function renderProjectMix(
   project: ProjectModel,
   timelineDuration: number,
-  sampleRate: number = 44100
+  sampleRate: number = 44100,
+  /**
+   * Render only the timeline window [windowStart, windowStart + timelineDuration].
+   * Used by the Shorts export so a 60-second clip does not render the whole 60-minute podcast.
+   */
+  windowStart: number = 0
 ): Promise<RenderedMix | null> {
   if (typeof OfflineAudioContext === 'undefined' || timelineDuration <= 0) return null;
 
@@ -72,20 +77,37 @@ export async function renderProjectMix(
         continue;
       }
 
+      const clipStart = clip.timelineStart ?? 0;
+      const clipEnd = clipStart + clip.duration;
+      const windowEnd = windowStart + timelineDuration;
+
+      // Outside the exported window: contribute nothing.
+      if (clipEnd <= windowStart || clipStart >= windowEnd || clip.duration <= 0) continue;
+
       const sourceNode = offlineCtx.createBufferSource();
       sourceNode.buffer = buffer;
 
       const gainNode = offlineCtx.createGain();
       const volume = (clip.volume ?? 100) / 100;
-      gainNode.gain.setValueAtTime(volume, 0);
+      const fadeIn = clip.fadeIn && clip.fadeIn > 0 ? clip.fadeIn : 0;
+      const fadeOut = clip.fadeOut && clip.fadeOut > 0 ? clip.fadeOut : 0;
 
-      if (clip.fadeIn && clip.fadeIn > 0) {
-        gainNode.gain.setValueAtTime(0, clip.timelineStart ?? 0);
-        gainNode.gain.linearRampToValueAtTime(volume, (clip.timelineStart ?? 0) + clip.fadeIn);
+      // Gain in the window, measured at the window start when a fade already began before it.
+      const fadeInValue = fadeIn > 0
+        ? Math.min(1, Math.max(0, (windowStart - clipStart) / fadeIn))
+        : 1;
+      const fadeOutValue = fadeOut > 0
+        ? Math.min(1, Math.max(0, (clipEnd - windowStart) / fadeOut))
+        : 1;
+      const startValue = volume * Math.min(fadeInValue, fadeOutValue);
+      gainNode.gain.setValueAtTime(startValue, 0);
+
+      if (fadeIn > 0 && clipStart + fadeIn > windowStart) {
+        gainNode.gain.linearRampToValueAtTime(volume, Math.min(timelineDuration, clipStart + fadeIn - windowStart));
       }
-      if (clip.fadeOut && clip.fadeOut > 0) {
-        gainNode.gain.setValueAtTime(volume, (clip.timelineStart ?? 0) + clip.duration - clip.fadeOut);
-        gainNode.gain.linearRampToValueAtTime(0, (clip.timelineStart ?? 0) + clip.duration);
+      if (fadeOut > 0 && clipEnd - fadeOut > windowStart) {
+        gainNode.gain.setValueAtTime(volume, Math.min(timelineDuration, clipEnd - fadeOut - windowStart));
+        gainNode.gain.linearRampToValueAtTime(0, Math.min(timelineDuration, clipEnd - windowStart));
       }
 
       // Real processing from the canonical clip state: EQ bands then dynamics compression.
@@ -135,7 +157,12 @@ export async function renderProjectMix(
       gainNode.connect(offlineCtx.destination);
 
       const sourceStart = clip.sourceStart ?? 0;
-      sourceNode.start(clip.timelineStart ?? 0, sourceStart, clip.duration);
+      const offsetIntoClip = Math.max(0, windowStart - clipStart);
+      const playFrom = Math.max(0, Math.min(timelineDuration, clipStart - windowStart));
+      const playDuration = Math.min(clip.duration - offsetIntoClip, timelineDuration - playFrom);
+      if (playDuration <= 0) continue;
+
+      sourceNode.start(playFrom, sourceStart + offsetIntoClip, playDuration);
       decodedClips++;
     }
   }

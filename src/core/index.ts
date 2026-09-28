@@ -66,6 +66,7 @@ import { editingBrain } from './ai/editingBrain';
 import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, DirectorDecisionItem, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
 import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildLearnedRules, isActionExecutable } from './ai/reviewQueue';
 import { DirectorMode, DirectorQuality, ReadinessSummary, buildReadinessSummary, DIRECTOR_MODES } from './ai/directorModes';
+import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
 import type { EditingPreference } from './types/project';
 
 // Default initial project factory with canonical tracks
@@ -939,6 +940,14 @@ export class CoreEngine {
   public getReadinessSummary(plan?: DirectorPlan): ReadinessSummary {
     const project = this.getProject();
     return buildReadinessSummary(project, plan || project.directorPlan);
+  }
+
+  /**
+   * Long-form → Shorts: proposals built from measured hooks and the real end of the material.
+   * Empty when nothing was measured — the UI states that instead of inventing moments.
+   */
+  public getShortsProposals(options?: { maxHooks?: number; windows?: number[] }): ShortsEngineResult {
+    return buildShortsProposals(this.getProject(), options);
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

@@ -141,9 +141,13 @@ export class RealtimeCanvasBackend implements RenderBackend {
   ): Promise<RenderArtifact> {
     const totalFrames = Math.round(plan.timelineDuration * plan.fps);
     const startTime = Date.now();
+    const rangeStart = plan.sourceRange ? Math.max(0, plan.sourceRange.start) : 0;
+    const rangeEnd = plan.sourceRange
+      ? Math.max(rangeStart + 0.1, plan.sourceRange.end)
+      : (plan.timelineDuration || 15);
 
     // Verify EDL version unchanged
-    const currentPlan = RenderEngineManager.createRenderPlan(plan.projectId, plan.presetId, plan.outputWidth, plan.outputHeight);
+    const currentPlan = RenderEngineManager.createRenderPlan(plan.projectId, plan.presetId, plan.outputWidth, plan.outputHeight, plan.sourceRange);
     if (currentPlan.edlVersion !== plan.edlVersion) {
       throw new Error("EDL_CHANGED");
     }
@@ -159,7 +163,8 @@ export class RealtimeCanvasBackend implements RenderBackend {
       backendUsed: "REALTIME_CANVAS_FALLBACK",
     });
 
-    video.currentTime = 0;
+    // Window export starts at the window, not at the beginning of the project.
+    video.currentTime = rangeStart;
     await video.play();
 
     // The recorder must capture real pixels — start compositing before captureStream().
@@ -288,8 +293,9 @@ export class RealtimeCanvasBackend implements RenderBackend {
         }
 
         const currentTime = video.currentTime;
-        const curFrame = Math.min(totalFrames, Math.round(currentTime * plan.fps));
-        const pct = Math.min(80, Math.round(15 + (currentTime / (plan.timelineDuration || 15)) * 65));
+        const curFrame = Math.min(totalFrames, Math.round((currentTime - rangeStart) * plan.fps));
+        const windowPosition = Math.max(0, currentTime - rangeStart);
+        const pct = Math.min(80, Math.round(15 + (windowPosition / (plan.timelineDuration || 15)) * 65));
         const elapsed = (Date.now() - startTime) / 1000;
         const fpsReal = elapsed > 0 ? curFrame / elapsed : plan.fps;
 
@@ -299,12 +305,12 @@ export class RealtimeCanvasBackend implements RenderBackend {
           totalFrames,
           percentage: pct,
           elapsedSeconds: elapsed,
-          estimatedRemainingSeconds: Math.max(0, (plan.timelineDuration - currentTime)),
+          estimatedRemainingSeconds: Math.max(0, (plan.timelineDuration - windowPosition)),
           renderFps: parseFloat(fpsReal.toFixed(1)),
           backendUsed: "REALTIME_CANVAS_FALLBACK",
         });
 
-        if (video.ended || currentTime >= (plan.timelineDuration || 15) - 0.2) {
+        if (video.ended || currentTime >= rangeEnd - 0.2) {
           clearInterval(this.checkInterval);
           this.stopFrameDrawing();
           if (this.mediaRecorder && this.mediaRecorder.state === "recording") {

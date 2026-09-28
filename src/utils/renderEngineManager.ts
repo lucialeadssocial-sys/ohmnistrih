@@ -80,7 +80,13 @@ export class RenderEngineManager {
   /**
    * Generate an immutable RenderPlan from current EDL, DNA, and preset.
    */
-  static createRenderPlan(projectId: string, presetId: ExportPresetId, customWidth?: number, customHeight?: number): RenderPlan {
+  static createRenderPlan(
+    projectId: string,
+    presetId: ExportPresetId,
+    customWidth?: number,
+    customHeight?: number,
+    sourceRange?: { start: number; end: number }
+  ): RenderPlan {
     const edl = EDLManager.getEDL(projectId);
     const dna = EditBrainManager.getEffectiveDNA(projectId);
     const preset = EXPORT_PRESETS[presetId];
@@ -100,13 +106,17 @@ export class RenderEngineManager {
       }
     }
     const totalDuration = maxEnd > 0 ? maxEnd : 15;
+    // A window export renders exactly the requested window; the length is the window length.
+    const windowStart = sourceRange ? Math.max(0, sourceRange.start) : 0;
+    const windowEnd = sourceRange ? Math.max(windowStart + 0.1, sourceRange.end) : totalDuration;
+    const renderDuration = sourceRange ? windowEnd - windowStart : totalDuration;
 
     return {
       projectId,
       edlVersion: edl.version,
       dnaVersion: dna.sampleCount || 1,
       sourceMediaReferences: Array.from(new Set(edl.decisions.map(d => d.sourceMediaId || "src-1"))),
-      timelineDuration: totalDuration,
+      timelineDuration: renderDuration,
       outputWidth: width,
       outputHeight: height,
       fps: preset.fps,
@@ -116,6 +126,7 @@ export class RenderEngineManager {
       audioSampleRate: 48000,
       audioChannels: 2,
       presetId,
+      sourceRange: sourceRange ? { start: windowStart, end: windowEnd } : undefined,
       createdAt: new Date().toISOString(),
       edlSnapshot: JSON.parse(JSON.stringify(edl)),
       dnaSnapshot: JSON.parse(JSON.stringify(dna)),

@@ -12,6 +12,7 @@
     "verify:director": "tsx verify_director_fixes.ts",
     "verify:director-mode": "tsx verify_director_mode.ts",
     "verify:director-ui": "tsx verify_director_ui.mjs",
+    "verify:shorts": "tsx verify_shorts.ts",
     "verify:app": "tsx smoke.mjs",
     "verify:boundary": "tsx verify_errorboundary.mjs",
     "verify:multicam": "tsx verify_2s.ts",

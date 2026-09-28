@@ -80,7 +80,10 @@ export class WebCodecsOfflineBackend implements RenderBackend {
     const startTime = Date.now();
 
     // Verify EDL version unchanged
-    const currentPlan = RenderEngineManager.createRenderPlan(plan.projectId, plan.presetId, plan.outputWidth, plan.outputHeight);
+    const rangeStart = plan.sourceRange ? Math.max(0, plan.sourceRange.start) : 0;
+    const rangeEnd = plan.sourceRange ? Math.max(rangeStart + 0.1, plan.sourceRange.end) : null;
+
+    const currentPlan = RenderEngineManager.createRenderPlan(plan.projectId, plan.presetId, plan.outputWidth, plan.outputHeight, plan.sourceRange);
     if (currentPlan.edlVersion !== plan.edlVersion) {
       throw new Error("EDL_CHANGED");
     }
@@ -132,7 +135,8 @@ export class WebCodecsOfflineBackend implements RenderBackend {
       });
 
       const project = coreEngine.getProject();
-      const mix = await renderProjectMix(project, plan.timelineDuration, 44100);
+      // A window export renders only that window of the mix (no full-length mix for a 30s clip).
+      const mix = await renderProjectMix(project, plan.timelineDuration, 44100, rangeStart);
 
       if (mix) {
         audioBuffer = mix.buffer;
@@ -301,7 +305,8 @@ export class WebCodecsOfflineBackend implements RenderBackend {
         throw new Error("EXPORT_CANCELLED");
       }
 
-      const timelineTime = currentFrame / fps;
+      // Window export: frame 0 is the first frame of the window, not of the project.
+      const timelineTime = rangeStart + currentFrame / fps;
 
       // Frame-accurate media seeking
       const activeLayers = TimelineEngine.getActiveClipsAtTime(project, timelineTime);

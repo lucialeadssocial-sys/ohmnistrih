@@ -54,6 +54,12 @@ export interface RenderPlan {
   audioSampleRate: number;
   audioChannels: number;
   presetId: ExportPresetId;
+  /**
+   * Export only this window of the timeline (used by the Shorts engine). When present,
+   * `timelineDuration` is the length of the window, not the length of the project, and the
+   * backends start rendering at `start`.
+   */
+  sourceRange?: { start: number; end: number };
   createdAt: string;
   edlSnapshot: EditDecisionList;
   dnaSnapshot: EditDNAProfile;
