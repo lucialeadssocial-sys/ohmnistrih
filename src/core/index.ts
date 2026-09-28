@@ -67,6 +67,7 @@ import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, D
 import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildLearnedRules, isActionExecutable } from './ai/reviewQueue';
 import { DirectorMode, DirectorQuality, ReadinessSummary, buildReadinessSummary, DIRECTOR_MODES } from './ai/directorModes';
 import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
+import { QualityCheckReport, runQualityCheck } from './ai/qualityCheck';
 import type { EditingPreference } from './types/project';
 
 // Default initial project factory with canonical tracks
@@ -948,6 +949,14 @@ export class CoreEngine {
    */
   public getShortsProposals(options?: { maxHooks?: number; windows?: number[] }): ShortsEngineResult {
     return buildShortsProposals(this.getProject(), options);
+  }
+
+  /**
+   * Quality Check pred finálom — measured checks over the canonical project with an honest list of
+   * what could NOT be measured in this run (see core/ai/qualityCheck.ts).
+   */
+  public runQualityCheck(): QualityCheckReport {
+    return runQualityCheck(this.getProject());
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

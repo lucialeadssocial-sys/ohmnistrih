@@ -20,10 +20,12 @@ import {
   Heart,
   TrendingUp,
   Download,
-  AlertCircle
+  AlertCircle,
+  ShieldCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { playSynthesizedSFX } from "../utils/audioSynth";
+import type { QualityCheckReport } from "../core/ai/qualityCheck";
 
 // Import all sub-editors to mount them inside the wizard steps
 import { RawAIAnalyzer } from "./RawAIAnalyzer";
@@ -148,6 +150,12 @@ interface RawToReadyPipelineProps {
 
   // Navigation Trigger to open PRO TIMELINE
   onJumpToProTimeline: () => void;
+  /** Measured Quality Check report (coreEngine.runQualityCheck) — null until it ran. */
+  qcReport?: QualityCheckReport | null;
+  onRunQualityCheck?: () => void;
+  onOpenQualityCheck?: () => void;
+  /** Opens the real export dialog (Step FINAL). */
+  onOpenExport?: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -228,6 +236,10 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   setBRollOverlays,
   setIsBRollTimelineOpen,
   onJumpToProTimeline,
+  qcReport = null,
+  onRunQualityCheck,
+  onOpenQualityCheck,
+  onOpenExport,
   showToast
 }) => {
   const isSk = language === "sk";
@@ -246,7 +258,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
     aspectRatio: "16:9"
   });
 
-  // 12-Step Definitions
+  // 13-Step Definitions (QC inserted before multi-format + final export)
   const steps = [
     {
       id: 1,
@@ -340,17 +352,26 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
     },
     {
       id: 11,
-      labelSk: "11. MULTI-FORMAT",
-      labelEn: "11. MULTI-FORMAT",
+      labelSk: "11. KONTROLA KVALITY",
+      labelEn: "11. QUALITY CHECK",
+      descSk: "Zmeraj pred finálom: dĺžky, medzery, titulky, hlasitosť, tempo, prechody",
+      descEn: "Measure before final: durations, gaps, captions, levels, pacing, transitions",
+      icon: ShieldCheck,
+      color: "border-emerald-500 text-emerald-400"
+    },
+    {
+      id: 12,
+      labelSk: "12. MULTI-FORMAT",
+      labelEn: "12. MULTI-FORMAT",
       descSk: "Preformátujte video pre TikTok, YouTube a IG",
       descEn: "Crop and optimize canvas safe margins across platforms",
       icon: TrendingUp,
       color: "border-orange-500 text-orange-400"
     },
     {
-      id: 12,
-      labelSk: "12. EXPORT",
-      labelEn: "12. EXPORT",
+      id: 13,
+      labelSk: "13. EXPORT",
+      labelEn: "13. EXPORT",
       descSk: "Vyexportujte finálny balíček s popisom a hashtágmi",
       descEn: "Bundle and download complete ready-to-post socials package",
       icon: Download,
@@ -360,7 +381,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
 
   // Helper to trigger navigation
   const handleNextStep = () => {
-    if (currentStep < 12) {
+    if (currentStep < 13) {
       setCurrentStep(prev => prev + 1);
       playSynthesizedSFX("click", 0.5);
     }
@@ -477,7 +498,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
             </button>
             <button
               onClick={handleNextStep}
-              disabled={currentStep === 12}
+              disabled={currentStep === 13}
               className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 disabled:opacity-30 text-neutral-300"
             >
               <ArrowRight className="h-4 w-4" />
@@ -773,8 +794,127 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                 </div>
               )}
 
-              {/* STEP 11: MULTI-FORMAT */}
+              {/* STEP 11: QUALITY CHECK (measured before final) */}
               {currentStep === 11 && (
+                <div className="p-6 rounded-2xl bg-neutral-950 border border-neutral-800 space-y-4" id="omnistrih-pipeline-quality-check">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-emerald-600 text-white font-black text-[9px] uppercase tracking-wider">
+                          {isSk ? "MERANÉ" : "MEASURED"}
+                        </span>
+                        <span className="text-xs font-bold text-neutral-400">
+                          {isSk ? "POSLEDNÁ FÁZA PRED FINÁLOM" : "LAST PHASE BEFORE FINAL"}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider mt-1">
+                        {isSk ? "Kontrola kvality pred finálom" : "Quality check before final"}
+                      </h3>
+                      <p className="text-xs text-neutral-400 mt-1">
+                        {qcReport
+                          ? (isSk ? qcReport.scoreBasisSk : qcReport.scoreBasisEn)
+                          : (isSk
+                              ? "Kontrola ešte nebežala. Po spustení uvidíte len nálezy, ktoré sa dajú zmerať z timeline."
+                              : "The check has not run yet. After running you will see only findings measurable from the timeline.")}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => onRunQualityCheck?.()}
+                        className="flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider transition-all"
+                        id="omnistrih-pipeline-qc-run"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        <span>{isSk ? "Skontrolovať pred finálom" : "Check before final"}</span>
+                      </button>
+                      {onOpenQualityCheck && (
+                        <button
+                          onClick={() => onOpenQualityCheck()}
+                          className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-700 text-white font-bold text-xs uppercase tracking-wider hover:bg-neutral-800 transition-all"
+                        >
+                          {isSk ? "Celá kontrola" : "Full check"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {qcReport && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                          <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Skóre" : "Score"}</div>
+                          <div className="text-2xl font-black text-white">{qcReport.score}<span className="text-sm text-neutral-500">/100</span></div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                          <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Kritické" : "Critical"}</div>
+                          <div className="text-2xl font-black text-red-400">{qcReport.counts.critical}</div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                          <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Varovania" : "Warnings"}</div>
+                          <div className="text-2xl font-black text-amber-400">{qcReport.counts.warning}</div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                          <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Info" : "Info"}</div>
+                          <div className="text-2xl font-black text-sky-400">{qcReport.counts.info}</div>
+                        </div>
+                      </div>
+
+                      {qcReport.findings.length === 0 ? (
+                        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                          {isSk ? "Všetky merané kontroly prešli bez nálezu." : "Every measured check passed with no finding."}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {qcReport.findings.slice(0, 5).map(finding => (
+                            <div key={finding.id} className="flex items-start gap-3 p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                              <span className={`text-[9px] font-black uppercase tracking-wider shrink-0 pt-0.5 ${
+                                finding.severity === "CRITICAL" ? "text-red-400" : finding.severity === "WARNING" ? "text-amber-400" : "text-sky-400"
+                              }`}>
+                                {finding.severity === "CRITICAL" ? (isSk ? "KRITICKÉ" : "CRITICAL") : finding.severity === "WARNING" ? (isSk ? "VAROVANIE" : "WARNING") : "INFO"}
+                              </span>
+                              <div className="flex-1">
+                                <div className="text-xs font-bold text-white">{isSk ? finding.titleSk : finding.titleEn}</div>
+                                <div className="text-[11px] text-neutral-400 mt-0.5">{isSk ? finding.detailSk : finding.detailEn}</div>
+                              </div>
+                              {finding.time !== undefined && (
+                                <button
+                                  onClick={() => onSeek(finding.time as number)}
+                                  className="px-2.5 py-1 rounded-lg bg-neutral-950 border border-neutral-700 text-[10px] font-bold text-white hover:bg-neutral-800 shrink-0"
+                                >
+                                  {isSk ? `Prejsť na ${finding.time}s` : `Go to ${finding.time}s`}
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {qcReport.findings.length > 5 && (
+                            <div className="text-[11px] text-neutral-500">
+                              {isSk
+                                ? `… a ďalších ${qcReport.findings.length - 5} nálezov v celej kontrole.`
+                                : `… and ${qcReport.findings.length - 5} more findings in the full check.`}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {qcReport.unmeasurable.length > 0 && (
+                        <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+                          <div className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                            {isSk ? "NEMERANÉ V TOMTO BEHU" : "NOT MEASURED IN THIS RUN"}
+                          </div>
+                          <ul className="mt-1.5 space-y-1 text-[11px] text-neutral-400">
+                            {qcReport.unmeasurable.map(item => (
+                              <li key={item.id}>• {isSk ? item.reasonSk : item.reasonEn}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* STEP 12: MULTI-FORMAT */}
+              {currentStep === 12 && (
                 <MultiPlatformExport
                   project={multiExportProject}
                   onUpdateProject={onUpdateMultiExportProject}
@@ -784,8 +924,8 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                 />
               )}
 
-              {/* STEP 12: EXPORT */}
-              {currentStep === 12 && (
+              {/* STEP 13: FINAL EXPORT */}
+              {currentStep === 13 && (
                 <div className="space-y-6">
                   <div className="p-6 rounded-2xl bg-neutral-950 border border-neutral-800 flex flex-col md:flex-row items-center justify-between gap-6">
                     <div>
@@ -796,7 +936,20 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                           : "Apply all enhancements, subtitles, speed ramping, and B-roll to create your ready-to-post asset."}
                       </p>
                     </div>
-                    <button className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-widest active:scale-95 transition-all">
+                    <button
+                      onClick={() => {
+                        playSynthesizedSFX("click", 0.6);
+                        if (onOpenExport) {
+                          onOpenExport();
+                        } else {
+                          showToast(isSk
+                            ? "Export okno nie je dostupné — otvorte Export v hlavnom menu."
+                            : "The export dialog is not available — open Export from the main menu.");
+                        }
+                      }}
+                      className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-widest active:scale-95 transition-all"
+                      id="omnistrih-pipeline-open-export"
+                    >
                       <Download className="h-4 w-4" />
                       <span>{isSk ? "Spustiť Export Videa" : "Compile Video Asset"}</span>
                     </button>

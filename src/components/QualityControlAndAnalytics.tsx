@@ -36,6 +36,7 @@ import { coreEngine } from "../core";
 import { RenderEngineManager } from "../utils/renderEngineManager";
 import { ClipModel, ProjectModel } from "../core/types/project";
 import { TimelineEngine } from "../core/timeline/timelineEngine";
+import type { QualityCheckReport, QcSeverity } from "../core/ai/qualityCheck";
 
 type QcGateEvaluation = { status: QCGateCheck["status"]; evidenceSk: string; evidenceEn: string };
 
@@ -208,11 +209,20 @@ function applyGateEvaluations(checks: QCGateCheck[], evaluations: Record<string,
   });
 }
 
+const SEVERITY_STYLE: Record<QcSeverity, { bg: string; text: string; border: string; labelSk: string; labelEn: string }> = {
+  CRITICAL: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/40", labelSk: "KRITICKÉ", labelEn: "CRITICAL" },
+  WARNING: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/40", labelSk: "VAROVANIE", labelEn: "WARNING" },
+  INFO: { bg: "bg-sky-500/10", text: "text-sky-400", border: "border-sky-500/40", labelSk: "INFO", labelEn: "INFO" },
+};
+
 export const QualityControlAndAnalytics: React.FC<{
   language: "sk" | "en";
   showToast: (msg: string, type?: "success" | "info" | "warning") => void;
-  videoDurationSeconds?: number;
-}> = ({ language, showToast, videoDurationSeconds = 742 }) => {
+  /** Real report from coreEngine.runQualityCheck() over the canonical project. */
+  report?: QualityCheckReport | null;
+  onRunQualityCheck?: () => void;
+  onSeek?: (time: number) => void;
+}> = ({ language, showToast, report = null, onRunQualityCheck, onSeek }) => {
   const isSk = language === "sk";
   
   // Rule #9: EDL version state tracking
@@ -759,6 +769,150 @@ export const QualityControlAndAnalytics: React.FC<{
 
   return (
     <div className="space-y-6 text-neutral-100" id="omnistrih-quality-gate-final-forensic">
+      {/* MEASURED CHECKS OVER THE CANONICAL PROJECT — coreEngine.runQualityCheck() */}
+      <div className="p-6 rounded-3xl bg-neutral-900/60 border border-neutral-800" id="omnistrih-measured-qc">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded bg-emerald-600 text-white font-black text-[9px] uppercase tracking-wider">
+                {isSk ? "MERANÉ" : "MEASURED"}
+              </span>
+              <span className="text-xs font-bold text-neutral-400">
+                {isSk ? "KONTROLA KVALITY PRED FINÁLOM" : "QUALITY CHECK BEFORE FINAL"}
+              </span>
+            </div>
+            <h3 className="text-base font-black text-white mt-1">
+              {isSk ? "Čo sa naozaj skontrolovalo na tvojom projekte" : "What was actually checked on your project"}
+            </h3>
+            <p className="text-xs text-neutral-400 mt-0.5" id="omnistrih-measured-qc-basis">
+              {report
+                ? (isSk ? report.scoreBasisSk : report.scoreBasisEn)
+                : (isSk
+                    ? "Kontrola ešte nebežala — spusti ju tlačidlom vpravo."
+                    : "The check has not run yet — start it with the button on the right.")}
+            </p>
+          </div>
+          <button
+            onClick={() => onRunQualityCheck?.()}
+            className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 shrink-0"
+            id="omnistrih-measured-qc-run"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            <span>{isSk ? "SKONTROLOVAŤ PRED FINÁLOM" : "CHECK BEFORE FINAL"}</span>
+          </button>
+        </div>
+
+        {!report && (
+          <p className="text-xs text-neutral-500 mt-4">
+            {isSk
+              ? "Po spustení sa tu zobrazia len nálezy, ktoré sa dajú zmerať z timeline (dĺžky, medzery, titulky, hlasitosť, tempo, prechody)."
+              : "After running, only findings measurable from the timeline appear here (durations, gaps, captions, levels, pacing, transitions)."}
+          </p>
+        )}
+
+        {report && (
+          <div className="mt-5 space-y-5">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800">
+                <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Skóre" : "Score"}</div>
+                <div className="text-3xl font-black text-white">{report.score}<span className="text-base text-neutral-500">/100</span></div>
+              </div>
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800">
+                <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Kritické" : "Critical"}</div>
+                <div className="text-3xl font-black text-red-400">{report.counts.critical}</div>
+              </div>
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800">
+                <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Varovania" : "Warnings"}</div>
+                <div className="text-3xl font-black text-amber-400">{report.counts.warning}</div>
+              </div>
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800">
+                <div className="text-[10px] font-bold text-neutral-500 uppercase">{isSk ? "Info" : "Info"}</div>
+                <div className="text-3xl font-black text-sky-400">{report.counts.info}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 text-xs" id="omnistrih-measured-qc-facts">
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800">
+                <div className="text-neutral-500 text-[10px] uppercase font-bold">{isSk ? "Dĺžka" : "Duration"}</div>
+                <div className="text-white font-bold">{report.facts.durationSeconds}s</div>
+              </div>
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800">
+                <div className="text-neutral-500 text-[10px] uppercase font-bold">{isSk ? "Klipy V/Z/T" : "Clips V/A/C"}</div>
+                <div className="text-white font-bold">{report.facts.videoClips}/{report.facts.audioClips}/{report.facts.captionClips}</div>
+              </div>
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800">
+                <div className="text-neutral-500 text-[10px] uppercase font-bold">{isSk ? "Rezy" : "Cuts"}</div>
+                <div className="text-white font-bold">{report.facts.cuts} <span className="text-neutral-500">({report.facts.cutsPerMinute}/min)</span></div>
+              </div>
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800">
+                <div className="text-neutral-500 text-[10px] uppercase font-bold">{isSk ? "Najdlhší záber" : "Longest shot"}</div>
+                <div className="text-white font-bold">{report.facts.longestShotSeconds}s</div>
+              </div>
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800">
+                <div className="text-neutral-500 text-[10px] uppercase font-bold">{isSk ? "Plátno" : "Canvas"}</div>
+                <div className="text-white font-bold">{report.facts.canvasWidth}×{report.facts.canvasHeight} @{report.facts.fps}</div>
+              </div>
+            </div>
+
+            {report.findings.length === 0 ? (
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold" id="omnistrih-measured-qc-clean">
+                {isSk
+                  ? "Všetky merané kontroly prešli bez nálezu na tejto timeline."
+                  : "Every measured check passed with no finding on this timeline."}
+              </div>
+            ) : (
+              <div className="space-y-2" id="omnistrih-measured-qc-findings">
+                {report.findings.map(finding => {
+                  const style = SEVERITY_STYLE[finding.severity];
+                  return (
+                    <div key={finding.id} className={`p-4 rounded-2xl border ${style.border} ${style.bg} flex flex-col lg:flex-row lg:items-start gap-3`}>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${style.text} bg-neutral-950/60 shrink-0`}>
+                        {isSk ? style.labelSk : style.labelEn}
+                      </span>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold text-white">
+                          {isSk ? finding.titleSk : finding.titleEn}
+                          <span className="ml-2 text-[10px] font-mono text-neutral-500">{finding.category}</span>
+                        </div>
+                        <div className="text-xs text-neutral-400 mt-1">{isSk ? finding.detailSk : finding.detailEn}</div>
+                      </div>
+                      {finding.time !== undefined && (
+                        <button
+                          onClick={() => onSeek?.(finding.time as number)}
+                          className="px-3 py-1.5 rounded-lg bg-neutral-950 border border-neutral-700 text-[10px] font-bold text-white hover:bg-neutral-800 shrink-0"
+                        >
+                          {isSk ? `Prejsť na ${finding.time}s` : `Go to ${finding.time}s`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800" id="omnistrih-measured-qc-unmeasurable">
+              <div className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                {isSk ? "NEMERANÉ V TOMTO BEHU (bez výhovoriek)" : "NOT MEASURED IN THIS RUN (no excuses)"}
+              </div>
+              <ul className="mt-2 space-y-1.5 text-xs text-neutral-400">
+                {report.unmeasurable.map(item => (
+                  <li key={item.id} className="flex gap-2">
+                    <span className="text-neutral-600 shrink-0">•</span>
+                    <span>{isSk ? item.reasonSk : item.reasonEn}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <p className="text-[11px] text-neutral-500">
+              {isSk
+                ? "Skóre je funkcia nálezov, nie kontrola pixlov exportu. Čierne snímky, skutočný peak a rezy v slovách zatiaľ merané nie sú."
+                : "The score is a function of the findings, not an inspection of the exported pixels. Black frames, true peak and cuts inside words are not measured yet."}
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* HEADER ACTION BANNER */}
       <div className="p-6 rounded-3xl bg-gradient-to-r from-neutral-900 via-neutral-900/90 to-neutral-950 border border-neutral-800 shadow-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
         <div className="flex items-center gap-4">

@@ -19,6 +19,7 @@ import { ToolSuspenseFallback } from "./components/ToolSuspenseFallback";
 import { RenderEngineManager } from "./utils/renderEngineManager";
 import { ShortsEnginePanel } from "./components/ShortsEnginePanel";
 import { ShortsEngineResult, ShortsProposal, buildShortsProposals } from "./core/ai/shortsEngine";
+import { QualityCheckReport, runQualityCheck } from "./core/ai/qualityCheck";
 import { RenderBackendSelector } from "./render/RenderBackendSelector";
 import { ExportPresetId } from "./types/renderEngine";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -2740,6 +2741,10 @@ function MainApp() {
   // Synchronize workspace view settings to localStorage to avoid resetting on refresh/HMR/iframe reload
   useEffect(() => {
     localStorage.setItem("omnistrih_active_tab", activeTab);
+    // Opening the QC tab runs the measured checks once so the editor never sees an empty panel.
+    if (activeTab === "qc_analytics") {
+      setQcReport(prev => prev ?? runQualityCheck(coreEngine.getProject()));
+    }
   }, [activeTab]);
 
   useEffect(() => {
@@ -2824,6 +2829,8 @@ function MainApp() {
 
   // Long-form → Shorts proposals (measured hooks + the real end of the material).
   const [shortsResult, setShortsResult] = useState<ShortsEngineResult>(() => buildShortsProposals(coreEngine.getProject()));
+  // Quality Check before final — null until the editor runs it (or the measured refresh below does).
+  const [qcReport, setQcReport] = useState<QualityCheckReport | null>(null);
   const [isExportingShorts, setIsExportingShorts] = useState(false);
   const [shortsProgress, setShortsProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [shortsFailures, setShortsFailures] = useState<string[]>([]);
@@ -2833,6 +2840,7 @@ function MainApp() {
       setVirality(buildViralityAnalysis(coreEngine.getProject()));
       setSmartClips(buildSmartClips(coreEngine.getProject()) as unknown as SmartClipHighlight[]);
       setShortsResult(buildShortsProposals(coreEngine.getProject()));
+      setQcReport(prev => (prev ? runQualityCheck(coreEngine.getProject()) : prev));
     };
     syncMeasured();
     const unsubscribe = coreEngine.commandManager.subscribe(syncMeasured);
@@ -2843,6 +2851,22 @@ function MainApp() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3800);
   };
+
+  /** Quality Check before final — runs the measured checks over the canonical project. */
+  const handleRunQualityCheck = useCallback(() => {
+    const next = runQualityCheck(coreEngine.getProject());
+    setQcReport(next);
+    const parts = [
+      next.counts.critical > 0 ? `${next.counts.critical} kritických` : null,
+      next.counts.warning > 0 ? `${next.counts.warning} varovaní` : null,
+      next.counts.info > 0 ? `${next.counts.info} info` : null,
+    ].filter(Boolean);
+    showToast(
+      parts.length > 0
+        ? `Kontrola pred finálom: skóre ${next.score}/100 — ${parts.join(', ')} (${next.findings.length} nálezov)`
+        : `Kontrola pred finálom: skóre ${next.score}/100 — všetky merané kontroly bez nálezu`
+    );
+  }, []);
 
   // Handle Play/Pause with robust playback state checks
   const handleTogglePlay = useCallback((forceState?: boolean) => {
@@ -3643,6 +3667,8 @@ function MainApp() {
             canUndo={historyState.canUndo}
             canRedo={historyState.canRedo}
             onOpenQC={() => setActiveTab("qc_analytics")}
+            qcBadge={qcReport ? (qcReport.counts.critical > 0 ? `${qcReport.counts.critical} krit.` : `${qcReport.score}/100`) : null}
+            qcBadgeTone={qcReport && qcReport.counts.critical > 0 ? "critical" : "ok"}
             workflowState={isProcessingMagic ? "NEW" : (jumpSequence?.isApplied || captionProject.segments.length > 0) ? "PROCESSED" : "RAW_IMPORTED"}
             onReviewChanges={() => setActiveTab("edl_autopilot")}
             hasMedia={Boolean(currentVideoUrl && currentVideoUrl.length > 0 && projects.find(p => p.id === activeProjectId)?.hasMedia !== false)}
@@ -4102,7 +4128,9 @@ function MainApp() {
                       <QualityControlAndAnalytics
                         language={language}
                         showToast={showToast}
-                        videoDurationSeconds={742}
+                        report={qcReport}
+                        onRunQualityCheck={handleRunQualityCheck}
+                        onSeek={handleSeek}
                       />
                     )}
                     {activeTab === "editor_brain" && (
@@ -4315,6 +4343,10 @@ function MainApp() {
                         setBRollOverlays={(items) => setBrollProject(prev => ({ ...prev, items: typeof items === 'function' ? items(prev.items) : items }))}
                         setIsBRollTimelineOpen={() => {}}
                         onJumpToProTimeline={() => setActiveTab("pro_timeline")}
+                        qcReport={qcReport}
+                        onRunQualityCheck={handleRunQualityCheck}
+                        onOpenQualityCheck={() => setActiveTab("qc_analytics")}
+                        onOpenExport={() => setIsExportOpen(true)}
                         showToast={showToast}
                       />
                     )}

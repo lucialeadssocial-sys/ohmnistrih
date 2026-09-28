@@ -43,6 +43,9 @@ interface HeaderProps {
   canUndo?: boolean;
   canRedo?: boolean;
   onOpenQC?: () => void;
+  /** Measured Quality Check badge (score or critical count) — null until the check has run. */
+  qcBadge?: string | null;
+  qcBadgeTone?: "ok" | "critical";
   workflowState?: "NEW" | "RAW_IMPORTED" | "PROCESSED" | "REVIEWED";
   onReviewChanges?: () => void;
   hasMedia?: boolean;
@@ -73,6 +76,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   canUndo = true,
   canRedo = false,
   onOpenQC,
+  qcBadge,
+  qcBadgeTone = "ok",
   workflowState = "RAW_IMPORTED",
   onReviewChanges,
   hasMedia = true,
@@ -196,8 +201,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               className="hidden sm:flex items-center gap-1.5 rounded-xl border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white hover:border-neutral-700 transition-all"
               title={isSk ? "Kontrola kvality a štatistika úspory času" : "Quality Check & Time Saved Analytics"}
             >
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <CheckCircle2 className={`h-3.5 w-3.5 ${qcBadgeTone === "critical" ? "text-red-400" : "text-emerald-400"}`} />
               <span className="text-[11px]">QC</span>
+              {qcBadge && (
+                <span className={`text-[10px] font-mono ${qcBadgeTone === "critical" ? "text-red-400" : "text-emerald-400"}`}>{qcBadge}</span>
+              )}
             </button>
           )}
 
