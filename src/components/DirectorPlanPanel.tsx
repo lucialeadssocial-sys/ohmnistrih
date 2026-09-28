@@ -60,12 +60,20 @@ interface DirectorPlanResponse {
   error?: string;
 }
 
+/** Čo sa po schválení reálne zapísalo do strihacieho jadra. */
+export interface DirectorApplyReport {
+  applied: { label: string; count: number }[];
+  skipped: { label: string; reason: string }[];
+}
+
 interface DirectorPlanPanelProps {
   language?: string;
   /** Dĺžka naimportovaného videa v sekundách (ak je známa). */
   rawDurationSeconds?: number | null;
   onSeek?: (seconds: number) => void;
-  onApplyPlan?: (accepted: DirectorPlanItem[]) => void;
+  onApplyPlan?: (accepted: DirectorPlanItem[]) => DirectorApplyReport | void;
+  /** Otvorí profesionálny timeline (aby používateľ videl, čo sa zmenilo). */
+  onOpenTimeline?: () => void;
 }
 
 const MODES = [
@@ -111,6 +119,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   rawDurationSeconds = null,
   onSeek,
   onApplyPlan,
+  onOpenTimeline,
 }) => {
   const isSk = language === "sk";
 
@@ -130,6 +139,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   const [acceptedIds, setAcceptedIds] = useState<string[]>([]);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [openWhyId, setOpenWhyId] = useState<string | null>(null);
+  const [applyReport, setApplyReport] = useState<DirectorApplyReport | null>(null);
   const [learningMode, setLearningMode] = useState(true);
 
   const plan = result?.plan ?? [];
@@ -153,6 +163,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
     setAcceptedIds([]);
     setRejectedIds([]);
     setOpenWhyId(null);
+    setApplyReport(null);
 
     try {
       const res = await fetch("/api/director/plan", {
@@ -203,7 +214,8 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
 
   const applyPlan = () => {
     const accepted = plan.filter((p) => acceptedIds.includes(p.id));
-    onApplyPlan?.(accepted);
+    const report = onApplyPlan?.(accepted);
+    if (report) setApplyReport(report);
   };
 
   const exportPlan = () => {
@@ -487,6 +499,50 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Report: čo sa reálne zapísalo do strihu */}
+            {applyReport && (
+              <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/30 space-y-2">
+                <p className="text-[11px] font-black text-emerald-300 uppercase tracking-wider">
+                  {isSk ? "✅ Zapísané do strihu" : "✅ Written into the edit"}
+                </p>
+
+                {applyReport.applied.length > 0 ? (
+                  <ul className="space-y-1">
+                    {applyReport.applied.map((a) => (
+                      <li key={a.label} className="text-[11px] text-neutral-300 flex items-center justify-between gap-3">
+                        <span>{a.label}</span>
+                        <span className="font-mono text-emerald-400">{a.count}×</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-neutral-500">
+                    {isSk ? "Žiadny zásah nebolo možné zapísať." : "Nothing could be written."}
+                  </p>
+                )}
+
+                {applyReport.skipped.length > 0 && (
+                  <div className="pt-2 border-t border-emerald-500/20 space-y-1.5">
+                    {applyReport.skipped.map((sk, i) => (
+                      <p key={i} className="text-[10px] text-amber-300/90 leading-relaxed">
+                        ⚠️ <span className="font-bold">{sk.label}:</span> {sk.reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {onOpenTimeline && (
+                  <button
+                    type="button"
+                    onClick={onOpenTimeline}
+                    className="mt-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold uppercase tracking-wider"
+                  >
+                    {isSk ? "Otvoriť timeline →" : "Open timeline →"}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Zoznam zásahov */}
             <div className="space-y-2">
