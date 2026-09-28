@@ -47,12 +47,16 @@ import { ContentPackMachine } from "./ContentPackMachine";
 import { ViralPresets } from "./ViralPresets";
 import { SmartAIInsight } from "./SmartAIInsight";
 import { OpusStudio } from "./OpusStudio";
-import { DirectorPlanPanel, DirectorPlanItem } from "./DirectorPlanPanel";
+import { DirectorPlanPanel, DirectorPlanItem, DirectorApplyReport } from "./DirectorPlanPanel";
 
 interface RawToReadyPipelineProps {
   // Global States from App.tsx
   rawAnalysis: any;
   onRunRawAnalysis: () => void;
+  /** Aplikuje schválené zásahy Director Planu do strihacieho jadra (App.tsx). */
+  onApplyDirectorPlan?: (accepted: DirectorPlanItem[]) => DirectorApplyReport;
+  /** Otvorí profesionálny timeline. */
+  onOpenTimeline?: () => void;
   isAnalyzingRaw: boolean;
 
   storyPlan: any;
@@ -156,6 +160,8 @@ interface RawToReadyPipelineProps {
 export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   rawAnalysis,
   onRunRawAnalysis,
+  onApplyDirectorPlan,
+  onOpenTimeline,
   isAnalyzingRaw,
   storyPlan,
   onGenerateStory,
@@ -581,12 +587,17 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                     language={language}
                     rawDurationSeconds={typeof duration === "number" ? duration : null}
                     onSeek={onSeek}
+                    onOpenTimeline={onOpenTimeline}
                     onApplyPlan={(accepted: DirectorPlanItem[]) => {
-                      showToast(
-                        isSk
-                          ? `✅ Director Plan: pripravených ${accepted.length} zásahov na aplikovanie.`
-                          : `✅ Director Plan: ${accepted.length} edits ready to apply.`
-                      );
+                      if (!onApplyDirectorPlan) {
+                        showToast(
+                          isSk
+                            ? `✅ Director Plan: ${accepted.length} zásahov pripravených (napojenie na timeline nie je dostupné).`
+                            : `✅ Director Plan: ${accepted.length} edits ready (timeline wiring unavailable).`
+                        );
+                        return;
+                      }
+                      return onApplyDirectorPlan(accepted);
                     }}
                   />
                 </div>
