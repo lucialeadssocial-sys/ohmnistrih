@@ -547,7 +547,12 @@ export class DirectorEngine {
     acceptedDecisionIds: string[]
   ): { success: boolean; appliedCount: number; snapshotVersionId?: string; error?: string } {
     const project = commandManager.getProject();
-    
+
+    // Multicam skupina projektu – používa sa pri aplikovaní rozhodnutí typu "Multicam Strih".
+    // Rovnaká logika ako v generateBriefAndPlan (tam je definovaná lokálne pre svoj scope),
+    // preto ju tu deklarujeme znova; predtým chýbala a tsc hlásil TS2304.
+    const multicamGroup = project.multicamGroups?.[0];
+
     // 1. Validate Conflicts First
     const validation = this.validatePlanConflicts(plan, project);
     if (!validation.valid && validation.conflicts.length > 20) {
