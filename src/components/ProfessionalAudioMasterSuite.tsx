@@ -22,6 +22,9 @@ import {
   RealtimeLoudnessMetrics
 } from "../types";
 
+import { coreEngine } from "../core";
+import { SetEQCommand, SetCompressionCommand } from "../core/command/commandSystem";
+
 interface ProfessionalAudioMasterSuiteProps {
   language: "sk" | "en";
   showToast: (msg: string, type?: "success" | "info" | "warning") => void;
@@ -71,11 +74,49 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
     stereoBalance: 0.02,
   });
 
+  /**
+   * Writes the current suite settings into the canonical project so the values are real
+   * state that the export audio graph actually processes. Returns how many clips changed.
+   */
+  const applyMixToCanonicalProject = (eqState: ParametricEQState, config: AudioMasteringConfig): number => {
+    const project = coreEngine.getProject();
+    const audioClips = project.tracks
+      .flatMap(t => t.clips)
+      .filter(c => c.type === "audio");
+    const targets = audioClips.length > 0 ? audioClips : project.tracks.flatMap(t => t.clips).slice(0, 1);
+
+    let applied = 0;
+    for (const clip of targets) {
+      const okEq = coreEngine.commandManager.executeCommand(new SetEQCommand(clip.id, {
+        enabled: true,
+        bypass: false,
+        highPass: { enabled: eqState.highPassEnabled, freq: eqState.highPassCutoffHz },
+        lowShelf: { freq: 120, gain: eqState.lowShelfGainDb },
+        mid: { freq: eqState.midFrequencyHz, gain: eqState.midGainDb, q: eqState.midQFactor },
+        highShelf: { freq: 8000, gain: eqState.highShelfGainDb },
+      }));
+      const okComp = config.dynamicRangeCompressor
+        ? coreEngine.commandManager.executeCommand(new SetCompressionCommand(clip.id, {
+            enabled: true,
+            bypass: false,
+            threshold: config.duckingThresholdDb,
+            ratio: Math.max(1, config.sidechainDuckingRatio),
+            attack: 0.01,
+            release: 0.25,
+            makeupGain: 0,
+          }))
+        : false;
+      if (okEq || okComp) applied++;
+    }
+    return applied;
+  };
+
   // Preset changer
-  const applyPreset = (preset: ParametricEQState["voicePolishPreset"]) => {
+  const applyPreset = (preset: ParametricEQState["voicePolishPreset"]): ParametricEQState => {
+    let next: ParametricEQState = eq;
     switch (preset) {
       case "BROADCAST_WARMTH":
-        setEq({
+        next = {
           highPassEnabled: true,
           highPassCutoffHz: 80,
           lowShelfGainDb: 2.5,
@@ -84,10 +125,10 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
           midQFactor: 1.4,
           highShelfGainDb: 2.0,
           voicePolishPreset: "BROADCAST_WARMTH",
-        });
+        };
         break;
       case "CRISP_CLARITY":
-        setEq({
+        next = {
           highPassEnabled: true,
           highPassCutoffHz: 95,
           lowShelfGainDb: -1.0,
@@ -96,10 +137,10 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
           midQFactor: 1.8,
           highShelfGainDb: 4.5,
           voicePolishPreset: "CRISP_CLARITY",
-        });
+        };
         break;
       case "PODCAST_STUDIO":
-        setEq({
+        next = {
           highPassEnabled: true,
           highPassCutoffHz: 80,
           lowShelfGainDb: 1.0,
@@ -108,10 +149,10 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
           midQFactor: 1.0,
           highShelfGainDb: 2.5,
           voicePolishPreset: "PODCAST_STUDIO",
-        });
+        };
         break;
       case "FLAT_NATURAL":
-        setEq({
+        next = {
           highPassEnabled: true,
           highPassCutoffHz: 80,
           lowShelfGainDb: 0.0,
@@ -120,10 +161,12 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
           midQFactor: 1.0,
           highShelfGainDb: 0.0,
           voicePolishPreset: "FLAT_NATURAL",
-        });
+        };
         break;
     }
+    setEq(next);
     showToast(isSk ? `Preset aktivovaný: ${preset}` : `Preset applied: ${preset}`, "success");
+    return next;
   };
 
   return (
@@ -149,15 +192,31 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              applyPreset("BROADCAST_WARMTH");
-              setMasterConfig((prev) => ({
-                ...prev,
+              const nextEq = applyPreset("BROADCAST_WARMTH");
+              const nextConfig: AudioMasteringConfig = {
+                ...masterConfig,
                 noiseSuppressionStrength: 70,
                 rumbleFilterActive: true,
                 loudnessTargetLUFS: -14,
                 sidechainDuckingRatio: 5,
-              }));
-              showToast(isSk ? "Zvuk automaticky vyčistený a vyleštený!" : "Audio polished to studio broadcast standard!", "success");
+              };
+              setMasterConfig(nextConfig);
+              const applied = applyMixToCanonicalProject(nextEq, nextConfig);
+              if (applied > 0) {
+                showToast(
+                  isSk
+                    ? `EQ (rumble filter + 3 pásma) a kompresia zapísané na ${applied} klip(ov) v projekte — export ich aplikuje. Cieľová LUFS normalizácia nie je meraná.`
+                    : `EQ (rumble filter + 3 bands) and compression written to ${applied} clip(s) in the project — the export applies them. LUFS target normalization is not measured.`,
+                  "success"
+                );
+              } else {
+                showToast(
+                  isSk
+                    ? "Žiadny audio klip v projekte — nie je čo upraviť."
+                    : "No audio clip in the project — nothing to process.",
+                  "warning"
+                );
+              }
             }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition-all"
           >

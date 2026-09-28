@@ -3,12 +3,58 @@ import { useCoreProject, coreEngine } from '../../core';
 import { MediaAsset } from '../../core/types/project';
 import { Layers, Check, X, Wand2, Music, Clock, Settings2 } from 'lucide-react';
 
+/**
+ * Cross-correlates two real waveform envelopes and returns the lag in seconds.
+ *
+ * The waveforms come from the media engine (one bucket per audio window), so the offset is
+ * measured from actual audio instead of being guessed. Returns null when data is unusable.
+ */
+function estimateOffsetSeconds(
+  reference: number[],
+  target: number[],
+  referenceDuration: number
+): number | null {
+  if (reference.length < 8 || target.length < 8) return null;
+
+  const maxLag = Math.min(reference.length, target.length) - 1;
+  let bestLag = 0;
+  let bestScore = -Infinity;
+
+  for (let lag = -maxLag; lag <= maxLag; lag++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < reference.length; i++) {
+      const j = i + lag;
+      if (j < 0 || j >= target.length) continue;
+      sum += reference[i] * target[j];
+      count++;
+    }
+    if (count < 8) continue;
+    const score = sum / count;
+    if (score > bestScore) {
+      bestScore = score;
+      bestLag = lag;
+    }
+  }
+
+  const bucketToSeconds = referenceDuration > 0 ? referenceDuration / reference.length : 0;
+  return Number((bestLag * bucketToSeconds).toFixed(3));
+}
+
 export const SyncMulticamDialog: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { project } = useCoreProject();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [syncMethod, setSyncMethod] = useState<'waveform' | 'timecode' | 'manual'>('waveform');
   const [groupName, setGroupName] = useState('New Multicam Group');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncReport, setSyncReport] = useState<{
+    ok: boolean;
+    method?: 'waveform' | 'timecode' | 'manual';
+    verified?: boolean;
+    offsets?: Record<string, number>;
+    messageSk: string;
+    messageEn: string;
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -20,15 +66,81 @@ export const SyncMulticamDialog: React.FC<{ isOpen: boolean; onClose: () => void
 
   const handleSync = () => {
     setIsSyncing(true);
-    // Simulate analysis & sync
-    setTimeout(() => {
-      // In a real app, we'd find clips referring to these assets or create new ones
-      // For demo, we just use the asset IDs to identify the source angles
-      const dummyClipIds = selectedAssetIds.map(id => `clip_${id}`); 
-      coreEngine.syncMulticam(dummyClipIds, groupName, syncMethod);
+    setSyncReport(null);
+
+    // Resolve the REAL clips that reference the selected assets — no synthetic clip ids.
+    const allClips = project.tracks.flatMap(t => t.clips);
+    const selectedClips = allClips.filter(c => c.assetId && selectedAssetIds.includes(c.assetId));
+
+    if (selectedClips.length < 2) {
       setIsSyncing(false);
-      onClose();
-    }, 2000);
+      setSyncReport({
+        ok: false,
+        messageSk: "Na časovej osi nie sú aspoň 2 klipy z vybraných médií — najprv ich pridajte na timeline.",
+        messageEn: "The timeline has fewer than 2 clips from the selected media — add them to the timeline first.",
+      });
+      return;
+    }
+
+    const assets = selectedAssetIds
+      .map(id => project.assets.find(a => a.id === id))
+      .filter((a): a is NonNullable<typeof a> => !!a);
+
+    const angleOffsets: Record<string, number> = {};
+    let effectiveMethod: 'waveform' | 'timecode' | 'manual' = syncMethod;
+    let verified = false;
+    let noteSk = "";
+    let noteEn = "";
+
+    if (syncMethod === "waveform") {
+      const reference = assets[0];
+      const referenceWave = reference?.waveformData || [];
+      const canCorrelate = referenceWave.length >= 8 && assets.length > 1;
+
+      if (canCorrelate && reference) {
+        assets.slice(1).forEach(asset => {
+          const offset = estimateOffsetSeconds(referenceWave, asset.waveformData || [], reference.duration);
+          if (offset !== null) angleOffsets[asset.id] = offset;
+        });
+        verified = Object.keys(angleOffsets).length > 0;
+        noteSk = verified
+          ? `Offsety vypočítané z reálnych waveformov (referencia: ${reference.name}).`
+          : "Waveformy nemajú dosť vzoriek na koreláciu.";
+        noteEn = verified
+          ? `Offsets computed from real waveform data (reference: ${reference.name}).`
+          : "Waveforms do not have enough samples for correlation.";
+      } else {
+        effectiveMethod = "manual";
+        noteSk = "Waveformy nie sú v projekte k dispozícii → skupina vznikne s manuálnym zarovnaním (offset 0).";
+        noteEn = "No waveform data available in the project → the group is created with manual alignment (offset 0).";
+      }
+    } else if (syncMethod === "timecode") {
+      // The project stores no timecode metadata — do not pretend the angles were aligned.
+      effectiveMethod = "manual";
+      noteSk = "Zdrojové súbory nemajú uložený timecode → skupina vznikne s manuálnym zarovnaním (offset 0).";
+      noteEn = "The source files carry no timecode metadata → the group is created with manual alignment (offset 0).";
+    } else {
+      noteSk = "Manuálne zarovnanie: offsety zostávajú 0 a nastavíte ich ručne.";
+      noteEn = "Manual alignment: offsets stay 0 and are adjusted by hand.";
+    }
+
+    const ok = coreEngine.syncMulticam(
+      selectedClips.map(c => c.id),
+      groupName,
+      effectiveMethod,
+      angleOffsets,
+      verified
+    );
+
+    setIsSyncing(false);
+    setSyncReport({
+      ok,
+      method: effectiveMethod,
+      verified,
+      offsets: angleOffsets,
+      messageSk: noteSk,
+      messageEn: noteEn,
+    });
   };
 
   return (
@@ -140,13 +252,39 @@ export const SyncMulticamDialog: React.FC<{ isOpen: boolean; onClose: () => void
           </div>
         </div>
 
+        {/* Real sync result — method, offsets and whether they came from analysis */}
+        {syncReport && (
+          <div className={`px-5 py-3 border-t text-[11px] font-bold space-y-1 ${
+            syncReport.ok
+              ? (syncReport.verified ? "bg-emerald-950/30 border-emerald-900/40 text-emerald-300" : "bg-amber-950/30 border-amber-900/40 text-amber-200")
+              : "bg-rose-950/30 border-rose-900/40 text-rose-300"
+          }`}>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border border-current/40">
+                {syncReport.ok
+                  ? (syncReport.verified ? "OFFSETS MEASURED" : "MANUAL (offset 0)")
+                  : "SYNC NOT PERFORMED"}
+              </span>
+              {syncReport.method && <span className="font-mono text-[10px] opacity-80">method: {syncReport.method}</span>}
+            </div>
+            <div>{syncReport.messageSk} / {syncReport.messageEn}</div>
+            {syncReport.offsets && Object.keys(syncReport.offsets).length > 0 && (
+              <div className="font-mono text-[10px] opacity-80">
+                {Object.entries(syncReport.offsets).map(([assetId, off]) => `${assetId.slice(0, 10)}… → ${off}s`).join("  •  ")}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Footer */}
         <div className="p-5 bg-zinc-950 border-t border-zinc-800 flex items-center justify-between">
            <span className="text-[10px] font-mono text-zinc-500 uppercase">
               {selectedAssetIds.length} Angles Selected
            </span>
            <div className="flex gap-3">
-              <button onClick={onClose} className="px-4 py-2 text-zinc-400 hover:text-white text-xs font-bold transition-colors">Cancel</button>
+              <button onClick={onClose} className="px-4 py-2 text-zinc-400 hover:text-white text-xs font-bold transition-colors">
+                {syncReport?.ok ? "Close" : "Cancel"}
+              </button>
               <button 
                 onClick={handleSync}
                 disabled={selectedAssetIds.length < 2 || isSyncing}

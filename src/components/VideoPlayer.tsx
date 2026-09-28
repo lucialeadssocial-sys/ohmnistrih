@@ -188,6 +188,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = React.memo(({
   const playedTransitionSfxRef = useRef<Set<string>>(new Set());
   const lastTimeRef = useRef<number>(0);
   const timeRafRef = useRef<number | null>(null);
+  // Reverse transport (J). HTMLMediaElement has no negative playbackRate, so J runs as a
+  // seek-chained frame-step loop over the real media element.
+  const reverseSpeedRef = useRef<number>(0);
+  const reverseBusyRef = useRef<boolean>(false);
+  const transportHandlersRef = useRef({ onTimeUpdate, onTogglePlay, isPlaying });
+
+  useEffect(() => {
+    transportHandlersRef.current = { onTimeUpdate, onTogglePlay, isPlaying };
+  });
 
   // Resume audio context
   const resumeAudio = () => {
@@ -406,23 +415,99 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = React.memo(({
 
   // --- Professional Editing Handlers (FÁZA 2A) ---
 
+  const stopReversePlayback = useCallback(() => {
+    reverseSpeedRef.current = 0;
+    reverseBusyRef.current = false;
+  }, []);
+
+  // Recursive step function kept in a ref so the seek callback always calls the latest copy.
+  const stepReverseRef = useRef<() => void>(() => {});
+  stepReverseRef.current = () => {
+    const video = videoRef.current;
+    const speed = reverseSpeedRef.current;
+    if (!video || speed >= 0) {
+      reverseBusyRef.current = false;
+      return;
+    }
+
+    const fps = Math.max(1, coreEngine.getProject().settings.fps || 30);
+    const framesPerStep = Math.max(1, Math.round(Math.abs(speed)));
+    const target = Math.max(0, video.currentTime - framesPerStep / fps);
+
+    // Start of the media reached — stop like a real transport instead of looping.
+    if (video.currentTime <= 0.001 || target >= video.currentTime) {
+      reverseSpeedRef.current = 0;
+      reverseBusyRef.current = false;
+      setJklSpeed(0);
+      if (transportHandlersRef.current.isPlaying) transportHandlersRef.current.onTogglePlay(false);
+      return;
+    }
+
+    const onSeeked = () => {
+      video.removeEventListener("seeked", onSeeked);
+      const t = video.currentTime;
+      playheadStore.setTime(t, true);
+      transportHandlersRef.current.onTimeUpdate(t);
+      reverseBusyRef.current = false;
+      if (reverseSpeedRef.current < 0) stepReverseRef.current();
+    };
+
+    reverseBusyRef.current = true;
+    video.addEventListener("seeked", onSeeked);
+    video.currentTime = target;
+  };
+
   const handleJklKey = useCallback((key: "J" | "K" | "L") => {
-    const nextSpeed = TimelineEngine.calculateJklSpeed(jklSpeed, key);
+    const currentSpeed = reverseSpeedRef.current !== 0 ? reverseSpeedRef.current : jklSpeed;
+    const nextSpeed = TimelineEngine.calculateJklSpeed(currentSpeed, key);
     setJklSpeed(nextSpeed);
+    reverseSpeedRef.current = nextSpeed;
+
+    const video = videoRef.current;
 
     if (nextSpeed === 0) {
-      if (videoRef.current) videoRef.current.pause();
-      if (isPlaying) onTogglePlay(false);
-    } else {
-      if (videoRef.current) {
-        videoRef.current.playbackRate = Math.abs(nextSpeed);
-        if (videoRef.current.paused) {
-          videoRef.current.play().catch(() => {});
-        }
+      // K: full stop, including any running reverse pass.
+      if (video) {
+        video.pause();
+        video.playbackRate = 1;
       }
-      if (!isPlaying) onTogglePlay(true);
+      if (isPlaying) onTogglePlay(false);
+      return;
     }
-  }, [jklSpeed, isPlaying, onTogglePlay, videoRef]);
+
+    if (nextSpeed < 0) {
+      // J: real reverse — pause the element and walk it backwards frame by frame.
+      if (video) {
+        video.pause();
+        video.playbackRate = 1;
+      }
+      if (isPlaying) onTogglePlay(false);
+      if (!reverseBusyRef.current) stepReverseRef.current();
+      return;
+    }
+
+    // L: forward playback at 1x / 2x / 4x / 8x on the media element.
+    stopReversePlayback();
+    if (video) {
+      video.playbackRate = Math.abs(nextSpeed);
+      if (video.paused) video.play().catch(() => {});
+    }
+    if (!isPlaying) onTogglePlay(true);
+  }, [jklSpeed, isPlaying, onTogglePlay, stopReversePlayback, videoRef]);
+
+  // Pressing Play (or any external play state) ends the reverse pass.
+  useEffect(() => {
+    if (isPlaying && reverseSpeedRef.current < 0) {
+      reverseSpeedRef.current = 0;
+      setJklSpeed(0);
+    }
+  }, [isPlaying]);
+
+  // Never leave a seek listener running after unmount.
+  useEffect(() => () => {
+    reverseSpeedRef.current = 0;
+    reverseBusyRef.current = false;
+  }, []);
 
   const handleFrameStep = useCallback((direction: "forward" | "backward", count: number = 1) => {
     const fps = coreEngine.getProject().settings.fps || 30;

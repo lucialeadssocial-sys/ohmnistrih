@@ -6,6 +6,8 @@
 
 import { AIProvider, ModelProgress, VisionResult, SceneBoundary } from '../types/ai';
 import { aiCacheManager } from '../cache/aiCache';
+import { mediaEngineV1 } from '../../core/media-engine';
+import { sampleFrameMetrics, measureImageData, FrameMetrics } from '../../core/media/frameMetrics';
 
 export class LocalVisionProvider implements AIProvider<HTMLVideoElement | File, VisionResult> {
   public id = 'local_vision_scene_cut';
@@ -60,8 +62,10 @@ export class LocalVisionProvider implements AIProvider<HTMLVideoElement | File, 
     this.updateStatus({ status: 'READY', progress: 100 });
   }
 
-  public async process(input: HTMLVideoElement | File, forceRefresh: boolean = false): Promise<VisionResult> {
-    const assetId = (input as File).name ? `${(input as File).name}_${(input as File).size}` : `video_element`;
+  public async process(input: HTMLVideoElement | File | Blob, forceRefresh: boolean = false): Promise<VisionResult> {
+    const assetId = input instanceof HTMLVideoElement
+      ? 'video_element'
+      : `${(input as File).name || 'blob'}_${input.size}`;
 
     if (!forceRefresh) {
       const cached = await aiCacheManager.getCachedResult<VisionResult>(assetId, 'vision_analysis');
@@ -75,87 +79,37 @@ export class LocalVisionProvider implements AIProvider<HTMLVideoElement | File, 
     this.updateStatus({ status: 'PROCESSING', progress: 10, message: 'Analyzujem scény a osvetlenie...' });
 
     try {
-      let videoElement: HTMLVideoElement;
-      let shouldCleanup = false;
+      const metrics = await this.sampleMetrics(input);
+      if (metrics.length === 0) {
+        throw new Error('Žiadnu snímku sa nepodarilo dekódovať — analýza sa nevykonala.');
+      }
 
-      if (input instanceof File) {
-        videoElement = document.createElement('video');
-        videoElement.src = URL.createObjectURL(input);
-        videoElement.muted = true;
-        await new Promise((res) => {
-          videoElement.onloadedmetadata = res;
+      const scenes: SceneBoundary[] = metrics
+        .filter((m) => m.isSceneCut)
+        .map((m) => ({ timestamp: m.timestamp, score: Number(m.changeFromPrevious.toFixed(2)) }));
+
+      const averageBrightness = Math.round(metrics.reduce((sum, m) => sum + m.brightness, 0) / metrics.length);
+
+      // Real luminance distribution of the sampled frames (8 measured bins collapsed into 4).
+      const bins = [0, 0, 0, 0];
+      metrics.forEach((m) => {
+        m.luminanceHistogram.forEach((value, index) => {
+          bins[Math.min(3, Math.floor(index / 2))] += value;
         });
-        shouldCleanup = true;
-      } else {
-        videoElement = input;
-      }
-
-      const duration = videoElement.duration || 10;
-      const sampleInterval = 1; // Sample 1 frame per second
-      const totalSamples = Math.floor(duration / sampleInterval);
-
-      const canvas = new OffscreenCanvas(160, 90);
-      const ctx = canvas.getContext('2d')!;
-
-      const scenes: SceneBoundary[] = [];
-      let prevImageData: Uint8ClampedArray | null = null;
-      let totalLuminance = 0;
-
-      for (let i = 0; i < totalSamples; i++) {
-        const currentTime = i * sampleInterval;
-        videoElement.currentTime = currentTime;
-
-        await new Promise((res) => {
-          videoElement.onseeked = res;
-        });
-
-        ctx.drawImage(videoElement, 0, 0, 160, 90);
-        const imgData = ctx.getImageData(0, 0, 160, 90).data;
-
-        // Calculate Average Luminance
-        let sumLuminance = 0;
-        for (let j = 0; j < imgData.length; j += 4) {
-          sumLuminance += 0.299 * imgData[j] + 0.587 * imgData[j + 1] + 0.114 * imgData[j + 2];
-        }
-        const avgFrameLum = sumLuminance / (160 * 90);
-        totalLuminance += avgFrameLum;
-
-        // Calculate Scene Cut Difference Score
-        if (prevImageData) {
-          let diffSum = 0;
-          for (let j = 0; j < imgData.length; j += 4) {
-            diffSum += Math.abs(imgData[j] - prevImageData[j]) +
-                      Math.abs(imgData[j + 1] - prevImageData[j + 1]) +
-                      Math.abs(imgData[j + 2] - prevImageData[j + 2]);
-          }
-          const frameDiffScore = diffSum / (160 * 90 * 3 * 255);
-
-          if (frameDiffScore > 0.25) { // 25% pixel difference threshold
-            scenes.push({
-              timestamp: Number(currentTime.toFixed(2)),
-              score: Number(frameDiffScore.toFixed(2))
-            });
-          }
-        }
-
-        prevImageData = new Uint8ClampedArray(imgData);
-
-        const progress = Math.min(95, Math.round(((i + 1) / totalSamples) * 100));
-        this.updateStatus({ progress, message: `Analýza scény ${progress}%...` });
-      }
-
-      if (shouldCleanup) {
-        URL.revokeObjectURL(videoElement.src);
-      }
+      });
+      const colorHistogram = bins.map((value) => Number(((value / metrics.length) * 100).toFixed(1)));
 
       const result: VisionResult = {
         scenes,
-        faceDetected: true,
-        averageBrightness: Math.round(totalLuminance / totalSamples),
-        colorHistogram: [40, 30, 20, 10]
+        // This engine has no face model: report that instead of claiming a face was found.
+        faceDetected: false,
+        faceDetectionPerformed: false,
+        averageBrightness,
+        brightnessMeasured: true,
+        colorHistogram
       };
 
-      this.updateStatus({ status: 'COMPLETE', progress: 100, message: `Detegovaných ${scenes.length} zmien sceny` });
+      this.updateStatus({ status: 'COMPLETE', progress: 100, message: `Detegovaných ${scenes.length} zmien scény z ${metrics.length} snímok` });
       await aiCacheManager.setCachedResult(assetId, 'vision_analysis', result);
 
       return result;
@@ -165,6 +119,66 @@ export class LocalVisionProvider implements AIProvider<HTMLVideoElement | File, 
     } finally {
       this.abortController = null;
     }
+  }
+
+  /**
+   * Samples real frames: through the media engine worker for files/blobs, or by drawing an
+   * existing <video> element frame by frame. Nothing is estimated from metadata.
+   */
+  private async sampleMetrics(input: HTMLVideoElement | File | Blob): Promise<FrameMetrics[]> {
+    if (input instanceof HTMLVideoElement) {
+      return this.sampleVideoElement(input);
+    }
+
+    const metadata = await mediaEngineV1.getMetadata(input as File);
+    const duration = metadata?.duration || 0;
+    if (!duration) {
+      throw new Error('Trvanie média sa nepodarilo zistiť — analýza scén sa nevykonala.');
+    }
+
+    return sampleFrameMetrics(input, duration, 24, (fraction) => {
+      const progress = 10 + Math.round(fraction * 85);
+      this.updateStatus({ progress, message: `Analýza scény ${progress}%...` });
+    });
+  }
+
+  /** Frame sampling for a live <video> element (same measurements as the worker path). */
+  private async sampleVideoElement(videoElement: HTMLVideoElement): Promise<FrameMetrics[]> {
+    const duration = videoElement.duration || 0;
+    if (!duration) return [];
+
+    const width = 160;
+    const height = 90;
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
+    (canvas as any).width = width;
+    (canvas as any).height = height;
+    const ctx = (canvas as any).getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!ctx) return [];
+
+    const sampleCount = Math.max(2, Math.min(24, Math.round(duration)));
+    const step = duration / sampleCount;
+    const metrics: FrameMetrics[] = [];
+    let previous: FrameMetrics | null = null;
+
+    for (let i = 0; i <= sampleCount; i++) {
+      const timestamp = Math.min(i * step, Math.max(0, duration - 0.05));
+      videoElement.currentTime = timestamp;
+      await new Promise<void>((resolve) => {
+        videoElement.onseeked = () => resolve();
+      });
+
+      ctx.drawImage(videoElement, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const measured = measureImageData(imageData.data, width, height, timestamp, previous);
+      if (measured) {
+        metrics.push(measured);
+        previous = measured;
+      }
+      const progress = 10 + Math.round(((i + 1) / (sampleCount + 1)) * 85);
+      this.updateStatus({ progress, message: `Analýza scény ${progress}%...` });
+    }
+
+    return metrics;
   }
 }
 

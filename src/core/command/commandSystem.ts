@@ -144,21 +144,57 @@ export class SetEQCommand implements Command {
   public id = crypto.randomUUID();
   public timestamp = Date.now();
   description = "Set Audio EQ";
+  private previousConfig: EQConfig | null = null;
+  private hadPreviousConfig = false;
+
   constructor(private clipId: string, private config: EQConfig) {}
+
   execute(project: ProjectModel): ProjectModel {
-    const nextProject = { ...project };
-    const clip = this.findClip(nextProject, this.clipId);
-    if (clip) {
-      if (!clip.audioEffects) clip.audioEffects = {};
-      clip.audioEffects.eq = this.config;
-    }
-    return nextProject;
+    const clip = this.findClip(project, this.clipId);
+    // Reject (no history entry) when the target clip does not exist.
+    if (!clip) return project;
+
+    this.hadPreviousConfig = !!clip.audioEffects?.eq;
+    this.previousConfig = clip.audioEffects?.eq
+      ? (JSON.parse(JSON.stringify(clip.audioEffects.eq)) as EQConfig)
+      : null;
+
+    // Rebuild the clip immutably so the previous project state is not mutated in place.
+    return {
+      ...project,
+      tracks: project.tracks.map(track => ({
+        ...track,
+        clips: track.clips.map(c =>
+          c.id === this.clipId
+            ? { ...c, audioEffects: { ...(c.audioEffects || {}), eq: this.config } }
+            : c
+        ),
+      })),
+    };
   }
+
   undo(project: ProjectModel): ProjectModel {
-    // For simplicity, we just return the previous project in this implementation
-    // Ideally we'd store the previous state or implement real undo for effects
-    return project;
+    const clip = this.findClip(project, this.clipId);
+    if (!clip) return project;
+
+    return {
+      ...project,
+      tracks: project.tracks.map(track => ({
+        ...track,
+        clips: track.clips.map(c => {
+          if (c.id !== this.clipId) return c;
+          const audioEffects = { ...(c.audioEffects || {}) };
+          if (this.hadPreviousConfig && this.previousConfig) {
+            audioEffects.eq = this.previousConfig;
+          } else {
+            delete audioEffects.eq;
+          }
+          return { ...c, audioEffects };
+        }),
+      })),
+    };
   }
+
   private findClip(project: ProjectModel, id: string) { return project.tracks.flatMap(t => t.clips).find(c => c.id === id); }
 }
 
@@ -166,19 +202,56 @@ export class SetCompressionCommand implements Command {
   public id = crypto.randomUUID();
   public timestamp = Date.now();
   description = "Set Audio Compression";
+  private previousConfig: CompressionConfig | null = null;
+  private hadPreviousConfig = false;
+
   constructor(private clipId: string, private config: CompressionConfig) {}
+
   execute(project: ProjectModel): ProjectModel {
-    const nextProject = { ...project };
-    const clip = this.findClip(nextProject, this.clipId);
-    if (clip) {
-      if (!clip.audioEffects) clip.audioEffects = {};
-      clip.audioEffects.compression = this.config;
-    }
-    return nextProject;
+    const clip = this.findClip(project, this.clipId);
+    // Reject (no history entry) when the target clip does not exist.
+    if (!clip) return project;
+
+    this.hadPreviousConfig = !!clip.audioEffects?.compression;
+    this.previousConfig = clip.audioEffects?.compression
+      ? (JSON.parse(JSON.stringify(clip.audioEffects.compression)) as CompressionConfig)
+      : null;
+
+    return {
+      ...project,
+      tracks: project.tracks.map(track => ({
+        ...track,
+        clips: track.clips.map(c =>
+          c.id === this.clipId
+            ? { ...c, audioEffects: { ...(c.audioEffects || {}), compression: this.config } }
+            : c
+        ),
+      })),
+    };
   }
+
   undo(project: ProjectModel): ProjectModel {
-    return project;
+    const clip = this.findClip(project, this.clipId);
+    if (!clip) return project;
+
+    return {
+      ...project,
+      tracks: project.tracks.map(track => ({
+        ...track,
+        clips: track.clips.map(c => {
+          if (c.id !== this.clipId) return c;
+          const audioEffects = { ...(c.audioEffects || {}) };
+          if (this.hadPreviousConfig && this.previousConfig) {
+            audioEffects.compression = this.previousConfig;
+          } else {
+            delete audioEffects.compression;
+          }
+          return { ...c, audioEffects };
+        }),
+      })),
+    };
   }
+
   private findClip(project: ProjectModel, id: string) { return project.tracks.flatMap(t => t.clips).find(c => c.id === id); }
 }
 
@@ -1981,7 +2054,11 @@ export class SyncMulticamCommand implements Command {
     public description: string,
     private clipIds: string[],
     private groupName: string,
-    private syncMethod: 'waveform' | 'timecode' | 'manual' = 'manual'
+    private syncMethod: 'waveform' | 'timecode' | 'manual' = 'manual',
+    /** Real per-angle offsets in seconds, keyed by asset id. Missing entries stay at 0. */
+    private angleOffsets: Record<string, number> = {},
+    /** Whether the offsets were derived from analysis (true) or left to manual alignment. */
+    private syncVerified: boolean = false
   ) {}
 
   execute(project: ProjectModel): ProjectModel {
@@ -1991,7 +2068,8 @@ export class SyncMulticamCommand implements Command {
       id: `mcg_${crypto.randomUUID()}`,
       name: this.groupName,
       angles: [],
-      syncMethod: this.syncMethod
+      syncMethod: this.syncMethod,
+      syncVerified: this.syncVerified
     };
 
     const updatedTracks = project.tracks.map(track => {
@@ -2004,7 +2082,7 @@ export class SyncMulticamCommand implements Command {
               id: angleId,
               assetId: clip.assetId!,
               name: clip.name,
-              offset: 0 // In a real system, we'd calculate offset based on syncMethod
+              offset: this.angleOffsets[clip.assetId!] ?? 0
             });
             return {
               ...clip,

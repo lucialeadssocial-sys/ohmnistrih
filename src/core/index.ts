@@ -523,9 +523,15 @@ export class CoreEngine {
     return success;
   }
 
-  public syncMulticam(clipIds: string[], groupName: string, syncMethod: 'waveform' | 'timecode' | 'manual' = 'manual'): boolean {
+  public syncMulticam(
+    clipIds: string[],
+    groupName: string,
+    syncMethod: 'waveform' | 'timecode' | 'manual' = 'manual',
+    angleOffsets: Record<string, number> = {},
+    syncVerified: boolean = false
+  ): boolean {
     const success = this.commandManager.executeCommand(
-      new SyncMulticamCommand(`Vytvorený Multicam Group: ${groupName}`, clipIds, groupName, syncMethod)
+      new SyncMulticamCommand(`Vytvorený Multicam Group: ${groupName}`, clipIds, groupName, syncMethod, angleOffsets, syncVerified)
     );
     if (success) this.saveCurrentProject();
     return success;

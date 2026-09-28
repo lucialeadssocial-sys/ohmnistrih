@@ -66,7 +66,18 @@ export interface QCGateResult {
   missingMediaDetected: boolean;
   captionOverflowDetected: boolean;
   safeZoneViolations: number;
-  score: number; // 0 - 100
+  score: number; // 0 - 100, derived from the checks that were actually performed
+  /**
+   * Which checks were really performed. `false` means the value above is a placeholder,
+   * not a measurement of the encoded output (pixel/bitstream inspection is not implemented).
+   */
+  measured: {
+    missingMedia: boolean;
+    captionOverflow: boolean;
+    blackFrames: boolean;
+    audioClipping: boolean;
+    safeZones: boolean;
+  };
   detailsSk: string;
   detailsEn: string;
 }

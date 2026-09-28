@@ -77,7 +77,10 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { mediaEngine } from "./core/media/mediaEngine";
-import { coreEngine, TimelineEngine } from "./core";
+import { opfsManager } from "./core/storage/opfs";
+import type { MediaAsset } from "./core/types/project";
+import { coreEngine, TimelineEngine, createCanonicalClip } from "./core";
+import { AddClipCommand } from "./core/command/commandSystem";
 import {
   VideoProjectSettings,
   CaptionSegment,
@@ -244,6 +247,105 @@ function MainApp() {
   const [isCaptionStudioOpen, setIsCaptionStudioOpen] = useState(false);
   const [isMediaIntelligenceOpen, setIsMediaIntelligenceOpen] = useState(false);
   const [isDirectorStudioOpen, setIsDirectorStudioOpen] = useState(false);
+  // Real undo/redo availability. The header used to claim `canUndo={true}` unconditionally
+  // and answered clicks with a toast, so the user could "undo" without any state change.
+  // Where the last AI result came from. The server flags whether any media was actually
+  // analysed; the UI must surface that instead of presenting a topic-based draft as measured.
+  const [aiProvenance, setAiProvenance] = useState<{
+    kind: "REAL" | "SYNTHETIC";
+    feature: "transcript" | "analysis";
+    source: string;
+    noteSk: string;
+    noteEn: string;
+  } | null>(null);
+
+  const [historyState, setHistoryState] = useState<{ canUndo: boolean; canRedo: boolean }>(() => ({
+    canUndo: coreEngine.commandManager.canUndo(),
+    canRedo: coreEngine.commandManager.canRedo(),
+  }));
+
+  useEffect(() => {
+    const sync = () => {
+      const canUndo = coreEngine.commandManager.canUndo();
+      const canRedo = coreEngine.commandManager.canRedo();
+      setHistoryState(prev => (prev.canUndo === canUndo && prev.canRedo === canRedo ? prev : { canUndo, canRedo }));
+    };
+    sync();
+    const unsubscribe = coreEngine.commandManager.subscribe(sync);
+    return unsubscribe;
+  }, []);
+
+  const handleUndo = () => {
+    const label = coreEngine.commandManager.getUndoHistory().slice(-1)[0];
+    if (coreEngine.undo()) {
+      showToast(isSk ? `Krok späť: ${label || "posledná zmena"}` : `Undone: ${label || "last change"}`);
+    } else {
+      showToast(isSk ? "Nie je čo vrátiť." : "Nothing to undo.");
+    }
+  };
+
+  // Real project versions created by the Command System (snapshots), not UI-only history.
+  const [projectVersions, setProjectVersions] = useState<{ id: string; label: string; createdAt: number }[]>(() =>
+    (coreEngine.getProject().versions || []).map(v => ({
+      id: v.id,
+      label: v.label || "Verzia",
+      createdAt: v.createdAt || Date.now(),
+    }))
+  );
+
+  useEffect(() => {
+    const syncVersions = () => {
+      const versions = (coreEngine.getProject().versions || []).map(v => ({
+        id: v.id,
+        label: v.label || "Verzia",
+        createdAt: v.createdAt || Date.now(),
+      }));
+      setProjectVersions(versions);
+    };
+    const unsubscribe = coreEngine.commandManager.subscribe(syncVersions);
+    return unsubscribe;
+  }, []);
+
+  /**
+   * Restores a snapshot into the canonical project.
+   *
+   * Only real snapshots (prefix `ver_`) can be restored; UI-history rows are display-only and
+   * are reported as such instead of pretending something was rolled back.
+   */
+  const handleRestoreVersion = (uiId: string) => {
+    if (!uiId.startsWith("ver_")) {
+      showToast(
+        isSk
+          ? "Táto položka je iba história zobrazenia — nie je to uložená verzia projektu."
+          : "This entry is display history only — it is not a stored project version."
+      );
+      return;
+    }
+    const versionId = uiId.slice(4);
+    const version = (coreEngine.getProject().versions || []).find(v => v.id === versionId);
+    if (!version) {
+      showToast(isSk ? "Verzia sa nenašla." : "Version not found.");
+      return;
+    }
+    if (coreEngine.restoreProjectVersion(versionId)) {
+      showToast(
+        isSk
+          ? `Obnovená verzia: ${version.label} (projekt vrátený do stavu snapshotu)`
+          : `Restored version: ${version.label} (project rolled back to the snapshot)`
+      );
+    } else {
+      showToast(isSk ? "Obnovenie verzie zlyhalo." : "Version restore failed.");
+    }
+  };
+
+  const handleRedo = () => {
+    const label = coreEngine.commandManager.getRedoHistory().slice(-1)[0];
+    if (coreEngine.redo()) {
+      showToast(isSk ? `Krok vpred: ${label || "posledná zmena"}` : `Redone: ${label || "last change"}`);
+    } else {
+      showToast(isSk ? "Nie je čo obnoviť." : "Nothing to redo.");
+    }
+  };
   // Edit Academy is opened as a root-level overlay, so it renders from Home and from the
   // editor alike (it must never depend on the current view/currentView state).
   const [isAcademyOpen, setIsAcademyOpen] = useState(false);
@@ -1147,10 +1249,85 @@ function MainApp() {
     }, 2500);
   };
 
+  /**
+   * Applies the B-roll suggestions as real graphic overlay clips on the canonical timeline.
+   *
+   * The suggestions carry no media file (they are overlay cards with title/subtitle), so they
+   * are inserted as text overlays — the toast says so instead of claiming video inserts.
+   */
   const handleApplyBroll = () => {
-    setBrollProject({ ...brollProject, isApplied: true });
-    showToast(isSk ? "🎬 B-roll aplikovaný na timeline!" : "🎬 B-roll applied to timeline!");
-    playSynthesizedSFX("camera-shutter", 0.8);
+    const project = coreEngine.getProject();
+    const targetTrack = project.tracks.find(t => t.type === "video") || project.tracks[0];
+
+    if (!targetTrack) {
+      showToast(
+        isSk
+          ? "B-roll nie je kam vložiť: projekt nemá žiadnu stopu."
+          : "Nothing to insert B-roll into: the project has no track."
+      );
+      return;
+    }
+
+    let inserted = 0;
+    for (const item of brollProject.items) {
+      if (item.status === "REJECTED") continue;
+
+      const start = Math.max(0, item.start);
+      const duration = Math.max(0.5, item.end - item.start);
+      const cardTitle = isSk ? item.titleSk : item.titleEn;
+      const cardReason = isSk ? item.reasonSk : item.reasonEn;
+
+      const overlayClip = createCanonicalClip({
+        id: `broll_card_${crypto.randomUUID()}`,
+        trackId: targetTrack.id,
+        name: `B-roll karta: ${cardTitle}`,
+        type: "text",
+        timelineStart: start,
+        sourceStart: 0,
+        sourceEnd: duration,
+        duration,
+        speed: 1,
+        volume: 100,
+        scale: 100,
+        opacity: 100,
+        // Overlay cards sit in the upper third so they never cover the speaker's face.
+        positionX: 0,
+        positionY: -320,
+        rotation: 0,
+        textConfig: {
+          content: cardReason ? `${cardTitle}\n${cardReason}` : cardTitle,
+          fontFamily: "Inter",
+          fontSize: 44,
+          color: "#ffffff",
+          backgroundColor: "rgba(0,0,0,0.72)",
+          textAlign: "center",
+          fontWeight: "800",
+        },
+        keyframes: [],
+      });
+
+      if (coreEngine.commandManager.executeCommand(
+        new AddClipCommand(`B-roll karta: ${cardTitle}`, targetTrack.id, overlayClip)
+      )) {
+        inserted++;
+      }
+    }
+
+    if (inserted > 0) {
+      setBrollProject({ ...brollProject, isApplied: true });
+      showToast(
+        isSk
+          ? `🎬 ${inserted} B-roll grafických kariet vložených na timeline (médium B-roll nie je pripojené — ide o grafické overlaye, nie video vsuvky).`
+          : `🎬 ${inserted} B-roll graphic cards inserted into the timeline (no B-roll media attached — these are graphic overlays, not video inserts).`
+      );
+      playSynthesizedSFX("camera-shutter", 0.8);
+    } else {
+      showToast(
+        isSk
+          ? "B-roll sa nepodarilo vložiť — žiadny návrh neprešiel cez Command System."
+          : "B-roll could not be inserted — no suggestion passed the Command System."
+      );
+    }
   };
 
   const [settings, setSettings] = useState<VideoProjectSettings>({
@@ -1370,6 +1547,50 @@ function MainApp() {
     return localStorage.getItem("omnistrih_active_project_id") || "proj-001";
   });
 
+  // Load the canonical project of the active UI project on startup (and link the two ids).
+  // Without this the editor always started from a fresh in-memory project, so stored work
+  // was never reopened.
+  useEffect(() => {
+    const canonicalId = projects.find(p => p.id === activeProjectId)?.canonicalId || activeProjectId;
+    if (!canonicalId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const project = await coreEngine.loadProject(canonicalId);
+        if (cancelled) return;
+        const clipCount = project.tracks.reduce((sum, t) => sum + t.clips.length, 0);
+
+        // Proxy preview (opt-in via the media panel toggle) is applied on startup too.
+        if (localStorage.getItem("omnistrih_use_proxy") === "true") {
+          const proxyAsset = [...(project.assets || [])].reverse().find(a => a.proxyState === "READY" && a.proxyAssetId);
+          const proxyUrl = await resolveProxyUrl(proxyAsset);
+          if (proxyUrl && !cancelled) setCurrentVideoUrl(proxyUrl);
+        }
+        const hasLink = projects.some(p => p.id === activeProjectId && p.canonicalId);
+        if (!hasLink) {
+          setProjects(prev => prev.map(p => (p.id === activeProjectId ? { ...p, canonicalId } : p)));
+        }
+        if (clipCount > 0) {
+          // Real timeline length from the restored clips (the stored sequence duration can be stale).
+          const restoredDuration = TimelineEngine.calculateProjectDuration(project);
+          setDuration(restoredDuration);
+          playheadStore.setDuration(restoredDuration);
+          showToast(
+            isSk
+              ? `Obnovený projekt z pamäte: ${project.title} (${clipCount} klipov).`
+              : `Project restored from storage: ${project.title} (${clipCount} clips).`
+          );
+        }
+      } catch (e: any) {
+        console.warn('[App] Canonical project load failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Runs once per active project id: the link itself is stored in the projects list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectionType, setSelectionType] = useState<SelectionType>('NONE');
 
@@ -1426,12 +1647,13 @@ function MainApp() {
   const mainFileInputRef = useRef<HTMLInputElement | null>(null);
   const mainMultiFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleUploadVideo = async (url: string, filename?: string, file?: File) => {
+  const handleUploadVideo = async (url: string, filename?: string, file?: File, kind: "source" | "proxy" = "source") => {
     const fname = filename || (isSk ? "Nahrané video" : "Uploaded video");
     setCustomVideoName(fname);
-    
-    // Revoke previous blob URL if replacing media to prevent memory leaks
-    if (currentVideoUrl && currentVideoUrl.startsWith("blob:") && currentVideoUrl !== url) {
+
+    // Revoke previous blob URL if replacing media to prevent memory leaks.
+    // A proxy switch must NOT revoke the original URL — the original stays the export source.
+    if (kind === "source" && currentVideoUrl && currentVideoUrl.startsWith("blob:") && currentVideoUrl !== url) {
       try {
         URL.revokeObjectURL(currentVideoUrl);
       } catch (e) {
@@ -1440,6 +1662,16 @@ function MainApp() {
     }
 
     setCurrentVideoUrl(url);
+
+    if (kind === "proxy") {
+      // Preview-only switch: the stored project keeps pointing at the original media.
+      showToast(
+        isSk
+          ? "⚡ Prehrávanie prepnuté na proxy (originál ostáva zdrojom pre export)."
+          : "⚡ Playback switched to the proxy (the original stays the export source)."
+      );
+      return;
+    }
 
     // Phase 1: Register with the new Media Engine if it's a real file
     if (file) {
@@ -1504,6 +1736,8 @@ function MainApp() {
       hasMedia: false,
       mediaUrl: "",
       thumbnail: "",
+      // The canonical (IndexedDB) project has its own id; the UI links to it here.
+      canonicalId: newProjId,
       steps: { rawAnalysis: "pending", story: "pending", jumpCut: "pending", captions: "pending", bRoll: "pending", audio: "pending", export: "pending" }
     };
     setProjects(prev => [newProj, ...prev]);
@@ -1514,7 +1748,72 @@ function MainApp() {
     setCurrentView("editor");
     setActiveTab("jump");
     setIsImportModalOpen(true);
+    // Start the new project with an empty canonical timeline instead of the previous project's state.
+    void coreEngine.loadProject(newProjId).catch((e) => {
+      console.warn('[App] Could not create the canonical project:', e);
+      showToast(isSk ? "Projekt vytvorený, ale kanonický projekt sa nepodarilo založiť." : "Project created, but the canonical project could not be created.");
+    });
     showToast(isSk ? "Nový projekt vytvorený. Zvoľte zdroj pre nahratie videa." : "New project created. Choose video import source.");
+  };
+
+  /**
+   * Resolves the real proxy file URL of an asset (only when the stored proxy is marked READY).
+   */
+  const resolveProxyUrl = async (asset?: MediaAsset | null): Promise<string | null> => {
+    if (!asset?.proxyAssetId || asset.proxyState !== "READY") return null;
+    try {
+      return await opfsManager.getMediaUrl(asset.proxyAssetId);
+    } catch (e) {
+      console.warn("[App] Proxy file could not be resolved:", e);
+      return null;
+    }
+  };
+
+  /**
+   * Opens the canonical (IndexedDB) project that belongs to a UI project and links the two.
+   *
+   * Before this, "continue editing" only changed the UI state — the timeline kept whatever was
+   * already in memory, so a stored project could never really be reopened.
+   */
+  const openCanonicalProject = async (projId: string, projName?: string): Promise<{ loaded: boolean; clipCount: number }> => {
+    const uiProject = projects.find(p => p.id === projId);
+    const canonicalId = uiProject?.canonicalId || projId;
+
+    // Persist the link so the same canonical project is reopened next time.
+    if (uiProject && !uiProject.canonicalId) {
+      setProjects(prev => prev.map(p => (p.id === projId ? { ...p, canonicalId } : p)));
+    }
+
+    try {
+      const loaded = await coreEngine.loadProject(canonicalId);
+      const clipCount = loaded.tracks.reduce((sum, t) => sum + t.clips.length, 0);
+      const label = projName || uiProject?.name || canonicalId;
+
+      // If proxy preview is enabled and this project has a ready proxy, use it for playback.
+      if (localStorage.getItem("omnistrih_use_proxy") === "true") {
+        const proxyAsset = [...(loaded.assets || [])].reverse().find(a => a.proxyState === "READY" && a.proxyAssetId);
+        const proxyUrl = await resolveProxyUrl(proxyAsset);
+        if (proxyUrl) setCurrentVideoUrl(proxyUrl);
+      }
+
+      showToast(
+        clipCount > 0
+          ? (isSk
+              ? `Projekt načítaný: ${label} — ${clipCount} klipov na timeline.`
+              : `Project loaded: ${label} — ${clipCount} clips on the timeline.`)
+          : (isSk
+              ? `Projekt načítaný: ${label} — timeline je zatiaľ prázdna (uložený projekt nemá klipy).`
+              : `Project loaded: ${label} — the timeline is still empty (no clips stored).`)
+      );
+      return { loaded: true, clipCount };
+    } catch (e: any) {
+      showToast(
+        isSk
+          ? `Projekt ${projName || canonicalId} sa nepodarilo načítať: ${e?.message || 'neznáma chyba'}`
+          : `Project ${projName || canonicalId} could not be loaded: ${e?.message || 'unknown error'}`
+      );
+      return { loaded: false, clipCount: 0 };
+    }
   };
 
   const handleContinueEditing = (projId: string) => {
@@ -1529,10 +1828,11 @@ function MainApp() {
       } else {
         setCurrentVideoUrl("");
       }
-      showToast(isSk ? `Načítavam projekt: ${proj.name}` : `Loading project: ${proj.name}`);
     }
     setCurrentView("editor");
     setActiveTab("jump");
+    // Actually load the canonical (stored) project for this UI project.
+    void openCanonicalProject(projId, proj?.name);
   };
 
   const handleDuplicateProject = (projId: string) => {
@@ -2135,6 +2435,19 @@ function MainApp() {
       clearTimeout(timer2);
 
       if (data.success && data.segments) {
+        const mediaAnalyzed = data.mediaAnalyzed !== false;
+        setAiProvenance({
+          kind: mediaAnalyzed ? "REAL" : "SYNTHETIC",
+          feature: "transcript",
+          source: data.source || "unknown",
+          noteSk: mediaAnalyzed
+            ? "Prepis vznikol z reálneho audia."
+            : "SYNTETICKÝ NÁVRH: text je odhad z témy a dĺžky videa — žiadne audio nebolo prepísané.",
+          noteEn: mediaAnalyzed
+            ? "Transcript was produced from real audio."
+            : "SYNTHETIC DRAFT: text is inferred from topic and duration — no audio was transcribed."
+        });
+
         setTranscriptionProgress(85);
         setTranscriptionStage(isSk ? "⚡ Synchronizujem kinetické karaoke časovanie..." : "⚡ Syncing kinetic karaoke word timings...");
 
@@ -2150,7 +2463,13 @@ function MainApp() {
 
           setIsTranscribing(false);
           setActiveTab("captions"); // Switch to captions editor
-          showToast(isSk ? "✅ AI Titulky úspešne vygenerované!" : "✅ AI Captions successfully generated!");
+          showToast(
+            data.mediaAnalyzed === false
+              ? (isSk
+                  ? "⚠️ Titulky vygenerované ako SYNTETICKÝ NÁVRH z témy (bez prepisu audia)."
+                  : "⚠️ Captions generated as a SYNTHETIC DRAFT from the topic (no audio was transcribed).")
+              : (isSk ? "✅ AI Titulky úspešne vygenerované!" : "✅ AI Captions successfully generated!")
+          );
           playSynthesizedSFX("cash", 0.7);
         }, 1200);
       } else {
@@ -2580,6 +2899,18 @@ function MainApp() {
 
       const resData = await resp.json();
       if (resData.success && resData.data) {
+        const mediaAnalyzed = resData.mediaAnalyzed !== false;
+        setAiProvenance({
+          kind: mediaAnalyzed ? "REAL" : "SYNTHETIC",
+          feature: "analysis",
+          source: resData.source || "unknown",
+          noteSk: mediaAnalyzed
+            ? "Analýza vznikla z reálneho média."
+            : "SYNTETICKÝ NÁVRH: video nebolo modelu odoslané — obsah je odvodený z témy, dĺžky a kategórie.",
+          noteEn: mediaAnalyzed
+            ? "Analysis was derived from real media."
+            : "SYNTHETIC DRAFT: no video was sent to the model — content is inferred from topic, duration and category."
+        });
         const d = resData.data;
         if (d.captions && d.captions.length > 0) {
           setActiveCaptions(d.captions);
@@ -2620,7 +2951,11 @@ function MainApp() {
         setTimeout(() => playSynthesizedSFX("boom", 0.9), 150);
 
         showToast(
-          resData.zeroTokenUsed
+          resData.mediaAnalyzed === false
+            ? (isSk
+                ? "⚠️ Návrh pripravený BEZ analýzy média (offline algoritmus z témy a dĺžky)."
+                : "⚠️ Suggestions prepared WITHOUT media analysis (offline algorithm from topic and duration).")
+            : resData.zeroTokenUsed
             ? isSk
               ? "🛡️ 0-Token Režim: Ušetrených 100% tokenov! Bleskový OmniStrih pripravený."
               : "🛡️ Zero-Token Mode: 100% quota saved! Instant OmniCut ready."
@@ -2637,8 +2972,14 @@ function MainApp() {
         }
       }
     } catch (err) {
+      // A failed AI call must never be reported as an applied edit — the canonical project
+      // was not touched by this path.
       console.error("Magic edit error:", err);
-      showToast(isSk ? "Strih aplikovaný." : "Edit applied.");
+      showToast(
+        isSk
+          ? "AI je nedostupné (sieť/kvóta/chyba odpovede). Projekt nebol zmenený."
+          : "AI is unavailable (network/quota/bad response). The project was left unchanged."
+      );
     } finally {
       setIsProcessingMagic(false);
     }
@@ -3085,15 +3426,15 @@ function MainApp() {
             onOpenDirector={() => setIsDirectorStudioOpen(true)}
             projectName={projects.find(p => p.id === activeProjectId)?.name || "Master Edit"}
             onUndo={() => {
-              showToast(isSk ? "Krok späť (Undo)" : "Undo action");
+              handleUndo();
               playSynthesizedSFX("click", 0.4);
             }}
             onRedo={() => {
-              showToast(isSk ? "Krok vpred (Redo)" : "Redo action");
+              handleRedo();
               playSynthesizedSFX("click", 0.4);
             }}
-            canUndo={true}
-            canRedo={false}
+            canUndo={historyState.canUndo}
+            canRedo={historyState.canRedo}
             onOpenQC={() => setActiveTab("qc_analytics")}
             workflowState={isProcessingMagic ? "NEW" : (jumpSequence?.isApplied || captionProject.segments.length > 0) ? "PROCESSED" : "RAW_IMPORTED"}
             onReviewChanges={() => setActiveTab("edl_autopilot")}
@@ -3105,6 +3446,25 @@ function MainApp() {
               playSynthesizedSFX("click", 0.4);
             }}
           />
+
+          {/* AI data provenance — synthetic drafts must be visible, never implied as measured */}
+          {aiProvenance && (
+            <div className={`px-4 py-1.5 text-[11px] font-bold flex items-center gap-2 border-b ${
+              aiProvenance.kind === "REAL"
+                ? "bg-emerald-950/40 border-emerald-900/50 text-emerald-300"
+                : "bg-amber-950/40 border-amber-900/50 text-amber-200"
+            }`}>
+              <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border border-current/40">
+                {aiProvenance.kind === "REAL" ? "REAL AI" : "SYNTHETIC"}
+              </span>
+              <span className="truncate">
+                {isSk ? aiProvenance.noteSk : aiProvenance.noteEn}
+              </span>
+              <span className="ml-auto font-mono text-[10px] opacity-70 shrink-0">
+                {aiProvenance.feature} • {aiProvenance.source}
+              </span>
+            </div>
+          )}
 
           {/* Main Editor Workspace with 9-Category Left Navigation */}
           <main className="flex-1 w-full flex overflow-hidden bg-neutral-950">
@@ -3528,7 +3888,7 @@ function MainApp() {
                       <MediaManagerPanel
                         language={language}
                         showToast={showToast}
-                        onSetVideoUrl={(url, filename, file) => handleUploadVideo(url, filename, file)}
+                        onSetVideoUrl={(url, filename, file, kind) => handleUploadVideo(url, filename, file, kind)}
                       />
                     )}
                     {activeTab === "qc_analytics" && (
@@ -3595,13 +3955,17 @@ function MainApp() {
                             {
                               id: "tm_" + Date.now(),
                               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                              actionSk: "95% Autopilot Batch Polish (128 úprav aplikovaných)",
-                              actionEn: "95% Autopilot Batch Polish (128 edits applied)",
+                              actionSk: "95% Autopilot: zapnuté nastavenia (zoom, SFX, audio DSP) — timeline nezmenená",
+                              actionEn: "95% Autopilot: settings enabled (zoom, SFX, audio DSP) — timeline untouched",
                               author: "AI"
                             },
                             ...prev,
                           ]);
-                          showToast(isSk ? "✨ 95% Autopilot úpravy aplikované na timeline (Zoomy, SFX a Audio DSP pripravené)!" : "✨ 95% Autopilot edits applied to timeline (Zooms, SFX and Audio DSP live)!");
+                          showToast(
+                            isSk
+                              ? "✨ 95% Autopilot: nastavenia (auto-zoom, SFX, audio DSP) zapnuté. Klipy na timeline sa nezmenili."
+                              : "✨ 95% Autopilot: settings enabled (auto-zoom, SFX, audio DSP). Timeline clips were not modified."
+                          );
                           playSynthesizedSFX("cash", 0.7);
                         }}
                         language={language}
@@ -3924,7 +4288,16 @@ function MainApp() {
                     {activeTab === "opus" && <OpusStudio virality={{ overallScore: 92, hookScore: 90, pacingScore: 88, retentionScore: 94, trendScore: 91, keyReasons: ["Strong hook", "Fast pacing"], suggestedHashtags: ["#viral", "#trending"], suggestedTitle: "Viral Video", suggestedDescription: "Amazing video" }} smartClips={[]} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />}
                     {activeTab === "canva" && <CanvaAudioSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} onApplyCategoryPreset={(cat) => setSettings((prev: any) => ({ ...prev, category: cat }))} language={language} />}
                     {activeTab === "thumbnail" && <AIThumbnailStudio project={thumbnailProject} rawAnalysis={rawAnalysis} isGenerating={isGeneratingThumbnails} onUpdateProject={setThumbnailProject} onGenerateConcepts={handleGenerateThumbnailConcepts} language={language} showToast={showToast} />}
-                    {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={(id) => setMemoryRules(prev => prev.map(r => r.id === id ? { ...r, isActive: !r.isActive } : r))} reviewItems={reviewItems} onReviewItem={(id, status) => setReviewItems(prev => prev.map(i => i.id === id ? { ...i, status } : i))} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={timeMachine} onRestoreVersion={(id) => showToast(isSk ? "Verzia obnovená" : "Version restored")} contentUniverse={contentUniverse} language={language} showToast={showToast} />}
+                    {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={(id) => setMemoryRules(prev => prev.map(r => r.id === id ? { ...r, isActive: !r.isActive } : r))} reviewItems={reviewItems} onReviewItem={(id, status) => setReviewItems(prev => prev.map(i => i.id === id ? { ...i, status } : i))} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={[
+                        ...projectVersions.map(v => ({
+                          id: `ver_${v.id}`,
+                          timestamp: new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                          actionSk: `Snapshot: ${v.label}`,
+                          actionEn: `Snapshot: ${v.label}`,
+                          author: "USER" as const,
+                        })),
+                        ...timeMachine,
+                      ]} onRestoreVersion={handleRestoreVersion} contentUniverse={contentUniverse} language={language} showToast={showToast} />}
                     {activeTab === "pro_toolbox" && <ProfessionalToolbox language={language} currentTime={currentTime} duration={duration} onSeek={handleSeek} showToast={showToast} />}
                     {activeTab === "ai_voice" && (
                       <AINaturalVoiceStudio

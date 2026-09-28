@@ -129,14 +129,26 @@ export class RenderEngineManager {
     // Inspect edlSnapshot for potential issues
     let missingMedia = false;
     let captionOverflow = false;
-    let safeZoneViolations = 0;
+    const safeZoneViolations = 0;
 
     for (const dec of plan.edlSnapshot.decisions) {
       if (!dec.sourceStart && dec.sourceStart !== 0) missingMedia = true;
       if (dec.type === "CAPTION" && (dec.end - dec.start) > 6.0) captionOverflow = true;
     }
 
-    const passed = !missingMedia && safeZoneViolations === 0;
+    const passed = !missingMedia;
+
+    // Score is derived from the checks that actually ran on the plan. No pixel or bitstream
+    // inspection exists yet, so the score cannot pretend to describe the encoded output.
+    let score = 100;
+    if (missingMedia) score -= 40;
+    if (captionOverflow) score -= 10;
+    score = Math.max(0, Math.min(100, score));
+
+    const notMeasured = {
+      sk: "nemerané (vyžaduje analýzu pixelov/bitstreamu)",
+      en: "not measured (requires pixel/bitstream analysis)",
+    };
 
     return {
       passed,
@@ -145,13 +157,20 @@ export class RenderEngineManager {
       missingMediaDetected: missingMedia,
       captionOverflowDetected: captionOverflow,
       safeZoneViolations,
-      score: passed ? 98 : 75,
-      detailsSk: passed 
-        ? "QC brána prešla úspešne. Žiadne čierne snímky, bezpečné zóny dodržané." 
-        : "QC brána identifikovala menšie varovania v titulkoch alebo médiách.",
-      detailsEn: passed 
-        ? "QC gate passed successfully. No black frames, safe zones respected." 
-        : "QC gate identified minor warnings in captions or media references.",
+      score,
+      measured: {
+        missingMedia: true,
+        captionOverflow: true,
+        blackFrames: false,
+        audioClipping: false,
+        safeZones: false,
+      },
+      detailsSk: passed
+        ? `Plán prešiel kontrolou väzzieb (skóre ${score}/100). Čierne snímky, clipping a safe zóny: ${notMeasured.sk}.`
+        : `Plán obsahuje chýbajúce médium alebo problematické titulky (skóre ${score}/100).`,
+      detailsEn: passed
+        ? `Plan passed the reference checks (score ${score}/100). Black frames, clipping and safe zones: ${notMeasured.en}.`
+        : `Plan references missing media or has overflowing captions (score ${score}/100).`,
     };
   }
 

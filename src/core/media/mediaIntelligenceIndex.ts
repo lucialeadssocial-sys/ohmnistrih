@@ -8,18 +8,34 @@
 import { idbManager } from '../storage/idb';
 import { MediaAsset } from '../types/project';
 import { mediaEngineV1 } from '../media-engine';
+import { opfsManager } from '../storage/opfs';
+import { localSpeechProvider } from '../../ai/providers/LocalSpeechProvider';
+import {
+  measureFrame,
+  sampleFrameMetrics,
+  histogramSimilarity,
+  BLUR_SCORE_THRESHOLD,
+  DARK_LUMINANCE_THRESHOLD,
+  DUPLICATE_SIMILARITY_THRESHOLD,
+} from './frameMetrics';
 
 export interface DuplicateShot {
   shot1Timestamp: number;
   shot2Timestamp: number;
   similarityScore: number; // 0 to 1
+  /** Which real measurement produced the score. */
+  metric?: 'luminance-histogram-intersection';
 }
 
 export interface RepresentativeFrame {
   timestamp: number;
   thumbnailUrl: string;
-  brightness: number; // 0 to 255
-  blurScore: number;   // Edge sharpness score
+  brightness: number; // 0 to 255, measured from the decoded frame
+  blurScore: number;   // Edge sharpness score from the Laplacian variance
+  /** Raw Laplacian variance behind `blurScore`. */
+  laplacianVariance?: number;
+  /** 8-bin luminance histogram measured from the decoded frame. */
+  luminanceHistogram?: number[];
   colorVector: number[];
   isBestShot?: boolean;
   isDuplicate?: boolean;
@@ -60,15 +76,24 @@ export interface MediaAnalysisIndex {
   // 4. Transcript
   transcriptText: string;
   wordTimestamps: { word: string; start: number; end: number; confidence: number }[];
+  /** 'TRANSCRIBED' only when a real STT engine produced the text. */
+  transcriptStatus?: 'TRANSCRIBED' | 'STT_UNAVAILABLE' | 'NO_MEDIA' | 'FAILED' | 'NOT_RUN';
+  transcriptNotice?: string;
 
   // 5. Scenes & Scene Boundaries
   sceneBoundaries: { timestamp: number; score: number }[];
   scenes: { id: string; start: number; end: number; duration: number }[];
+  /** False when frames could not be decoded, so no cut detection actually ran. */
+  sceneDetectionPerformed?: boolean;
+  sceneDetectionNotice?: string;
 
   // 6. Visual Analysis
   representativeFrames: RepresentativeFrame[];
   averageBrightness: number;
   averageBlurScore: number;
+  /** False when brightness/blur were not measured from real frames. */
+  framesMeasured?: boolean;
+  framesNotice?: string;
 
   // 7. Visual Similarity & Duplicates
   duplicateShots: DuplicateShot[];
@@ -84,7 +109,8 @@ export interface DAGTaskNode {
   invalidatesOn: InvalidationTag[];
   execute: (
     asset: MediaAsset,
-    fileBlob: Blob | null,
+    /** Resolved media source: an OPFS file/blob when available, otherwise its playback URL. */
+    fileBlob: Blob | string | null,
     currentIndex: MediaAnalysisIndex,
     progressCallback: (pct: number) => void,
     signal: AbortSignal
@@ -266,26 +292,69 @@ export class MediaIntelligenceEngine {
         id: 'transcript',
         name: 'Speech Transcript',
         deps: ['silence_speech_vad'],
-        version: 1,
+        version: 2,
         invalidatesOn: ['file', 'transcript'],
-        execute: async (asset, _, currentIndex, progress) => {
-          progress(50);
-          const duration = asset.duration || 10;
-          const sampleWords = ['Vytvárame', 'inteligentný', 'index', 'média', 'bez', 'cloudu', 'v', 'OmniStrihu'];
-          const timePerWord = duration / sampleWords.length;
+        execute: async (asset, fileBlob, _, progress) => {
+          progress(20);
 
-          const wordTimestamps = sampleWords.map((word, i) => ({
-            word,
-            start: Number((i * timePerWord).toFixed(2)),
-            end: Number(((i + 1) * timePerWord).toFixed(2)),
-            confidence: 0.96
-          }));
+          const source = fileBlob || (await this.resolveLocalFile(asset));
 
-          progress(100);
-          return {
-            transcriptText: sampleWords.join(' '),
-            wordTimestamps
-          };
+          // STT needs the actual bytes: use the file/blob, or fetch it when only a URL is known.
+          let sttInput: Blob | File | null = null;
+          if (source instanceof Blob) {
+            sttInput = source;
+          } else if (typeof source === 'string' && source) {
+            try {
+              const response = await fetch(source);
+              if (response.ok) sttInput = await response.blob();
+            } catch (e) {
+              console.warn('[MediaIntelligenceEngine] Media fetch for STT failed:', e);
+            }
+          }
+
+          if (!sttInput) {
+            progress(100);
+            return {
+              transcriptText: '',
+              wordTimestamps: [],
+              transcriptStatus: 'NO_MEDIA' as const,
+              transcriptNotice: 'Médium nie je dostupné lokálne (OPFS/URL) — prepis sa nevykonal.'
+            };
+          }
+
+          try {
+            const result = await localSpeechProvider.process(sttInput);
+            progress(100);
+
+            if (result.synthetic || result.words.length === 0) {
+              return {
+                transcriptText: '',
+                wordTimestamps: [],
+                transcriptStatus: 'STT_UNAVAILABLE' as const,
+                transcriptNotice: result.notice || 'Lokálny STT model nie je načítaný — prepis sa nevykonal.'
+              };
+            }
+
+            return {
+              transcriptText: result.text,
+              wordTimestamps: result.words.map((w) => ({
+                word: w.word,
+                start: w.start,
+                end: w.end,
+                confidence: w.confidence
+              })),
+              transcriptStatus: 'TRANSCRIBED' as const,
+              transcriptNotice: `Prepis: ${result.engine || 'whisper-onnx'}`
+            };
+          } catch (e: any) {
+            progress(100);
+            return {
+              transcriptText: '',
+              wordTimestamps: [],
+              transcriptStatus: 'FAILED' as const,
+              transcriptNotice: `Prepis zlyhal: ${e?.message || 'neznáma chyba'}`
+            };
+          }
         }
       },
 
@@ -294,24 +363,72 @@ export class MediaIntelligenceEngine {
         id: 'scene_boundaries',
         name: 'Scene Cut Detection',
         deps: ['metadata'],
-        version: 1,
+        version: 2,
         invalidatesOn: ['file', 'crop'],
-        execute: async (asset, _, __, progress) => {
-          progress(30);
-          const duration = asset.duration || 10;
-          const boundaries: { timestamp: number; score: number }[] = [
-            { timestamp: Number((duration * 0.25).toFixed(2)), score: 0.88 },
-            { timestamp: Number((duration * 0.65).toFixed(2)), score: 0.94 }
-          ];
+        execute: async (asset, fileBlob, _, progress) => {
+          progress(10);
+          const duration = asset.duration || 0;
+          const source = fileBlob || (await this.resolveLocalFile(asset));
 
-          const scenes = [
-            { id: 'sc_1', start: 0, end: boundaries[0].timestamp, duration: boundaries[0].timestamp },
-            { id: 'sc_2', start: boundaries[0].timestamp, end: boundaries[1].timestamp, duration: boundaries[1].timestamp - boundaries[0].timestamp },
-            { id: 'sc_3', start: boundaries[1].timestamp, end: duration, duration: duration - boundaries[1].timestamp }
-          ];
+          if (!source || !duration) {
+            progress(100);
+            return {
+              sceneBoundaries: [],
+              scenes: [],
+              sceneDetectionPerformed: false,
+              sceneDetectionNotice: 'Snímky sa nedajú dekódovať (chýba médium alebo trvanie) — detekcia strihov sa nevykonala.'
+            };
+          }
+
+          const metrics = await sampleFrameMetrics(source, duration, 24, (fraction) => progress(10 + Math.round(fraction * 85)));
+
+          if (metrics.length === 0) {
+            progress(100);
+            return {
+              sceneBoundaries: [],
+              scenes: [],
+              sceneDetectionPerformed: false,
+              sceneDetectionNotice: 'Žiadnu snímku sa nepodarilo dekódovať — detekcia strihov sa nevykonala.'
+            };
+          }
+
+          const boundaries: { timestamp: number; score: number }[] = [];
+          for (const frame of metrics) {
+            if (frame.isSceneCut) {
+              boundaries.push({ timestamp: frame.timestamp, score: Number(frame.changeFromPrevious.toFixed(2)) });
+            }
+          }
+
+          const cutTimes = boundaries
+            .map(b => b.timestamp)
+            .filter(t => t > 0.05)
+            .sort((a, b) => a - b);
+
+          const scenes: { id: string; start: number; end: number; duration: number }[] = [];
+          let sceneStart = 0;
+          cutTimes.forEach((cut) => {
+            scenes.push({
+              id: `sc_${scenes.length + 1}`,
+              start: Number(sceneStart.toFixed(2)),
+              end: Number(cut.toFixed(2)),
+              duration: Number((cut - sceneStart).toFixed(2))
+            });
+            sceneStart = cut;
+          });
+          scenes.push({
+            id: `sc_${scenes.length + 1}`,
+            start: Number(sceneStart.toFixed(2)),
+            end: Number(duration.toFixed(2)),
+            duration: Number((duration - sceneStart).toFixed(2))
+          });
 
           progress(100);
-          return { sceneBoundaries: boundaries, scenes };
+          return {
+            sceneBoundaries: boundaries,
+            scenes,
+            sceneDetectionPerformed: true,
+            sceneDetectionNotice: `Detekcia strihov z ${metrics.length} dekódovaných snímok (prah zmeny 22 %).`
+          };
         }
       },
 
@@ -320,34 +437,75 @@ export class MediaIntelligenceEngine {
         id: 'representative_frames',
         name: 'Frame Sampling (Brightness/Blur)',
         deps: ['scene_boundaries', 'silence_speech_vad'],
-        version: 2,
+        version: 3,
         invalidatesOn: ['file', 'crop'],
-        execute: async (asset, _, currentIndex, progress) => {
-          progress(40);
+        execute: async (asset, fileBlob, currentIndex, progress) => {
+          progress(10);
+
+          if (!currentIndex.sceneDetectionPerformed) {
+            progress(100);
+            return {
+              representativeFrames: [],
+              averageBrightness: 0,
+              averageBlurScore: 0,
+              framesMeasured: false,
+              framesNotice: currentIndex.sceneDetectionNotice || 'Scény nie sú k dispozícii — jas a ostrosť sa nemerali.'
+            };
+          }
+
+          const source = fileBlob || (await this.resolveLocalFile(asset));
+          if (!source) {
+            progress(100);
+            return {
+              representativeFrames: [],
+              averageBrightness: 0,
+              averageBlurScore: 0,
+              framesMeasured: false,
+              framesNotice: 'Médium sa nedá prečítať — jas a ostrosť sa nemerali.'
+            };
+          }
+
           const speechRanges = currentIndex.speechRanges || [];
-          const frames: RepresentativeFrame[] = currentIndex.scenes.map((sc, i) => {
+          const frames: RepresentativeFrame[] = [];
+          const sceneList = currentIndex.scenes;
+
+          for (let i = 0; i < sceneList.length; i++) {
+            const sc = sceneList[i];
             const timestamp = Number(((sc.start + sc.end) / 2).toFixed(2));
-            const brightness = 40 + (i * 45) % 185; // Heuristic to simulate varying light conditions
-            const blurScore = 30 + (i * 25) % 90;   // Heuristic to simulate varying focus / motion blur
-            const isVeryDark = brightness < 50;
-            const isBlurry = blurScore < 50;
+            const measured = await measureFrame(source, timestamp);
+            progress(10 + Math.round(((i + 1) / (sceneList.length || 1)) * 80));
+            if (!measured) continue;
+
+            // Thresholds come from frameMetrics (documented constants, not tuned magic numbers).
+            const isVeryDark = measured.brightness < DARK_LUMINANCE_THRESHOLD;
+            const isBlurry = measured.blurScore < BLUR_SCORE_THRESHOLD;
             const isStatic = sc.duration > 4;       // Scene of more than 4 seconds without major cuts
-            const isSceneChange = true;             // This frame represents a scene segment change
-            
-            // A B-roll candidate is beautiful (not dark/blurry) and has no speech/voice activity
+            const isSceneChange = true;             // This frame is the representative of a scene segment
+
+            // A B-roll candidate is well exposed, sharp and has no speech/voice activity
             const isBRollCandidate = !isVeryDark && !isBlurry && !speechRanges.some(
               (sr) => timestamp >= sr.start && timestamp <= sr.end
             );
 
-            // Hook candidates are engaging visual frames within the first 5 seconds
-            const isHookCandidate = timestamp <= 5 && !isVeryDark && !isBlurry && blurScore > 65;
+            // Hook candidates are sharp, well exposed frames within the first 5 seconds
+            const isHookCandidate = timestamp <= 5 && !isVeryDark && !isBlurry && measured.blurScore > 65;
 
-            return {
+            let thumbnailUrl = '';
+            try {
+              // Real thumbnail from the media engine (cached per asset + timestamp).
+              thumbnailUrl = await mediaEngineV1.getThumbnail(asset.id, source as File | string, timestamp);
+            } catch (e) {
+              thumbnailUrl = '';
+            }
+
+            frames.push({
               timestamp,
-              thumbnailUrl: (asset as any).thumbnailUrl || '',
-              brightness,
-              blurScore,
-              colorVector: [Number((0.15 + (i * 0.12) % 0.8).toFixed(2)), 0.4, 0.35, 0.1],
+              thumbnailUrl,
+              brightness: measured.brightness,
+              blurScore: measured.blurScore,
+              laplacianVariance: measured.laplacianVariance,
+              luminanceHistogram: measured.luminanceHistogram,
+              colorVector: measured.colorVector,
               isVeryDark,
               isBlurry,
               isStatic,
@@ -355,33 +513,44 @@ export class MediaIntelligenceEngine {
               isBRollCandidate,
               isHookCandidate,
               similarFrameTimestamps: []
-            };
-          });
-
-          // Identify the best shot based on highest clarity & balanced brightness
-          if (frames.length > 0) {
-            let bestIndex = 0;
-            let bestScore = -1;
-            frames.forEach((frame, idx) => {
-              if (!frame.isVeryDark && !frame.isBlurry) {
-                const score = frame.blurScore * (1 - Math.abs(frame.brightness - 128) / 128);
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestIndex = idx;
-                }
-              }
             });
-            frames[bestIndex].isBestShot = true;
           }
 
-          const avgBrightness = Math.round(frames.reduce((a, b) => a + b.brightness, 0) / (frames.length || 1));
-          const avgBlur = Math.round(frames.reduce((a, b) => a + b.blurScore, 0) / (frames.length || 1));
+          if (frames.length === 0) {
+            progress(100);
+            return {
+              representativeFrames: [],
+              averageBrightness: 0,
+              averageBlurScore: 0,
+              framesMeasured: false,
+              framesNotice: 'Ani jednu reprezentatívnu snímku sa nepodarilo dekódovať — jas a ostrosť sa nemerali.'
+            };
+          }
+
+          // Identify the best shot based on highest clarity & balanced brightness
+          let bestIndex = 0;
+          let bestScore = -1;
+          frames.forEach((frame, idx) => {
+            if (!frame.isVeryDark && !frame.isBlurry) {
+              const score = frame.blurScore * (1 - Math.abs(frame.brightness - 128) / 128);
+              if (score > bestScore) {
+                bestScore = score;
+                bestIndex = idx;
+              }
+            }
+          });
+          frames[bestIndex].isBestShot = true;
+
+          const avgBrightness = Math.round(frames.reduce((a, b) => a + b.brightness, 0) / frames.length);
+          const avgBlur = Math.round(frames.reduce((a, b) => a + b.blurScore, 0) / frames.length);
 
           progress(100);
           return {
             representativeFrames: frames,
             averageBrightness: avgBrightness,
-            averageBlurScore: avgBlur
+            averageBlurScore: avgBlur,
+            framesMeasured: true,
+            framesNotice: `Zmerané z ${frames.length} dekódovaných snímok (Laplacianova variancia, luminancia).`
           };
         }
       },
@@ -391,29 +560,34 @@ export class MediaIntelligenceEngine {
         id: 'duplicate_shots',
         name: 'Duplicate Shot Detection',
         deps: ['representative_frames'],
-        version: 2,
+        version: 3,
         invalidatesOn: ['file', 'crop'],
         execute: async (_, __, currentIndex, progress) => {
           progress(50);
           const frames = [...currentIndex.representativeFrames];
           const duplicates: DuplicateShot[] = [];
 
+          if (!currentIndex.framesMeasured) {
+            progress(100);
+            return { duplicateShots: [] };
+          }
+
           for (let i = 0; i < frames.length; i++) {
             for (let j = i + 1; j < frames.length; j++) {
-              // Heuristic visual vector similarity check
-              const v1 = frames[i].colorVector;
-              const v2 = frames[j].colorVector;
-              // Cosine-like distance simulation
-              const dotProduct = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
-              const mag1 = Math.sqrt(v1[0]**2 + v1[1]**2 + v1[2]**2);
-              const mag2 = Math.sqrt(v2[0]**2 + v2[1]**2 + v2[2]**2);
-              const simScore = mag1 && mag2 ? dotProduct / (mag1 * mag2) : 0;
+              // Real measurement: luminance-histogram intersection of the decoded frames.
+              // (Frames were measured in the previous DAG node; nothing is simulated here.)
+              const hist1 = frames[i].luminanceHistogram;
+              const hist2 = frames[j].luminanceHistogram;
+              const simScore = hist1 && hist2
+                ? histogramSimilarity(hist1, hist2)
+                : 0;
 
-              if (simScore > 0.88) {
+              if (simScore >= DUPLICATE_SIMILARITY_THRESHOLD) {
                 duplicates.push({
                   shot1Timestamp: frames[i].timestamp,
                   shot2Timestamp: frames[j].timestamp,
-                  similarityScore: Number(simScore.toFixed(2))
+                  similarityScore: Number(simScore.toFixed(2)),
+                  metric: 'luminance-histogram-intersection'
                 });
 
                 // Tag frames as duplicates and append similarities
@@ -441,6 +615,22 @@ export class MediaIntelligenceEngine {
         }
       }
     ];
+  }
+
+  /**
+   * Resolves the real media source for an asset: the local OPFS file when available,
+   * otherwise its playback URL. Returns null when nothing can be decoded.
+   */
+  private async resolveLocalFile(asset: MediaAsset): Promise<File | string | null> {
+    try {
+      if (asset.opfsPath) {
+        const file = await opfsManager.getFile(asset.opfsPath);
+        if (file) return file;
+      }
+    } catch (e) {
+      console.warn('[MediaIntelligenceEngine] OPFS lookup failed:', e);
+    }
+    return asset.url ? asset.url : null;
   }
 
   /**
@@ -528,7 +718,7 @@ export class MediaIntelligenceEngine {
    */
   public async runAnalysis(
     asset: MediaAsset,
-    fileBlob: Blob | null,
+    fileBlob: Blob | string | null,
     onProgress?: (taskName: string, overallProgress: number) => void
   ): Promise<MediaAnalysisIndex> {
     this.cancelAnalysis(asset.id);
@@ -537,6 +727,10 @@ export class MediaIntelligenceEngine {
     this.activeControllers.set(asset.id, controller);
 
     let index = await this.getOrCreateIndex(asset.id);
+
+    // Resolve the real media source once (OPFS file preferred) and use it for every DAG node,
+    // so analysis works even when the caller did not pass a blob.
+    const resolvedBlob: Blob | string | null = fileBlob || (await this.resolveLocalFile(asset));
 
     // Determine pending tasks in DAG topological order
     const pendingTasks = this.dagTasks.filter((task) => {
@@ -575,7 +769,7 @@ export class MediaIntelligenceEngine {
       try {
         const partialData = await task.execute(
           asset,
-          fileBlob,
+          resolvedBlob,
           index,
           (taskPct) => {
             if (onProgress) {

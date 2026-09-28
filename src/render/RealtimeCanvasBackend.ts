@@ -2,6 +2,7 @@ import { RenderPlan } from "../types/renderEngine";
 import { RenderArtifact, RenderProgressInfo } from "./renderCapabilities";
 import { RenderBackend } from "./RenderBackend";
 import { RenderEngineManager } from "../utils/renderEngineManager";
+import { coreEngine } from "../core/index";
 
 export class RealtimeCanvasBackend implements RenderBackend {
   id = "REALTIME_CANVAS_FALLBACK";
@@ -11,6 +12,108 @@ export class RealtimeCanvasBackend implements RenderBackend {
   private isCancelled = false;
   private mediaRecorder: MediaRecorder | null = null;
   private checkInterval: any = null;
+  private drawRaf: number | null = null;
+
+  /**
+   * Paints the real media element into the output canvas on every animation frame.
+   *
+   * Without this the recorder captured an untouched (hidden) canvas, so the fallback export
+   * produced a blank video that was still reported as COMPLETED. Caption/text clips are
+   * composited from the canonical project so preview and output stay consistent.
+   */
+  private startFrameDrawing(plan: RenderPlan, canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = plan.outputWidth;
+    canvas.height = plan.outputHeight;
+
+    const draw = () => {
+      this.drawRaf = null;
+      if (this.isCancelled) return;
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      try {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, w, h);
+
+        const vw = video.videoWidth || w;
+        const vh = video.videoHeight || h;
+        const scale = Math.min(w / vw, h / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
+
+        this.drawActiveTextClips(ctx, video.currentTime, w, h);
+      } catch (err) {
+        // A draw failure must not abort a recording that is otherwise producing frames.
+        console.warn("[RealtimeBackend] frame draw skipped:", err);
+      }
+
+      this.drawRaf = requestAnimationFrame(draw);
+    };
+
+    this.drawRaf = requestAnimationFrame(draw);
+  }
+
+  /** Composites active caption/text clips from the canonical project onto the canvas. */
+  private drawActiveTextClips(ctx: CanvasRenderingContext2D, time: number, w: number, h: number): void {
+    const project = coreEngine.getProject();
+    // Text/caption clips can live on caption tracks or on video tracks — take them by clip type.
+    const clips = project.tracks
+      .flatMap(t => t.clips)
+      .filter(c => c.type === "caption" || c.type === "text");
+
+    for (const clip of clips) {
+      const start = clip.timelineStart ?? clip.start ?? 0;
+      const end = start + clip.duration;
+      if (time < start || time >= end) continue;
+
+      const cfg = clip.textConfig;
+      if (!cfg?.content) continue;
+
+      const fontSize = cfg.fontSize || Math.round(h * 0.06);
+      const x = w / 2 + (clip.positionX || 0);
+      const y = h / 2 + (clip.positionY || 0);
+
+      ctx.save();
+      ctx.font = `${cfg.fontWeight || "bold"} ${fontSize}px ${cfg.fontFamily || "Inter, sans-serif"}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      if (cfg.backgroundColor) {
+        const metrics = ctx.measureText(cfg.content);
+        const padX = fontSize * 0.4;
+        const padY = fontSize * 0.25;
+        ctx.fillStyle = cfg.backgroundColor;
+        ctx.fillRect(
+          x - metrics.width / 2 - padX,
+          y - fontSize / 2 - padY,
+          metrics.width + padX * 2,
+          fontSize + padY * 2
+        );
+      }
+
+      if (cfg.strokeColor && cfg.strokeWidth) {
+        ctx.lineWidth = cfg.strokeWidth;
+        ctx.strokeStyle = cfg.strokeColor;
+        ctx.strokeText(cfg.content, x, y);
+      }
+
+      ctx.fillStyle = cfg.color || "#ffffff";
+      ctx.fillText(cfg.content, x, y);
+      ctx.restore();
+    }
+  }
+
+  private stopFrameDrawing(): void {
+    if (this.drawRaf !== null) {
+      cancelAnimationFrame(this.drawRaf);
+      this.drawRaf = null;
+    }
+  }
 
   async canRender(_plan: RenderPlan): Promise<boolean> {
     return typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
@@ -59,6 +162,9 @@ export class RealtimeCanvasBackend implements RenderBackend {
     video.currentTime = 0;
     await video.play();
 
+    // The recorder must capture real pixels — start compositing before captureStream().
+    this.startFrameDrawing(plan, canvas, video);
+
     const stream = canvas.captureStream(plan.fps);
     try {
       const audioCtx = new AudioContext();
@@ -95,6 +201,7 @@ export class RealtimeCanvasBackend implements RenderBackend {
       }
 
       this.mediaRecorder.onstop = () => {
+        this.stopFrameDrawing();
         if (this.isCancelled) {
           reject(new Error("EXPORT_CANCELLED"));
           return;
@@ -171,6 +278,7 @@ export class RealtimeCanvasBackend implements RenderBackend {
       this.checkInterval = setInterval(() => {
         if (this.isCancelled) {
           clearInterval(this.checkInterval);
+          this.stopFrameDrawing();
           if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
             this.mediaRecorder.stop();
           }
@@ -198,6 +306,7 @@ export class RealtimeCanvasBackend implements RenderBackend {
 
         if (video.ended || currentTime >= (plan.timelineDuration || 15) - 0.2) {
           clearInterval(this.checkInterval);
+          this.stopFrameDrawing();
           if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
             this.mediaRecorder.stop();
           }
@@ -209,6 +318,7 @@ export class RealtimeCanvasBackend implements RenderBackend {
 
   async cancel(): Promise<void> {
     this.isCancelled = true;
+    this.stopFrameDrawing();
     if (this.checkInterval) clearInterval(this.checkInterval);
     if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
       try {

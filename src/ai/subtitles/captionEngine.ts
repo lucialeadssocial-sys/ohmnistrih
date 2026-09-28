@@ -62,6 +62,9 @@ export class CaptionEngine {
     transcript: string;
     words: WordItem[];
     segments: CaptionSegment[];
+    /** Forwarded from the STT provider: true when no real engine produced the text. */
+    synthetic?: boolean;
+    notice?: string;
   }> {
     const activeStyle: CaptionStyleOptions = { ...DEFAULT_CAPTION_STYLE, ...style };
 
@@ -84,7 +87,9 @@ export class CaptionEngine {
     return {
       transcript: sttResult.text,
       words,
-      segments
+      segments,
+      synthetic: sttResult.synthetic,
+      notice: sttResult.notice
     };
   }
 

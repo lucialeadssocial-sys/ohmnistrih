@@ -19,6 +19,8 @@ export class LocalSpeechProvider implements AIProvider<Blob | File, Transcriptio
 
   private listeners: Set<(status: ModelProgress) => void> = new Set();
   private pipelineInstance: any = null;
+  /** True only when a real STT engine (Whisper ONNX pipeline) is actually loaded. */
+  private modelAvailable = false;
   private abortController: AbortController | null = null;
   private lastInput: Blob | File | null = null;
 
@@ -62,11 +64,20 @@ export class LocalSpeechProvider implements AIProvider<Blob | File, Transcriptio
         }
       });
 
+      this.modelAvailable = true;
       this.updateStatus({ status: 'READY', progress: 100, message: 'Model pripravený' });
     } catch (e: any) {
-      console.warn('[LocalSpeechProvider] Transformers.js load warning, falling back to WebSpeech/WASM:', e);
-      // Fallback: ready state using WebSpeech API / WASM engine
-      this.updateStatus({ status: 'READY', progress: 100, message: 'Fallback rečový dekodér pripravený' });
+      // No engine was loaded: report that honestly instead of pretending a decoder is ready.
+      this.modelAvailable = false;
+      this.pipelineInstance = null;
+      const reason = e?.message || 'model sa nepodarilo načítať';
+      console.warn('[LocalSpeechProvider] Whisper ONNX model unavailable:', reason);
+      this.updateStatus({
+        status: 'ERROR',
+        progress: 0,
+        message: 'Lokálny Whisper ONNX model nie je k dispozícii (offline alebo chýbajúci model) — automatický prepis sa nevykoná.',
+        error: reason
+      });
     }
   }
 
@@ -119,7 +130,7 @@ export class LocalSpeechProvider implements AIProvider<Blob | File, Transcriptio
     try {
       let result: TranscriptionResult;
 
-      if (this.pipelineInstance) {
+      if (this.pipelineInstance && this.modelAvailable) {
         // Convert Blob to AudioBuffer / Float32Array
         const audioData = await this.blobToFloat32Array(input);
         this.updateStatus({ progress: 50, message: 'Generujem časové pečiatky slov...' });
@@ -146,8 +157,9 @@ export class LocalSpeechProvider implements AIProvider<Blob | File, Transcriptio
           ]
         };
       } else {
-        // Fallback: Web Audio API Speech Alignment / Heuristic Segmentation
-        result = await this.fallbackAudioTranscription(input);
+        // No STT engine available: return an explicitly empty, labelled result.
+        // (Previously this returned sample sentences with fake confidence — never do that again.)
+        return await this.unavailableTranscription(input);
       }
 
       this.updateStatus({ status: 'COMPLETE', progress: 100, message: 'Transkripcia dokončená' });
@@ -173,29 +185,43 @@ export class LocalSpeechProvider implements AIProvider<Blob | File, Transcriptio
     return channelData;
   }
 
-  private async fallbackAudioTranscription(blob: Blob): Promise<TranscriptionResult> {
-    // Generates word-level timestamps using Web Audio energy alignment
-    const arrayBuffer = await blob.arrayBuffer();
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-    const duration = audioBuffer.duration;
-    await audioCtx.close();
+  /**
+   * Honest "no engine" result.
+   *
+   * The media is still inspected (decoded) so we can report real facts — whether the file is
+   * decodable audio and how long it is — but NO words are invented. Consumers must treat
+   * `synthetic: true` / empty `words` as "transcript not available" and label it in the UI.
+   */
+  private async unavailableTranscription(blob: Blob): Promise<TranscriptionResult> {
+    let notice = 'Lokálny Whisper ONNX model nie je načítaný — automatický prepis sa nevygeneroval.';
+    let duration: number | null = null;
 
-    const sampleWords = ['Vitajte', 'pri', 'úprave', 'videa', 'v', 'aplikácii', 'OmniStrih'];
-    const segmentTime = duration / sampleWords.length;
+    try {
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+      duration = audioBuffer.duration;
+      await audioCtx.close();
+      notice = `Lokálny Whisper ONNX model nie je načítaný — zvuk (${duration.toFixed(1)} s) je čitateľný, ale prepis sa nevygeneroval.`;
+    } catch (e: any) {
+      notice = 'Médium sa nedá dekódovať ako zvuk (alebo STT model nie je načítaný) — prepis sa nevygeneroval.';
+    }
 
-    const words: WordTimestamp[] = sampleWords.map((word, i) => ({
-      word,
-      start: Number((i * segmentTime).toFixed(2)),
-      end: Number(((i + 1) * segmentTime).toFixed(2)),
-      confidence: 0.9
-    }));
+    this.updateStatus({
+      status: 'ERROR',
+      progress: 0,
+      message: notice,
+      error: this.status.error
+    });
 
     return {
-      text: sampleWords.join(' '),
+      text: '',
       language: 'sk',
-      words,
-      segments: [{ start: 0, end: duration, text: sampleWords.join(' ') }]
+      words: [],
+      segments: [],
+      synthetic: true,
+      engine: 'none',
+      notice
     };
   }
 }

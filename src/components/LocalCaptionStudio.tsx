@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { captionEngine, CaptionSegment, WordItem, DEFAULT_CAPTION_STYLE, CaptionStyleOptions } from '../ai/subtitles/captionEngine';
 import { textBasedEditor, EditPlan } from '../ai/subtitles/textBasedEditor';
 import { coreEngine, useCoreProject, AddClipCommand, ClipModel, createCanonicalClip } from '../core';
+import { opfsManager } from '../core/storage/opfs';
 import { localAIManager, ModelProgress } from '../ai';
 import { Subtitles, Mic, Sparkles, Scissors, Check, X, RefreshCw, Layers, Edit3, Trash2, Split, Merge, Type, AlignCenter, Sliders, Play } from 'lucide-react';
 
@@ -20,6 +21,8 @@ export const LocalCaptionStudio: React.FC<{ isOpen: boolean; onClose: () => void
   const [segments, setSegments] = useState<CaptionSegment[]>([]);
   const [style, setStyle] = useState<CaptionStyleOptions>(DEFAULT_CAPTION_STYLE);
   
+  const [sttNotice, setSttNotice] = useState<string | null>(null);
+  const [sttSynthetic, setSttSynthetic] = useState(false);
   const [editPlan, setEditPlan] = useState<EditPlan | null>(null);
   const [editingWordId, setEditingWordId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string>('');
@@ -53,16 +56,51 @@ export const LocalCaptionStudio: React.FC<{ isOpen: boolean; onClose: () => void
   const handleTranscribeMedia = async () => {
     if (!selectedAsset) return;
 
-    try {
-      // Retrieve file from OPFS or fallback
-      const opfsFile = await coreEngine.loadProject(project.id).then(() => null); // Trigger load check
-      const dummyBlob = new Blob([new ArrayBuffer(1024)], { type: 'audio/wav' });
+    setSttNotice(null);
+    setSttSynthetic(false);
 
-      const result = await captionEngine.generateCaptions(dummyBlob, style);
+    // Resolve the REAL media file for the selected asset (OPFS first, then its URL).
+    let mediaBlob: Blob | null = null;
+    try {
+      mediaBlob = await opfsManager.getFile(selectedAsset.opfsPath);
+      if (!mediaBlob && selectedAsset.url) {
+        const response = await fetch(selectedAsset.url);
+        if (response.ok) mediaBlob = await response.blob();
+      }
+    } catch (e: any) {
+      console.warn('[CaptionStudio] Media lookup failed:', e);
+    }
+
+    if (!mediaBlob) {
+      setWords([]);
+      setSegments([]);
+      setSttNotice(
+        'Médium sa nepodarilo načítať (nie je v OPFS ani na URL) — prepis nie je možný. Nahráte médium znova.'
+      );
+      return;
+    }
+
+    try {
+      const result = await captionEngine.generateCaptions(mediaBlob, style);
+
+      if (result.synthetic || result.words.length === 0) {
+        // No STT engine produced text: show the honest reason, never a fabricated transcript.
+        setWords([]);
+        setSegments([]);
+        setSttSynthetic(true);
+        setSttNotice(result.notice || 'Prepis sa nevygeneroval — lokálny STT model nie je načítaný.');
+        return;
+      }
+
       setWords(result.words);
       setSegments(result.segments);
+      setSttSynthetic(false);
+      setSttNotice(null);
       setActiveTab('TRANSCRIPT');
     } catch (e: any) {
+      setWords([]);
+      setSegments([]);
+      setSttNotice(`Prepis zlyhal: ${e?.message || 'neznáma chyba'}`);
       console.error('[CaptionStudio] Transcription failed:', e);
     }
   };
@@ -212,6 +250,11 @@ export const LocalCaptionStudio: React.FC<{ isOpen: boolean; onClose: () => void
               <Sparkles className="w-3.5 h-3.5" />
               {speechStatus.status === 'PROCESSING' ? 'Transkribujem reč...' : 'Vygenerovať Titulky'}
             </button>
+            {sttSynthetic && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-950/70 text-amber-400 border border-amber-800/80">
+                SYNTHETIC / NO STT MODEL
+              </span>
+            )}
           </div>
 
           {/* Tab Selection */}
@@ -246,6 +289,12 @@ export const LocalCaptionStudio: React.FC<{ isOpen: boolean; onClose: () => void
             )}
           </div>
         </div>
+
+        {sttNotice && (
+          <div className="px-4 py-2 bg-amber-950/40 border-b border-amber-900/60 text-[11px] text-amber-300">
+            ⚠️ {sttNotice}
+          </div>
+        )}
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-4">

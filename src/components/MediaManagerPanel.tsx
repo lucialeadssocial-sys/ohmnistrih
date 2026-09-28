@@ -32,13 +32,15 @@ import { MediaAsset, createCanonicalClip } from "../core/types/project";
 import { opfsManager } from "../core/storage/opfs";
 import { idbManager } from "../core/storage/idb";
 import { playSynthesizedSFX } from "../utils/audioSynth";
+import { generateProxy } from "../core/media/proxyGenerator";
+import { mediaEngineV1 } from "../core/media-engine";
 
 import { SyncMulticamDialog } from "./editor/SyncMulticamDialog";
 
 interface MediaManagerPanelProps {
   language: "sk" | "en";
   showToast: (msg: string) => void;
-  onSetVideoUrl: (url: string, filename: string, file?: File) => void;
+  onSetVideoUrl: (url: string, filename: string, file?: File, kind?: "source" | "proxy") => void;
   onAssetSelect?: (asset: MediaAsset) => void;
 }
 
@@ -64,7 +66,7 @@ export const MediaManagerPanel: React.FC<MediaManagerPanelProps> = ({
     percent: 0
   });
 
-  // Proxy State & Workflow Simulation
+  // Proxy state (real WebCodecs encoding, see handleGenerateProxy)
   const [isGeneratingProxy, setIsGeneratingProxy] = useState<Record<string, boolean>>({});
   const [proxyPlaybackActive, setProxyPlaybackActive] = useState<boolean>(() => {
     return localStorage.getItem("omnistrih_use_proxy") === "true";
@@ -125,62 +127,146 @@ export const MediaManagerPanel: React.FC<MediaManagerPanelProps> = ({
   };
 
   // --- 1. PROXY WORKFLOW & OPTIMIZED MEDIA ---
+  /**
+   * Generates a REAL editing proxy: frames are decoded by the media engine, scaled down and
+   * encoded to WebM with WebCodecs. The produced file is written to OPFS, read back and verified
+   * before the asset is marked READY — nothing is faked and nothing is claimed before it exists.
+   */
   const handleGenerateProxy = async (assetId: string) => {
     setIsGeneratingProxy(prev => ({ ...prev, [assetId]: true }));
     playSynthesizedSFX("whoosh", 0.4);
-    showToast(isSk ? "⚙️ Vytváram proxy pre plynulú editáciu..." : "⚙️ Creating optimized proxy for fluid playback...");
 
-    // Simulate proxy encoding using low bitrate / smaller resolution
-    setTimeout(async () => {
+    const asset = project.assets.find(a => a.id === assetId);
+    if (!asset) {
+      setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
+      showToast(isSk ? "Médium sa nenašlo — proxy sa nevygenerovalo." : "Asset not found — no proxy was generated.");
+      return;
+    }
+
+    let source: File | string | null = null;
+    try {
+      source = await opfsManager.getFile(asset.opfsPath);
+    } catch (e) {
+      console.warn("[MediaManagerPanel] OPFS lookup failed:", e);
+    }
+    if (!source && asset.url) source = asset.url;
+
+    if (!source) {
+      setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
+      showToast(
+        isSk
+          ? `Proxy pre "${asset.name}" sa nedá vytvoriť: médium nie je dostupné lokálne.`
+          : `Proxy for "${asset.name}" cannot be created: the media is not available locally.`
+      );
+      return;
+    }
+
+    showToast(isSk ? `⚙️ Kódujem reálne proxy pre "${asset.name}"…` : `⚙️ Encoding a real proxy for "${asset.name}"…`);
+
+    try {
+      const metadata = await mediaEngineV1.getMetadata(source as File | string);
+      if (!metadata?.hasVideo) {
+        throw new Error("PROXY_SOURCE_HAS_NO_VIDEO");
+      }
+
+      const proxy = await generateProxy(source, {
+        duration: metadata.duration,
+        width: metadata.width,
+        height: metadata.height,
+        fps: metadata.fps,
+      });
+
+      const proxyFilename = `proxy_${assetId}.webm`;
+      await opfsManager.saveFile(proxyFilename, proxy.blob);
+
+      // Verify by reading the file back: only real, non-empty bytes may be reported as READY.
+      const storedFile = await opfsManager.getFile(proxyFilename);
+      const storedSize = storedFile?.size || 0;
+      if (!storedFile || storedSize < 1024 || storedSize !== proxy.sizeBytes) {
+        throw new Error(`PROXY_VERIFICATION_FAILED (uložené ${storedSize} B, zakódované ${proxy.sizeBytes} B)`);
+      }
+
+      const updatedAsset: MediaAsset = {
+        ...asset,
+        proxyState: "READY",
+        proxyAssetId: proxyFilename,
+        updatedAt: Date.now()
+      };
+
+      await idbManager.saveMediaAsset(updatedAsset);
+      const updatedAssets = project.assets.map(a => a.id === assetId ? updatedAsset : a);
+      coreEngine.commandManager.setProject({
+        ...project,
+        assets: updatedAssets
+      });
+      await coreEngine.saveCurrentProject();
+
+      setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
+      showToast(
+        isSk
+          ? `🟢 Proxy pripravené: ${proxy.width}×${proxy.height} @ ${proxy.fps} fps, ${proxy.codec}, ${(proxy.sizeBytes / (1024 * 1024)).toFixed(2)} MB (${proxy.framesEncoded} zakódovaných snímok).`
+          : `🟢 Proxy ready: ${proxy.width}×${proxy.height} @ ${proxy.fps} fps, ${proxy.codec}, ${(proxy.sizeBytes / (1024 * 1024)).toFixed(2)} MB (${proxy.framesEncoded} encoded frames).`
+      );
+      playSynthesizedSFX("ding", 0.5);
+      fetchStorageEstimate();
+
+      // Switch the preview to the freshly encoded proxy (originals stay the export source).
+      const proxyUrl = await opfsManager.getMediaUrl(proxyFilename);
+      onSetVideoUrl(proxyUrl, asset.name, undefined, "proxy");
+    } catch (err: any) {
+      console.error("Proxy generation failed", err);
+      const code = err?.message || "unknown error";
+      const friendly =
+        code.includes("PROXY_WEBCODECS_UNAVAILABLE")
+          ? (isSk ? "Prehliadač nepodporuje WebCodecs (VideoEncoder) — proxy sa nedá zakódovať." : "This browser has no WebCodecs (VideoEncoder) support — the proxy cannot be encoded.")
+          : code.includes("PROXY_SOURCE_HAS_NO_VIDEO")
+            ? (isSk ? "Zdroj nemá video stopu — proxy sa nedá zakódovať." : "The source has no video track — the proxy cannot be encoded.")
+            : (isSk ? `Proxy sa nepodarilo vytvoriť: ${code}` : `Proxy could not be created: ${code}`);
+
+      // Mark the failure on the asset instead of pretending a proxy exists.
+      const failedAsset: MediaAsset = { ...asset, proxyState: "ERROR", updatedAt: Date.now() };
       try {
-        const asset = project.assets.find(a => a.id === assetId);
-        if (!asset) return;
-
-        // Generate a simulated proxy file name in OPFS
-        const proxyFilename = `proxy_${assetId}.webm`;
-        
-        // Write mock minimal video chunk to OPFS to occupy physical storage representing proxy
-        const mockBlob = new Blob([new Uint8Array(1024 * 1024 * 2)], { type: "video/webm" });
-        await opfsManager.saveFile(proxyFilename, mockBlob);
-
-        // Update MediaAsset state
-        const updatedAsset: MediaAsset = {
-          ...asset,
-          proxyState: "READY",
-          proxyAssetId: proxyFilename,
-          updatedAt: Date.now()
-        };
-
-        // Persist to DB and update project
-        await idbManager.saveMediaAsset(updatedAsset);
-        const updatedAssets = project.assets.map(a => a.id === assetId ? updatedAsset : a);
+        await idbManager.saveMediaAsset(failedAsset);
         coreEngine.commandManager.setProject({
           ...project,
-          assets: updatedAssets
+          assets: project.assets.map(a => a.id === assetId ? failedAsset : a)
         });
-        await coreEngine.saveCurrentProject();
-
-        setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
-        showToast(isSk ? `🟢 Proxy pre "${asset.name}" je pripravené na 60 FPS playback!` : `🟢 Proxy for "${asset.name}" is ready for 60 FPS playback!`);
-        playSynthesizedSFX("ding", 0.5);
-        fetchStorageEstimate();
-      } catch (err) {
-        console.error("Proxy generation failed", err);
-        setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
+      } catch (persistErr) {
+        console.warn("[MediaManagerPanel] Could not persist proxy error state:", persistErr);
       }
-    }, 2500);
+
+      setIsGeneratingProxy(prev => ({ ...prev, [assetId]: false }));
+      showToast(`⚠️ ${friendly}`);
+    }
   };
 
-  const toggleProxyPlayback = () => {
+  const toggleProxyPlayback = async () => {
     const newValue = !proxyPlaybackActive;
     setProxyPlaybackActive(newValue);
     localStorage.setItem("omnistrih_use_proxy", String(newValue));
     playSynthesizedSFX("click", 0.5);
-    
-    if (newValue) {
-      showToast(isSk ? "⚡ Preview engine teraz uprednostní proxies pre ultra-plynulú editáciu." : "⚡ Preview engine will now prioritize proxies for buttery-smooth timeline navigation.");
-    } else {
-      showToast(isSk ? "🎬 Preview engine teraz používa originálne videosúbory v plnej kvalite." : "🎬 Preview engine will now use original files in full quality.");
+
+    if (!newValue) {
+      showToast(isSk ? "🎬 Prehrávanie vrátené na originálne súbory (obnov stránku pre pôvodné médium)." : "🎬 Playback set back to original files (reload to restore the original media).");
+      return;
+    }
+
+    // Real switch: use an existing READY proxy of this project right now, otherwise say so.
+    const proxyAsset = [...project.assets].reverse().find(a => a.proxyState === "READY" && a.proxyAssetId);
+    if (!proxyAsset || !proxyAsset.proxyAssetId) {
+      showToast(
+        isSk
+          ? "⚡ Proxy nemá zatiaľ žiadne médium v tomto projekte — vygeneruj proxy tlačidlom pri médiu."
+          : "⚡ No asset in this project has a proxy yet — generate one with the button next to the asset."
+      );
+      return;
+    }
+
+    try {
+      const proxyUrl = await opfsManager.getMediaUrl(proxyAsset.proxyAssetId);
+      onSetVideoUrl(proxyUrl, proxyAsset.name, undefined, "proxy");
+    } catch (e: any) {
+      showToast(isSk ? `⚡ Proxy sa nedá načítať: ${e?.message || "neznáma chyba"}` : `⚡ The proxy cannot be loaded: ${e?.message || "unknown error"}`);
     }
   };
 
@@ -496,8 +582,8 @@ export const MediaManagerPanel: React.FC<MediaManagerPanelProps> = ({
                 </h4>
                 <p className="text-[11px] text-neutral-400">
                   {isSk
-                    ? "Uprednostní nízko-bitrate proxies (540p) pre 100% plynulý náhľad na timeline bez kosenia. Pri exporte sa automaticky použije originál."
-                    : "Prioritizes low-bitrate 540p preview proxies for flawless 60 FPS timeline response. Export automatically uses high-res original."}
+                    ? "Prepne náhľad na reálne zakódované proxy (WebM/VP9, max. 854 px šírka), ak je pre médium vygenerované. Export vždy používa originál. Bez vygenerovaného proxy sa prehráva originál."
+                    : "Switches the preview to the real encoded proxy (WebM/VP9, max 854 px wide) when one exists for the media. Export always uses the original. Without a generated proxy the original plays."}
                 </p>
               </div>
 

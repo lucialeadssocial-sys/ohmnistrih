@@ -136,6 +136,8 @@ export interface EQConfig {
   lowShelf: { freq: number; gain: number };
   mid: { freq: number; gain: number; q: number };
   highShelf: { freq: number; gain: number };
+  /** Optional rumble high-pass stage (used by the audio mastering suite). */
+  highPass?: { enabled: boolean; freq: number };
   bypass: boolean;
 }
 
@@ -168,6 +170,8 @@ export interface MulticamGroup {
   name: string;
   angles: MulticamAngle[];
   syncMethod: 'waveform' | 'timecode' | 'manual';
+  /** True only when angle offsets came from real analysis; manual/unsupported sync stays false. */
+  syncVerified?: boolean;
 }
 
 export interface ClipModel {

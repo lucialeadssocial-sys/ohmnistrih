@@ -146,7 +146,53 @@ export class WebCodecsOfflineBackend implements RenderBackend {
                   gainNode.gain.linearRampToValueAtTime(0, (clip.timelineStart ?? 0) + clip.duration);
                 }
 
-                sourceNode.connect(gainNode);
+                // Real audio processing from the canonical clip state: EQ (low-shelf /
+                // peaking / high-shelf) and dynamics compression, then the volume + fades.
+                const processed: AudioNode[] = [];
+                const eq = clip.audioEffects?.eq;
+                if (eq && eq.enabled && !eq.bypass) {
+                  const bands: { type: BiquadFilterType; freq: number; gain: number; q?: number }[] = [];
+                  if (eq.highPass?.enabled) {
+                    bands.push({ type: "highpass", freq: eq.highPass.freq, gain: 0 });
+                  }
+                  if (eq.lowShelf) bands.push({ type: "lowshelf", freq: eq.lowShelf.freq, gain: eq.lowShelf.gain });
+                  if (eq.mid) bands.push({ type: "peaking", freq: eq.mid.freq, gain: eq.mid.gain, q: eq.mid.q });
+                  if (eq.highShelf) bands.push({ type: "highshelf", freq: eq.highShelf.freq, gain: eq.highShelf.gain });
+
+                  for (const band of bands) {
+                    const filter = offlineCtx.createBiquadFilter();
+                    filter.type = band.type;
+                    filter.frequency.setValueAtTime(band.freq, 0);
+                    filter.gain.setValueAtTime(band.gain, 0);
+                    if (band.type === "peaking" && typeof band.q === "number") {
+                      filter.Q.setValueAtTime(band.q, 0);
+                    }
+                    processed.push(filter);
+                  }
+                }
+
+                const comp = clip.audioEffects?.compression;
+                if (comp && comp.enabled && !comp.bypass) {
+                  const compressor = offlineCtx.createDynamicsCompressor();
+                  compressor.threshold.setValueAtTime(comp.threshold, 0);
+                  compressor.ratio.setValueAtTime(comp.ratio, 0);
+                  compressor.attack.setValueAtTime(comp.attack, 0);
+                  compressor.release.setValueAtTime(comp.release, 0);
+                  processed.push(compressor);
+
+                  if (comp.makeupGain) {
+                    const makeup = offlineCtx.createGain();
+                    makeup.gain.setValueAtTime(Math.pow(10, comp.makeupGain / 20), 0);
+                    processed.push(makeup);
+                  }
+                }
+
+                let tail: AudioNode = sourceNode;
+                for (const node of processed) {
+                  tail.connect(node);
+                  tail = node;
+                }
+                tail.connect(gainNode);
                 gainNode.connect(offlineCtx.destination);
 
                 const sourceStart = clip.sourceStart ?? 0;

@@ -273,16 +273,29 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between text-zinc-400">
                     <span>Priemerná Jasnosť (Luminance):</span>
-                    <span className="text-zinc-200 font-mono">{indexData.averageBrightness} / 255</span>
+                    <span className="text-zinc-200 font-mono">
+                      {indexData.framesMeasured ? `${indexData.averageBrightness} / 255` : 'nemerané'}
+                    </span>
                   </div>
                   <div className="flex justify-between text-zinc-400">
                     <span>Skóre Rozostrenia (Blur Score):</span>
-                    <span className="text-zinc-200 font-mono">{indexData.averageBlurScore} (Ostré)</span>
+                    <span className="text-zinc-200 font-mono">
+                      {indexData.framesMeasured ? `${indexData.averageBlurScore} / 100` : 'nemerané'}
+                    </span>
                   </div>
+                  {indexData.framesMeasured ? (
+                    <p className="text-[11px] text-zinc-500">Merané z dekódovaných snímok (Laplacianova variancia + luminancia).</p>
+                  ) : (
+                    <p className="text-[11px] text-amber-400">
+                      {indexData.framesNotice || 'Jas a ostrosť sa nemerali — chýba dekódovateľné médium.'}
+                    </p>
+                  )}
 
                   <div className="flex justify-between text-zinc-400 pt-2 border-t border-zinc-800">
                     <span>Nájdené duplicitné zábery:</span>
-                    <span className="text-amber-400 font-mono font-medium">{indexData.duplicateShots.length} zhôd</span>
+                    <span className="text-amber-400 font-mono font-medium">
+                      {indexData.framesMeasured ? `${indexData.duplicateShots.length} zhôd` : 'nemerané'}
+                    </span>
                   </div>
                   {indexData.duplicateShots.map((dup, i) => (
                     <div key={i} className="p-2 bg-amber-950/40 border border-amber-800/80 rounded flex justify-between text-[11px] text-amber-200">
@@ -300,7 +313,16 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
-                  <p className="text-zinc-400">Nájdených {indexData.scenes.length} samostatných scén na základe farebnej zmeny frame-by-frame.</p>
+                  {indexData.sceneDetectionPerformed ? (
+                    <p className="text-zinc-400">
+                      Detekcia strihov prebehla: {indexData.scenes.length} scén z reálne meraných zmien snímok.
+                      {indexData.sceneDetectionNotice ? ` ${indexData.sceneDetectionNotice}` : ''}
+                    </p>
+                  ) : (
+                    <p className="text-amber-400">
+                      {indexData.sceneDetectionNotice || 'Detekcia strihov sa nevykonala (chýba dekódovateľné médium) — žiadne scény nie sú k dispozícii.'}
+                    </p>
+                  )}
                   <div className="space-y-1 max-h-32 overflow-y-auto">
                     {indexData.scenes.map((sc, i) => (
                       <div key={sc.id} className="p-2 bg-zinc-900 rounded border border-zinc-800 flex justify-between text-[11px]">
@@ -319,12 +341,24 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
-                  <p className="text-zinc-300 font-medium leading-relaxed">
-                    "{indexData.transcriptText || 'Pre transkript spusti analýzu.'}"
-                  </p>
-                  <span className="text-[11px] text-zinc-500 block">
-                    {indexData.wordTimestamps.length} slov s presným časovaním
-                  </span>
+                  {indexData.transcriptStatus === 'TRANSCRIBED' ? (
+                    <>
+                      <p className="text-zinc-300 font-medium leading-relaxed">"{indexData.transcriptText}"</p>
+                      <span className="text-[11px] text-zinc-500 block">
+                        {indexData.wordTimestamps.length} slov s časovaním (reálny STT výstup)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-zinc-400">Prepis nie je k dispozícii.</p>
+                      <span className="text-[11px] text-amber-400 block">
+                        {indexData.transcriptNotice ||
+                          (indexData.transcriptStatus === 'STT_UNAVAILABLE'
+                            ? 'Lokálny STT model nie je načítaný — prepis sa nevygeneroval.'
+                            : 'Prepis sa nevykonal.')}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
