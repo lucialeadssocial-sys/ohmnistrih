@@ -18,6 +18,16 @@ import { measureLoudness, normalizationGainDb } from './src/core/audio/loudness'
 import { TimelineEngine } from './src/core/timeline/timelineEngine';
 import { encodeWavFromPcm, computeRms, arrayBufferToBase64 } from './src/utils/audioExtraction';
 import { computeClipTransitionState, transitionProgress } from './src/core/render/transitionMath';
+import {
+  buildSmartClips,
+  buildContentPackClips,
+  buildRetentionSegments,
+  buildOverallRetentionScore,
+  buildMeasuredInsights,
+  buildViralityAnalysis,
+  buildAbVariantMetrics,
+  hasMeasuredAnalysis,
+} from './src/core/ai/highlightModel';
 import { buildReviewQueue, buildLearnedRules, isActionExecutable } from './src/core/ai/reviewQueue';
 
 let failures = 0;
@@ -480,6 +490,105 @@ console.log('=== 16. Project storage: no invented ids, no wiped timelines ===');
   check('no hard-coded review rows left in App', !app.includes('rev_1') && !/accepted by you in 87%/.test(app));
   check('no hard-coded memory rules left in App', !app.includes('rule_1') && !app.includes('occurences'));
   check('stale duplicate multi-export toast removed', !app.includes('All versions generated successfully') && !app.includes('Všetky verzie boli úspešne vygenerované'));
+}
+
+
+console.log('=== 17. Highlights, retention and virality come from measurements ===');
+{
+  const fs = await import('node:fs');
+  const base = coreEngine.getProject();
+
+  // No analysis -> no highlights, no retention score, no invented hook insight.
+  const bare: any = { ...base, analysisResults: undefined, transcript: undefined };
+  check('no measured analysis is reported honestly', hasMeasuredAnalysis(bare) === false);
+  check('no smart clips without measured hooks', buildSmartClips(bare).length === 0);
+  check('no content-pack clips without measured hooks', buildContentPackClips(bare).length === 0);
+  check('no retention segments without measured pauses/hooks/CTAs', buildRetentionSegments(bare).length === 0);
+  check('no retention score without measurements', buildOverallRetentionScore(bare) === null);
+  const bareInsights = buildMeasuredInsights(bare);
+  check('no hook/engagement insight without measurements', !bareInsights.some(i => i.type === 'hook' || i.type === 'engagement'), bareInsights.map(i => i.type).join(','));
+  const bareVirality = buildViralityAnalysis(bare);
+  check('virality scores are null when nothing was measured', bareVirality.hookScore === null && bareVirality.retentionScore === null && bareVirality.trendScore === null, `${bareVirality.hookScore}/${bareVirality.retentionScore}/${bareVirality.trendScore}`);
+  check('unmeasured parts are listed for the UI', bareVirality.unmeasuredNotesSk.length >= 3);
+
+  // Measured fixture: real hooks, pauses and a CTA (the same shapes the analysis engine writes).
+  const measuredProject: any = {
+    ...base,
+    analysisResults: {
+      projectId: base.id,
+      timestamp: Date.now(),
+      hooks: [
+        { id: 'h1', start: 2, end: 5, type: 'question', reason: 'measured', confidence: 0.92 },
+        { id: 'h2', start: 30, end: 33, type: 'promise', reason: 'measured', confidence: 0.71 },
+      ],
+      pauses: [
+        { id: 'p1', start: 10, end: 13, duration: 3, type: 'long_pause', confidence: 0.9 },
+        { id: 'p2', start: 20, end: 20.5, duration: 0.5, type: 'natural_pause', confidence: 0.8 },
+      ],
+      ctas: [{ id: 'c1', start: 40, end: 43, type: 'subscribe', text: 'Odoberte kanál', confidence: 0.8 }],
+      speechDensity: { wordsPerSecond: 2.4, wordsPerMinute: 144, pauseDensity: 0.2, informationDensity: 'high' },
+    },
+    transcript: {
+      id: 'tr1',
+      segments: [{ id: 's1', start: 2, end: 5, text: 'Ako ušetriť čas pri strihu?' }],
+      words: [],
+    },
+  };
+  coreEngine.commandManager.setProject(measuredProject);
+
+  check('analysis is recognised as measured', hasMeasuredAnalysis(coreEngine.getProject()) === true);
+
+  const clips = buildSmartClips(coreEngine.getProject());
+  check('one smart clip per measured hook', clips.length === 2, `${clips.length}`);
+  check('smart clip score is the measured hook confidence', clips[0].viralityScore === 92, `${clips[0].viralityScore}`);
+  check('smart clip starts at the measured hook', clips[0].start === 2);
+  check('smart clip is capped by the real clip end', clips.every(c => c.end <= Math.max(2, c.start) + 45));
+  check('smart clip badge bands follow the measured confidence', clips[0].badge.includes('TOP') && clips[1].badge === 'HOOK', `${clips[0].badge} / ${clips[1].badge}`);
+
+  const pack = buildContentPackClips(coreEngine.getProject());
+  check('content pack uses the real transcript text', pack[0].hookSk === 'Ako ušetriť čas pri strihu?', pack[0].hookSk);
+  check('content pack says when no transcript exists', pack[1].hookSk.includes('prepis nie je k dispozícii'), pack[1].hookSk);
+  check('content pack is not shy about its evidence', pack[0].evidence.includes('measured hook confidence'));
+
+  const retention = buildRetentionSegments(coreEngine.getProject());
+  check('retention has a segment per measured pause, hook and CTA', retention.length === 5, `${retention.length}`);
+  const longPause = retention.find(r => r.id === 'ret_pause_p1');
+  check('long pause is typed and scored from its measured length', longPause?.type === 'LONG_PAUSE' && longPause?.score === 25, `${longPause?.type}/${longPause?.score}`);
+  check('hook segment score is the measured confidence', retention.find(r => r.id === 'ret_hook_h1')?.score === 92);
+  check('CTA becomes a payoff segment', retention.find(r => r.id === 'ret_cta_c1')?.type === 'STRONG_PAYOFF');
+
+  const overall = buildOverallRetentionScore(coreEngine.getProject());
+  const duration = (coreEngine.getProject().tracks.find((t: any) => t.type === 'video')?.clips || [])
+    .reduce((max: number, c: any) => Math.max(max, (c.timelineStart ?? 0) + c.duration), 0);
+  const expected = duration > 0 ? Math.round(Math.max(0, Math.min(100, 100 - (150 * 3) / duration))) : null;
+  check('overall retention uses the documented long-pause formula', overall === expected, `${overall} vs ${expected}`);
+
+  const virality = buildViralityAnalysis(coreEngine.getProject());
+  check('hook score is measured', virality.hookScore === 92, `${virality.hookScore}`);
+  check('trend score is reported as unmeasurable instead of invented', virality.trendScore === null);
+  check('overall score averages only measured sub-scores', virality.overallScore === Math.round(([virality.hookScore, virality.pacingScore, virality.retentionScore].filter(v => v !== null) as number[]).reduce((a, b) => a + b, 0) / 3));
+  check('insights cite measured numbers', buildMeasuredInsights(coreEngine.getProject()).every(i => /\d/.test(i.textSk)));
+  check('hashtags are derived from the real transcript only', virality.suggestedHashtags.every(h => h.length > 1) && virality.suggestedHashtags.length > 0, virality.suggestedHashtags.join(' '));
+  check('the suggested title is the real project title', virality.suggestedTitle === coreEngine.getProject().title);
+
+  const abMetrics = buildAbVariantMetrics(coreEngine.getProject());
+  check('A/B metrics are computed from the real cut', abMetrics.pacingScore >= 0 && abMetrics.cutsPerMinute >= 0 && abMetrics.estimatedRetention === overall, `${abMetrics.pacingScore}/${abMetrics.cutsPerMinute}/${abMetrics.estimatedRetention}`);
+
+  // Source guards for the fabrication sites that were replaced.
+  const retentionUi = fs.readFileSync('src/components/RetentionSimulator.tsx', 'utf8');
+  check('retention curve no longer uses random heights', !retentionUi.includes('Math.random'));
+  check('retention shows an honest unmeasured state', retentionUi.includes('Retention nie je meraná') && retentionUi.includes('not measured'));
+  check('retention curve uses the real duration', retentionUi.includes('duration?: number') && retentionUi.includes('curveDuration'));
+
+  const insightUi = fs.readFileSync('src/components/SmartAIInsight.tsx', 'utf8');
+  check('no demo insights left in the insight panel', !insightUi.includes('Demo insights if none provided') && !insightUi.includes('22% dlhšie'));
+  check('insight panel reads measured insights', insightUi.includes('buildMeasuredInsights'));
+
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  check('fabricated content-pack/retention/AB state removed', !app.includes('Tajomstvo, ktoré vám nikto nepovie') && !app.includes('Silný úvod / Hook') && !app.includes('Agresívny strih, krátke prestrihy'));
+  check('fake generation handlers removed', !app.includes('AI simuluje správanie diváka') && !app.includes('Content Pack bol úspešne vygenerovaný') && !app.includes('A/B varianty sú pripravené'));
+  check('handlers derive from measurements', app.includes('buildRetentionSegments(') && app.includes('buildContentPackClips(') && app.includes('buildAbVariantMetrics('));
+  check('Opus tab gets measured virality instead of a hardcoded sheet', !app.includes('overallScore: 92, hookScore: 90') && app.includes('virality={virality}'));
 }
 
 console.log('---');

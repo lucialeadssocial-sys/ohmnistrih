@@ -8,6 +8,8 @@ import {
   Lightbulb
 } from "lucide-react";
 import { ViralityAnalysis } from "../types";
+import { coreEngine } from "../core";
+import { buildMeasuredInsights } from "../core/ai/highlightModel";
 
 interface SmartAIInsightProps {
   virality?: ViralityAnalysis;
@@ -19,28 +21,23 @@ export const SmartAIInsight: React.FC<SmartAIInsightProps> = ({
   language,
 }) => {
   const isSk = language === "sk";
-  
-  // Demo insights if none provided
-  const insights = virality?.aiInsights || [
-    {
-      type: "hook",
-      textSk: "Prvých 2.5 sekundy je kľúčových. Skúste pridať dynamický ZOOM a veľký červený nadpis.",
-      textEn: "First 2.5 seconds are key. Try adding a dynamic ZOOM and a big red headline.",
-      impact: "high"
-    },
-    {
-      type: "pacing",
-      textSk: "Tempo je mierne pomalé medzi 0:12 a 0:18. AI odporúča 'Jump Cut' na odstránenie ticha.",
-      textEn: "Pacing is slightly slow between 0:12 and 0:18. AI recommends a 'Jump Cut' to remove silence.",
-      impact: "medium"
-    },
-    {
-      type: "engagement",
-      textSk: "Skvelá práca s emoji v titulkách! Udržuje to pozornosť o 22% dlhšie.",
-      textEn: "Great job with emojis in captions! It keeps attention 22% longer.",
-      impact: "positive"
-    }
-  ];
+
+  /**
+   * Insights come from real measurements.
+   *
+   * The previous version showed three fabricated "demo insights" (including an invented
+   * "22 % longer attention" claim) whenever no analysis was available. Now the panel reads the
+   * measured analysis of the canonical project and says "not measured" when there is nothing.
+   */
+  const measured = buildMeasuredInsights(coreEngine.getProject());
+  const insights = (virality?.aiInsights && virality.aiInsights.length > 0 ? virality.aiInsights : measured)
+    .map((insight: any) => ({
+      type: insight.type,
+      textSk: insight.textSk,
+      textEn: insight.textEn,
+      impact: insight.impact,
+      evidence: insight.evidence,
+    }));
 
   return (
     <div className="rounded-2xl border border-indigo-500/20 bg-indigo-950/20 p-4 shadow-xl backdrop-blur-sm">
@@ -53,9 +50,13 @@ export const SmartAIInsight: React.FC<SmartAIInsightProps> = ({
             {isSk ? "AI Smart Insights" : "AI Smart Insights"}
           </h3>
         </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-400 border border-emerald-500/20">
+        <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold border ${
+          insights.length > 0
+            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+        }`}>
           <Zap className="h-3 w-3" />
-          {isSk ? "Live Analýza" : "Live Analysis"}
+          {insights.length > 0 ? (isSk ? "Merané z analýzy" : "Measured analysis") : (isSk ? "Nemerané" : "Not measured")}
         </div>
       </div>
 
@@ -63,7 +64,8 @@ export const SmartAIInsight: React.FC<SmartAIInsightProps> = ({
         {insights.map((insight: any, idx: number) => (
           <div 
             key={idx}
-            className={`flex items-start gap-3 p-2.5 rounded-xl border transition-all hover:scale-[1.01] cursor-default ${
+            title={insight.evidence}
+            className={`flex items-start gap-3 p-2.5 rounded-xl border transition-all cursor-default ${
               insight.impact === "high" 
                 ? "bg-rose-500/10 border-rose-500/20" 
                 : insight.impact === "medium"
@@ -84,7 +86,7 @@ export const SmartAIInsight: React.FC<SmartAIInsightProps> = ({
               <span className={`font-bold uppercase mr-1.5 ${
                 insight.impact === "high" ? "text-rose-400" : insight.impact === "medium" ? "text-amber-400" : "text-emerald-400"
               }`}>
-                {insight.impact === "high" ? (isSk ? "Kritické:" : "Critical:") : insight.impact === "medium" ? (isSk ? "Tip:" : "Tip:") : (isSk ? "Skvelé:" : "Great:")}
+                {insight.impact === "high" ? (isSk ? "Kritické:" : "Critical:") : insight.impact === "medium" ? (isSk ? "Tip:" : "Tip:") : (isSk ? "Merané:" : "Measured:")}
               </span>
               {isSk ? insight.textSk : insight.textEn}
             </p>
@@ -92,9 +94,13 @@ export const SmartAIInsight: React.FC<SmartAIInsightProps> = ({
         ))}
       </div>
 
-      <button className="w-full mt-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
-        {isSk ? "Spustiť hĺbkovú AI revíziu" : "Run Deep AI Review"}
-      </button>
+      {insights.length === 0 && (
+        <p className="text-[11px] text-neutral-400 leading-relaxed">
+          {isSk
+            ? "Zatiaľ žiadne merané poznatky: projekt nemá výsledky analýzy (hooky, pauzy, CTA). Spustite analýzu projektu — poznatky sa potom vypíšu s nameranými číslami."
+            : "No measured insights yet: the project has no analysis results (hooks, pauses, CTAs). Run project analysis — insights will then be listed with their measured numbers."}
+        </p>
+      )}
     </div>
   );
 };

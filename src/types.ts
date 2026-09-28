@@ -671,11 +671,16 @@ export interface BRollOverlay {
 export type SpeedRampPreset = "constant" | "fast-ramp" | "bullet-time" | "jump-cuts";
 
 export interface ViralityAnalysis {
-  overallScore: number; // 0 to 100
-  hookScore: number;    // 0 to 100
-  pacingScore: number;  // 0 to 100
-  retentionScore: number; // 0 to 100
-  trendScore: number;   // 0 to 100
+  // null = the number could not be measured (never fake it with 0 or a placeholder)
+  overallScore: number | null; // 0 to 100
+  hookScore: number | null;    // 0 to 100
+  pacingScore: number | null;  // 0 to 100
+  retentionScore: number | null; // 0 to 100
+  trendScore: number | null;   // 0 to 100
+  /** Which numbers are real measurements and which one could not be measured offline. */
+  measured?: boolean;
+  unmeasuredNotesSk?: string[];
+  unmeasuredNotesEn?: string[];
   keyReasons: string[];
   suggestedHashtags: string[];
   suggestedTitle: string;
@@ -685,7 +690,8 @@ export interface ViralityAnalysis {
     type: "hook" | "pacing" | "engagement";
     textSk: string;
     textEn: string;
-    impact: "high" | "medium" | "positive";
+    /** Optional: only set when the insight really has a measured impact. */
+    impact?: "high" | "medium" | "positive" | "warning";
   }[];
 }
 

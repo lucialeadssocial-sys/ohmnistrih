@@ -26,6 +26,8 @@ interface RetentionSimulatorProps {
   onRunAnalysis: () => void;
   onSeek: (time: number) => void;
   currentTime: number;
+  /** Real timeline duration in seconds — the engagement curve is drawn over it. */
+  duration?: number;
   language: "sk" | "en";
   isAnalyzing: boolean;
 }
@@ -35,10 +37,17 @@ export const RetentionSimulator: React.FC<RetentionSimulatorProps> = ({
   onRunAnalysis,
   onSeek,
   currentTime,
+  duration,
   language,
   isAnalyzing
 }) => {
   const isSk = language === "sk";
+
+  // The curve is drawn over the REAL duration; without a measurement the bars stay empty instead
+  // of showing random heights (the previous version added a random jitter to every bar).
+  const curveDuration = duration && duration > 0 ? duration : 0;
+  const BAR_COUNT = 60;
+  const measured = project.isAnalyzed && project.segments.length > 0 && curveDuration > 0;
 
   const getSegmentColor = (type: RetentionSegment["type"]) => {
     switch (type) {
@@ -126,38 +135,53 @@ export const RetentionSimulator: React.FC<RetentionSimulatorProps> = ({
                  </div>
                  <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black text-neutral-500 uppercase">SCORE:</span>
-                    <span className="text-lg font-black text-rose-500">{project.overallScore}%</span>
+                    <span className="text-lg font-black text-rose-500">
+                       {project.isAnalyzed ? `${project.overallScore}%` : (isSk ? "nemerané" : "not measured")}
+                    </span>
                  </div>
               </div>
 
               <div className="relative h-32 w-full flex items-end gap-[2px] px-1">
-                 {/* Dummy curve bars */}
-                 {Array.from({ length: 60 }).map((_, i) => {
-                   const progress = i / 60;
-                   const segment = project.segments.find(s => progress >= (s.startTime / 30) && progress <= (s.endTime / 30));
-                   const height = segment ? (segment.score > 80 ? 90 : segment.score > 50 ? 60 : 30) : 50;
-                   
+                 {/* Bars are derived from the measured segments of the real timeline. */}
+                 {Array.from({ length: BAR_COUNT }).map((_, i) => {
+                   if (!measured) {
+                     return <div key={i} className="flex-1 rounded-t-sm bg-neutral-800/60" style={{ height: "6%" }} />;
+                   }
+                   const time = ((i + 0.5) / BAR_COUNT) * curveDuration;
+                   const segment = project.segments.find(s => time >= s.startTime && time <= s.endTime);
+                   const height = segment ? Math.min(100, Math.max(8, segment.score)) : 8;
                    return (
-                     <div 
-                       key={i} 
-                       className={`flex-1 rounded-t-sm transition-all duration-1000 ${segment ? getSegmentColor(segment.type) : "bg-neutral-800"}`}
-                       style={{ height: `${height + Math.random() * 10}%`, opacity: 0.7 }}
+                     <div
+                       key={i}
+                       className={`flex-1 rounded-t-sm transition-all duration-500 ${segment ? getSegmentColor(segment.type) : "bg-neutral-800"}`}
+                       style={{ height: `${height}%`, opacity: segment ? 0.75 : 0.4 }}
+                       title={segment ? `${segment.startTime.toFixed(1)}–${segment.endTime.toFixed(1)}s · ${segment.labelSk} · ${segment.score}%` : undefined}
                      />
                    );
                  })}
-                 
-                 {/* Playhead marker */}
-                 <div 
-                   className="absolute top-0 bottom-0 w-px bg-white z-10 shadow-[0_0_8px_rgba(255,255,255,0.5)] transition-all"
-                   style={{ left: `${(currentTime / 30) * 100}%` }}
-                 />
+
+                 {/* Playhead marker over the real duration */}
+                 {measured && (
+                   <div
+                     className="absolute top-0 bottom-0 w-px bg-white z-10 shadow-[0_0_8px_rgba(255,255,255,0.5)] transition-all"
+                     style={{ left: `${Math.min(100, Math.max(0, (currentTime / curveDuration) * 100))}%` }}
+                   />
+                 )}
               </div>
-              
+
               <div className="flex justify-between mt-2 px-1">
                  <span className="text-[9px] font-black text-neutral-600">0s</span>
-                 <span className="text-[9px] font-black text-neutral-600">15s</span>
-                 <span className="text-[9px] font-black text-neutral-600">30s</span>
+                 <span className="text-[9px] font-black text-neutral-600">{measured ? `${(curveDuration / 2).toFixed(0)}s` : "—"}</span>
+                 <span className="text-[9px] font-black text-neutral-600">{measured ? `${curveDuration.toFixed(0)}s` : "—"}</span>
               </div>
+
+              {!measured && (
+                <p className="text-[11px] text-amber-400/90 mt-3">
+                  {isSk
+                    ? "Retention nie je meraná — spustite analýzu projektu a potom analýzu retention (krivka sa počíta z nameraných pásiem, hookov a CTA)."
+                    : "Retention is not measured — run project analysis and then the retention analysis (the curve is computed from measured pauses, hooks and CTAs)."}
+                </p>
+              )}
            </div>
 
            {/* Segment Breakdown */}
@@ -165,6 +189,13 @@ export const RetentionSimulator: React.FC<RetentionSimulatorProps> = ({
               <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest px-1">DETAILED AUDIENCE REACTION</h4>
               
               <div className="grid grid-cols-1 gap-3">
+                 {project.segments.length === 0 && (
+                   <p className="text-[11px] text-neutral-500">
+                     {isSk
+                       ? "Žiadne namerané segmenty — analyzujte projekt (pauzy, hooky, CTA)."
+                       : "No measured segments — analyse the project (pauses, hooks, CTAs)."}
+                   </p>
+                 )}
                  <AnimatePresence mode="popLayout">
                     {project.segments.map((segment, idx) => (
                       <motion.div

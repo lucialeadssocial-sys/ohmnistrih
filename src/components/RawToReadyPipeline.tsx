@@ -572,12 +572,12 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                       language={language}
                     />
                     <SmartAIInsight 
-                      virality={settings.virality || { score: 92, status: "VIRAL_POTENTIAL", labelSk: "Vysoký potenciál", labelEn: "High potential" }}
+                      virality={settings.virality}
                       language={language}
                     />
                   </div>
                   <OpusStudio
-                    virality={settings.virality || { score: 92, status: "VIRAL_POTENTIAL" }}
+                    virality={settings.virality}
                     smartClips={[]}
                     onSelectClip={(start) => {
                       onSeek(start);
