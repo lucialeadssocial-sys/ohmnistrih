@@ -105,6 +105,28 @@ export const DirectorPlanCenter: React.FC = () => {
     }
   };
 
+  /**
+   * „Skúsim sama" — the user takes this decision over.
+   *
+   * The decision is rejected in the canonical plan (so it is no longer proposed or applied) and the
+   * outcome is recorded as one real Brain observation, which the Director takes into account the
+   * next time it plans. Nothing is edited on the timeline by this action.
+   */
+  const handleDoItMyself = (dec: DirectorDecisionItem) => {
+    const result = coreEngine.decideOnReviewItem(dec.id, 'REJECTED');
+    if (!result.ok) {
+      setApplyStatus(`Nepodarilo sa zapísať rozhodnutie: ${result.reason}`);
+      setTimeout(() => setApplyStatus(null), 6000);
+      return;
+    }
+    setAcceptedIds(prev => prev.filter(id => id !== dec.id));
+    setApplyStatus(
+      `„Skúsim sama" — ${dec.what}: AI to nebude robiť a rozhodnutie je zapísané v projekte. ` +
+        `Director z neho vychádza, keď sa rovnaké pozorovanie zopakuje aspoň 2× (takto sa učí pravidlám, nie z jedného kliknutia).`
+    );
+    setTimeout(() => setApplyStatus(null), 6000);
+  };
+
   const handleSeekToTime = (timeInSec?: number, label?: string) => {
     if (timeInSec === undefined) return;
     playheadStore.setTime(timeInSec, true);
@@ -469,6 +491,16 @@ export const DirectorPlanCenter: React.FC = () => {
                           Confidence {Math.round(dec.confidence * 100)}%
                         </span>
 
+                        {dec.status !== 'proposed' && dec.status !== 'needs-review' && (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                            dec.status === 'rejected'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {dec.status === 'rejected' ? 'ROBÍM SAMA' : 'APLIKOVANÉ'}
+                          </span>
+                        )}
+
                         {dec.timelineLocation && (
                           <button
                             onClick={() => handleSeekToTime(dec.timelineLocation?.start, dec.what)}
@@ -508,9 +540,25 @@ export const DirectorPlanCenter: React.FC = () => {
                       </button>
 
                       <button
+                        onClick={() => handleDoItMyself(dec)}
+                        disabled={dec.status === 'rejected'}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                          dec.status === 'rejected'
+                            ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
+                            : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        }`}
+                        title="Skúsim sama — tento návrh si spravím ručne, AI ho nebude aplikovať"
+                      >
+                        <Sliders className="w-4 h-4 text-amber-400" /> Skúsim sama
+                      </button>
+
+                      <button
                         onClick={() => toggleAccept(dec.id)}
+                        disabled={dec.status === 'rejected'}
                         className={`px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                          isAccepted
+                          dec.status === 'rejected'
+                            ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
+                            : isAccepted
                             ? 'bg-emerald-500 text-black'
                             : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
                         }`}

@@ -395,6 +395,78 @@ async function run() {
   check('the storyboard item carries its evidence label', generator.includes('evidenceSk'));
   check('the scene source contains no randomness', !fs.readFileSync('src/visual/StoryboardSceneSource.ts', 'utf8').includes('Math.random'));
 
+  // ---------------------------------------------------------------- §8 do-it-myself
+  console.log('\n--- 8. „Skúsim sama" rejects the decision, learns from it and edits nothing ---');
+  const myselfProject: any = { ...createInitialProject('Skusim sama fixture'), analysisResults: undefined, transcript: undefined };
+  const myselfTrack = myselfProject.tracks.find((t: any) => t.type === 'video');
+  myselfTrack.clips.push(CLIP('mk1', myselfTrack.id, 0, 40));
+  myselfProject.analysisResults = {
+    projectId: myselfProject.id,
+    timestamp: Date.now(),
+    hooks: [{ id: 'h_mk', start: 2, end: 6, type: 'question', reason: 'measured', confidence: 0.95 }],
+  };
+  coreEngine.commandManager.setProject(myselfProject);
+
+  const myselfPlan = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'CUSTOM', 'STANDARD');
+  check('the fixture plan produced a decision to hand over', myselfPlan.decisions.length > 0, `${myselfPlan.decisions.length}`);
+  const myselfDecision = myselfPlan.decisions[0];
+  const scaleBeforeMyself = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'mk1')?.scale;
+
+  const myselfResult = coreEngine.decideOnReviewItem(myselfDecision.id, 'REJECTED');
+  const storedDecision = coreEngine.getProject().directorPlan?.decisions.find(d => d.id === myselfDecision.id);
+  const scaleAfterMyself = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'mk1')?.scale;
+  const queueRow = coreEngine.listReviewQueue().find(item => item.id === myselfDecision.id);
+
+  check('the hand-over is accepted by the engine', myselfResult.ok === true && myselfResult.applied === false, JSON.stringify(myselfResult));
+  check('the decision is marked as rejected in the canonical plan', storedDecision?.status === 'rejected', String(storedDecision?.status));
+  check('the review queue shows the rejection instead of a pending item', queueRow?.status === 'REJECTED', String(queueRow?.status));
+  check('nothing on the timeline changed', scaleBeforeMyself === scaleAfterMyself, `${scaleBeforeMyself} → ${scaleAfterMyself}`);
+  const learnedCategory = myselfDecision.proposedAction?.kind === 'PUNCH_IN' ? 'MOTION' : null;
+  const learned = learnedCategory ? (coreEngine.getProject().editingPreferences || []).find((p: any) => p.category === learnedCategory) : undefined;
+  check('the hand-over is recorded as one real observation', !learnedCategory || (!!learned && learned.evidenceCount >= 1), JSON.stringify(learned && { count: learned.evidenceCount, confidence: learned.confidence }));
+  check('the UI offers „Skúsim sama"', fs.readFileSync('src/components/DirectorPlanCenter.tsx', 'utf8').includes('Skúsim sama'));
+  check('the UI routes it through the canonical decision API', fs.readFileSync('src/components/DirectorPlanCenter.tsx', 'utf8').includes("decideOnReviewItem(dec.id, 'REJECTED')"));
+
+  // ---------------------------------------------------------------- §9 learning loop
+  console.log('\n--- 9. Two hand-overs really change the next plan (learning loop) ---');
+  const loopProject: any = { ...createInitialProject('Learning loop'), analysisResults: undefined, transcript: undefined };
+  const loopTrack = loopProject.tracks.find((t: any) => t.type === 'video');
+  loopTrack.clips.push(CLIP('lp1', loopTrack.id, 0, 60));
+  loopProject.analysisResults = {
+    projectId: loopProject.id,
+    timestamp: Date.now(),
+    pauses: [
+      { id: 'lp_p1', start: 10, end: 13, duration: 3, type: 'long_pause', confidence: 0.9 },
+      { id: 'lp_p2', start: 30, end: 32, duration: 2, type: 'long_pause', confidence: 0.8 },
+    ],
+  };
+  coreEngine.commandManager.setProject(loopProject);
+
+  const firstPlan = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'CUSTOM', 'STANDARD');
+  const firstTrims = firstPlan.decisions.filter(d => d.proposedAction?.kind === 'TRIM_RANGE');
+  check('two measured long pauses give two trim decisions', firstTrims.length === 2, `${firstTrims.length}`);
+  check('the first plan is not yet influenced by learning', firstTrims.every(d => !d.why.includes('Brain')), firstTrims.map(d => d.priority).join(','));
+
+  // The user takes both of them over — one real observation each.
+  firstTrims.forEach(d => coreEngine.decideOnReviewItem(d.id, 'REJECTED'));
+  const pacingPreference = (coreEngine.getProject().editingPreferences || []).find((p: any) => p.category === 'PACING');
+  check('two hand-overs are two real observations', pacingPreference?.evidenceCount === 2, JSON.stringify(pacingPreference && { count: pacingPreference.evidenceCount, value: pacingPreference.value }));
+
+  const secondPlan = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'CUSTOM', 'STANDARD');
+  const secondTrims = secondPlan.decisions.filter(d => d.proposedAction?.kind === 'TRIM_RANGE');
+  check('the next plan demotes the pause trimming the user kept taking over', secondTrims.length > 0 && secondTrims.every(d => d.priority === 'OPTIONAL'), secondTrims.map(d => d.priority).join(','));
+  check('the demoted decision states the learned evidence', secondTrims.some(d => d.why.includes('Brain') && d.why.includes('2×')), secondTrims[0]?.why.slice(-90));
+
+  // Control: the same fixture without the observations keeps the normal priority.
+  const controlProject: any = { ...createInitialProject('Learning control'), analysisResults: loopProject.analysisResults, transcript: undefined };
+  const controlTrack = controlProject.tracks.find((t: any) => t.type === 'video');
+  controlTrack.clips.push(CLIP('cp1', controlTrack.id, 0, 60));
+  coreEngine.commandManager.setProject(controlProject);
+  const controlPlan = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'CUSTOM', 'STANDARD');
+  const controlTrims = controlPlan.decisions.filter(d => d.proposedAction?.kind === 'TRIM_RANGE');
+  check('without observations the same pauses stay high priority', controlTrims.some(d => d.priority === 'MUST_CONSIDER'), controlTrims.map(d => d.priority).join(','));
+  check('the hand-over copy states the 2× threshold', fs.readFileSync('src/components/DirectorPlanCenter.tsx', 'utf8').includes('aspoň 2×'));
+
   console.log(`\n=== ${fail === 0 ? 'ALL DIRECTOR MODE CHECKS PASSED' : 'DIRECTOR MODE CHECKS FAILED'} — ${pass} passed, ${fail} failed ===`);
   if (fail > 0) process.exitCode = 1;
 }
