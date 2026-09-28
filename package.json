@@ -14,6 +14,7 @@
     "verify:director-ui": "tsx verify_director_ui.mjs",
     "verify:shorts": "tsx verify_shorts.ts",
     "verify:reframe": "tsx verify_reframe.ts",
+    "verify:media-link": "tsx verify_media_link.ts",
     "verify:qc": "tsx verify_qc.ts",
     "verify:app": "tsx smoke.mjs",
     "verify:boundary": "tsx verify_errorboundary.mjs",

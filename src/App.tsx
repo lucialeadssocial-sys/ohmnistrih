@@ -81,7 +81,6 @@ const ProfessionalExportCenter = lazy(() => import("./components/ProfessionalExp
 const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then(m => ({ default: m.ImportMediaModal })));
 
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
-import { mediaEngine } from "./core/media/mediaEngine";
 import { opfsManager } from "./core/storage/opfs";
 import { extractWavFromVideoUrl } from "./utils/audioExtraction";
 import type { MediaAsset } from "./core/types/project";
@@ -1130,6 +1129,27 @@ function MainApp() {
    * as the normal export and downloaded as a .webm. Failures are reported per proposal — never
    * swallowed and never counted as produced.
    */
+  /** Export errors in words the editor can act on; unknown errors keep their own message. */
+  const describeExportError = useCallback((error: unknown): string => {
+    const raw = (error as Error)?.message || String(error);
+    if (raw.startsWith("MEDIA_NOT_LINKED")) {
+      const names = raw.split(":").slice(1).join(":").trim();
+      return isSk
+        ? `Médium nie je prepojené s renderom (${names}) — načítajte alebo znovu naimportujte zdroj a skúste znova.`
+        : `Media is not linked to the renderer (${names}) — load or re-import the source and try again.`;
+    }
+    if (raw === "CANVAS_2D_CONTEXT_UNAVAILABLE") {
+      return isSk ? "Renderovacie plátno nemá 2D kontext — export sa nespustil." : "The render canvas has no 2D context — the export did not start.";
+    }
+    if (raw === "EDL_CHANGED") {
+      return isSk ? "Timeline sa zmenila počas exportu — spustite export znova." : "The timeline changed during the export — run the export again.";
+    }
+    if (raw === "EXPORT_CANCELLED") {
+      return isSk ? "Export bol zrušený." : "The export was cancelled.";
+    }
+    return raw;
+  }, [isSk]);
+
   const handleExportShorts = async (proposals: ShortsProposal[]) => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -1170,6 +1190,15 @@ function MainApp() {
         );
         const backend = await RenderBackendSelector.selectBackend(plan);
         await backend.prepare(plan, () => {});
+        // Honest report of what the render actually had to draw (never assumed).
+        const linkReport = typeof (backend as any).getMediaLinkReport === "function" ? (backend as any).getMediaLinkReport() : null;
+        if (linkReport && linkReport.failed.length > 0) {
+          failures.push(
+            isSk
+              ? `${proposal.duration}s: médium sa neprepojilo pre ${linkReport.failed.map((f: any) => f.name).join(", ")} — klip môže ostať bez obrazu/zvuku.`
+              : `${proposal.duration}s: media could not be linked for ${linkReport.failed.map((f: any) => f.name).join(", ")} — the clip may be missing picture/sound.`
+          );
+        }
         const artifact = await backend.render(plan, canvas, video, () => {});
 
         const safeTitle = (isSk ? proposal.titleSk : proposal.titleEn)
@@ -1184,7 +1213,7 @@ function MainApp() {
         document.body.removeChild(link);
         produced++;
       } catch (err: any) {
-        failures.push(`${proposal.start}s–${proposal.end}s: ${err?.message || String(err)}`);
+        failures.push(`${proposal.start}s–${proposal.end}s: ${describeExportError(err)}`);
       }
 
       setShortsProgress({
@@ -1981,18 +2010,33 @@ function MainApp() {
       return;
     }
 
-    // Phase 1: Register with the new Media Engine if it's a real file
+    // Phase 1: put the real file into the CANONICAL project (asset + clip). The compositor, the
+    // mixer, the Director and the QC then work on the same media the editor sees — a file that
+    // only lives in a local blob URL is media nothing else in the app can use.
     if (file) {
       try {
-        const asset = await mediaEngine.registerMediaFile(file);
-        console.log('[MediaEngine] Registered asset:', asset);
-        // We can update project state with real duration/metadata here
-        if (asset.duration > 0) {
-           setDuration(asset.duration);
-           playheadStore.setDuration(asset.duration);
+        const clip = await coreEngine.importMediaFile(file, "video");
+        if (clip.duration > 0) {
+          setDuration(clip.duration);
+          playheadStore.setDuration(clip.duration);
+        }
+        // Link the element for this asset with the URL the player already uses, so the first
+        // export does not have to load the media a second time.
+        const link = await coreEngine.linkProjectMedia(clip.assetId ? { urlByAssetId: { [clip.assetId]: url } } : {});
+        if (link.linked.length === 0) {
+          showToast(
+            isSk
+              ? `Import do projektu prebehol, ale médium sa nepodarilo prepojiť s renderom: ${fname}.`
+              : `The import into the project succeeded, but the media could not be linked to the renderer: ${fname}.`
+          );
         }
       } catch (err) {
-        console.error('[MediaEngine] Registration failed:', err);
+        console.error("[MediaEngine] Import into the canonical project failed:", err);
+        showToast(
+          isSk
+            ? `Import do projektu zlyhal: ${(err as Error).message}`
+            : `Import into the project failed: ${(err as Error).message}`
+        );
       }
     }
 

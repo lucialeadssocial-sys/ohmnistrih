@@ -62,6 +62,7 @@ export * from './ai';
 
 import { analysisEngine } from './ai/analysisEngine';
 import type { SubjectSample } from './vision/subjectTrack';
+import { ensureProjectMediaElements, MediaLinkReport } from './render/mediaElements';
 import { directorEngine } from './ai/directorEngine';
 import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
 import { editingBrain } from './ai/editingBrain';
@@ -702,6 +703,16 @@ export class CoreEngine {
    * Nothing is invented here: an empty array clears the track and the reframe goes back to centred.
    * Returns how many samples are stored afterwards.
    */
+  /**
+   * Links the project's media to real DOM elements for the compositor and the audio mixer, and
+   * reports what was linked and what failed (with reasons). Nothing is assumed.
+   */
+  public async linkProjectMedia(
+    options: { urlByAssetId?: Record<string, string>; timeoutMs?: number; reload?: boolean } = {}
+  ): Promise<MediaLinkReport> {
+    return ensureProjectMediaElements(this.getProject(), options);
+  }
+
   public recordSubjectTrack(samples: SubjectSample[], options: { replace?: boolean } = {}): number {
     const currentProj = this.getProject();
     const existing = currentProj.analysisResults?.subjectTrack ?? [];

@@ -4,6 +4,7 @@ import { RenderBackend } from "./RenderBackend";
 import { RenderEngineManager } from "../utils/renderEngineManager";
 import { coreEngine } from "../core/index";
 import { renderEngine } from "../core/render/renderEngine";
+import { ensureProjectMediaElements, MediaLinkReport } from "../core/render/mediaElements";
 import { renderProjectMix } from "../core/audio/mixRenderer";
 import { measureLoudness, normalizationGainDb, LoudnessMeasurement } from "../core/audio/loudness";
 import { TimelineEngine } from "../core/timeline/timelineEngine";
@@ -56,8 +57,35 @@ export class WebCodecsOfflineBackend implements RenderBackend {
     }
   }
 
+  /** What the last prepare() really linked / failed to link (never an assumption). */
+  private mediaLinkReport: MediaLinkReport | null = null;
+
+  getMediaLinkReport(): MediaLinkReport | null {
+    return this.mediaLinkReport;
+  }
+
   async prepare(plan: RenderPlan, onProgress: (info: RenderProgressInfo) => void): Promise<void> {
     this.isCancelled = false;
+
+    // The compositor draws DOM elements and the mixer decodes their URL — link the canonical
+    // project's media before any frame is rendered, and refuse to "succeed" with missing picture.
+    const project = coreEngine.getProject();
+    const linkReport = await ensureProjectMediaElements(project);
+    this.mediaLinkReport = linkReport;
+    const visualMissing = project.tracks
+      .filter(track => track.type === 'video' || track.type === 'b-roll')
+      .flatMap(track => track.clips)
+      .filter(clip => (clip.type === 'video' || clip.type === 'image') && clip.assetId)
+      .map(clip => clip.assetId as string)
+      .filter(assetId => linkReport.failed.some(failure => failure.assetId === assetId));
+    if (visualMissing.length > 0) {
+      const names = linkReport.failed
+        .filter(failure => visualMissing.includes(failure.assetId))
+        .map(failure => failure.name)
+        .join(', ');
+      throw new Error(`MEDIA_NOT_LINKED: ${names}`);
+    }
+
     onProgress({
       status: "PREPARING",
       currentFrame: 0,
