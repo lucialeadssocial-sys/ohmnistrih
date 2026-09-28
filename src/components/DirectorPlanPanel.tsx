@@ -46,6 +46,8 @@ export interface DirectorPlanItem {
   lesson?: string;
   confidence: number;
   status: "proposed";
+  /** Odkiaľ zásah pochádza: z konkrétnej vety prepisu, z odhadu, alebo od AI. */
+  basis?: "transcript" | "estimate" | "ai";
 }
 
 interface DirectorPlanResponse {
@@ -55,6 +57,9 @@ interface DirectorPlanResponse {
   model?: string;
   plan: DirectorPlanItem[];
   summary?: string;
+  /** Na čom je celý plán postavený. */
+  planBasis?: "transcript" | "estimate" | "ai";
+  anchoredSentences?: number;
   fallbackReason?: string;
   estimatedTimeSavedMinutes?: number;
   error?: string;
@@ -271,6 +276,18 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                 ? `${isSk ? "AI" : "AI"} · ${result.model || "gemini"}`
                 : isSk ? "OFFLINE (0 tokenov)" : "OFFLINE (0 tokens)"}
             </span>
+            {typeof result.anchoredSentences === "number" && result.anchoredSentences > 0 && (
+              <span className="text-[10px] px-2 py-1 rounded border bg-sky-500/10 text-sky-300 border-sky-500/30">
+                {isSk
+                  ? `kotvené na ${result.anchoredSentences} vetách z prepisu`
+                  : `anchored on ${result.anchoredSentences} transcript lines`}
+              </span>
+            )}
+            {result.planBasis === "estimate" && (
+              <span className="text-[10px] px-2 py-1 rounded border bg-amber-500/10 text-amber-300 border-amber-500/30">
+                {isSk ? "odhad — bez prepisu" : "estimate — no transcript"}
+              </span>
+            )}
             {result.fallbackReason && (
               <span className="text-[10px] text-neutral-500">{result.fallbackReason}</span>
             )}
@@ -430,6 +447,17 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
             {result.summary && (
               <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800 text-[11px] text-neutral-300">
                 {result.summary}
+              </div>
+            )}
+
+            {result.planBasis === "estimate" && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  {isSk
+                    ? "Toto je kostra bez prepisu — časy sú orientačné a istota je nízka. Vlož text hovoreného slova vyššie a spusti znova: plán sa potom skotví na konkrétne vety (a pri každom zásahu uvidíš, ktorá veta to je)."
+                    : "This is a skeleton without a transcript — times are rough. Paste the spoken text and run again to anchor the plan to real lines."}
+                </span>
               </div>
             )}
 
@@ -629,7 +657,31 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                             <HelpCircle className="h-3 w-3" />
                             {isSk ? "Prečo?" : "Why?"}
                           </button>
-                          <span className="text-[9px] text-neutral-600 font-mono ml-auto">
+                          <span className="text-[9px] text-neutral-600 font-mono ml-auto flex items-center gap-1.5">
+                            {item.basis && (
+                              <span
+                                className={`px-1.5 py-0.5 rounded border font-sans ${
+                                  item.basis === "transcript"
+                                    ? "bg-sky-500/10 text-sky-300 border-sky-500/30"
+                                    : item.basis === "ai"
+                                      ? "bg-violet-500/10 text-violet-300 border-violet-500/30"
+                                      : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                }`}
+                                title={
+                                  item.basis === "transcript"
+                                    ? isSk ? "Kotvené na konkrétnej vete z prepisu" : "Anchored to a specific transcript line"
+                                    : item.basis === "ai"
+                                      ? isSk ? "Rozhodnutie AI" : "AI decision"
+                                      : isSk ? "Odhad — bez prepisu" : "Estimate — no transcript"
+                                }
+                              >
+                                {item.basis === "transcript"
+                                  ? isSk ? "z prepisu" : "transcript"
+                                  : item.basis === "ai"
+                                    ? "AI"
+                                    : isSk ? "odhad" : "estimate"}
+                              </span>
+                            )}
                             {isSk ? "istota" : "confidence"} {Math.round(item.confidence * 100)} %
                           </span>
                         </div>
