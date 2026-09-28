@@ -15,9 +15,13 @@ export interface StoryboardItem {
   motionSk: string;
   transitionSk: string;
   reasonSk: string;
+  /** Where the numbers of this item come from (measured / neutral value / missing data). */
+  evidenceSk?: string;
   confidence: number;
   decisions: EditorialDecision[];
   status: "pending" | "applied" | "rejected";
+  /** Real reason why a decision of this scene stayed manual (filled after an apply attempt). */
+  manualReasonSk?: string;
 }
 
 export interface StoryboardPlan {
@@ -31,7 +35,8 @@ export class AIStoryboardGenerator {
   static generateStoryboard(
     projectId: string,
     scenes: SceneInputData[],
-    style: VisualStyleDNA
+    style: VisualStyleDNA,
+    evidence?: Record<string, { boundsSk: string; importanceSk: string; brollSk: string }>
   ): StoryboardPlan {
     const items: StoryboardItem[] = scenes.map((scene, idx) => {
       const plan = AISceneDirector.createSceneEditorialPlan(scene, style);
@@ -54,8 +59,12 @@ export class AIStoryboardGenerator {
         brollIntentSk: brollDec ? brollDec.reasonSk : "Bez dodatočného B-rollu",
         motionSk: motionDec ? motionDec.reasonSk : "Statický záber",
         transitionSk: transitionDec ? transitionDec.reasonSk : "Priamy strih",
-        reasonSk: `Automatické rozhodnutie scény na základe sémantickej dôležitosti (${scene.semanticImportance * 100}%) a hustoty ${plan.visualDensityScore}.`,
-        confidence: Number((0.88 + scene.semanticImportance * 0.1).toFixed(2)),
+        reasonSk: `Rozhodnutie scény podľa dôležitosti ${(scene.semanticImportance * 100).toFixed(0)} % a vizuálnej hustoty ${plan.visualDensityScore}.`,
+        // The item confidence is the scene's declared importance — no made-up baseline offset.
+        confidence: Number(scene.semanticImportance.toFixed(2)),
+        evidenceSk: evidence?.[scene.sceneId]
+          ? `Zdroj: ${evidence[scene.sceneId].boundsSk} · ${evidence[scene.sceneId].importanceSk} · B-roll: ${evidence[scene.sceneId].brollSk}`
+          : undefined,
         decisions: plan.decisions,
         status: "pending",
       };

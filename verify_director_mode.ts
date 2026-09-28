@@ -10,6 +10,8 @@
  */
 import { coreEngine, createInitialProject, AddClipCommand } from './src/core';
 import { DIRECTOR_MODES, QUALITY_RULES, applyDirectorMode, buildReadinessSummary, inferModeForPlatform, DirectorMode, DirectorQuality } from './src/core/ai/directorModes';
+import { buildStoryboardScenes } from './src/visual/StoryboardSceneSource';
+import { VisualDecisionManager } from './src/visual/VisualDecisionManager';
 import { DirectorDecisionItem, DirectorPlan } from './src/core/ai/analysisTypes';
 
 let pass = 0;
@@ -304,6 +306,94 @@ async function run() {
   check('the UI reports how many proposals stay manual', centerAfter.includes('skippedCount'));
   const coreSource = fs.readFileSync('src/core/index.ts', 'utf8');
   check('the core returns the skip information to the caller', /skippedCount: number; skipped: \{ id: string; reason: string \}\[\]/.test(coreSource));
+
+  // ---------------------------------------------------------------- §7 storyboard
+  console.log('\n--- 7. Storyboard scenes come from measurements, apply goes through commands ---');
+  const storyAsset = { id: 'asset_speaker', name: 'Speaker', type: 'video', duration: 30, width: 1080, height: 1920, fps: 30, opfsPath: 'opfs://speaker.mp4', size: 10, mimeType: 'video/mp4', createdAt: 0 };
+  const brollAsset = { id: 'asset_broll', name: 'Workspace', type: 'video', duration: 10, width: 1080, height: 1920, fps: 30, opfsPath: 'opfs://workspace.mp4', size: 10, mimeType: 'video/mp4', createdAt: 0 };
+
+  const storyProject: any = { ...createInitialProject('Storyboard fixture'), analysisResults: undefined, transcript: undefined };
+  storyProject.assets.push(storyAsset, brollAsset);
+  const storyTrack = storyProject.tracks.find((t: any) => t.type === 'video');
+  storyTrack.clips.push({ ...CLIP('s1_clip', storyTrack.id, 0, 30), assetId: 'asset_speaker' });
+  storyProject.transcript = {
+    id: 'tr_story',
+    segments: [
+      { id: 'seg1', start: 0, end: 8, text: 'Ako ušetriť čas pri strihu videa?' },
+      { id: 'seg2', start: 8, end: 16, text: 'Toto je druhá scéna bez hooku.' },
+    ],
+    words: [],
+  };
+  storyProject.analysisResults = {
+    projectId: storyProject.id,
+    timestamp: Date.now(),
+    hooks: [{ id: 'h_story', start: 1, end: 4, type: 'question', reason: 'measured', confidence: 0.83 }],
+  };
+
+  const sceneSource = buildStoryboardScenes(storyProject);
+  check('one storyboard scene per measured transcript segment', sceneSource.scenes.length === 2, `${sceneSource.scenes.length}`);
+  check('scene boundaries are the measured segment times', sceneSource.scenes[0].timelineStart === 0 && sceneSource.scenes[0].timelineEnd === 8);
+  check('measured analysis is declared', sceneSource.measured === true);
+  check('scene importance is the measured hook confidence', sceneSource.scenes[0].semanticImportance === 0.83, String(sceneSource.scenes[0].semanticImportance));
+  check('the evidence names the measured source', sceneSource.evidence[sceneSource.scenes[0].sceneId].importanceSk.includes('Meraná dôvera'));
+  check('scene without a hook uses the labelled neutral value', sceneSource.scenes[1].semanticImportance === 0.5 && sceneSource.evidence[sceneSource.scenes[1].sceneId].importanceSk.includes('Neutrálna hodnota'));
+  check('keywords come from the real transcript text', sceneSource.scenes[0].keywords.includes('ušetriť') && sceneSource.scenes[0].keywords.includes('strihu'), sceneSource.scenes[0].keywords.join(','));
+  check('scene without text has no invented keywords', sceneSource.scenes[1].keywords.length === 0);
+  check('the B-roll list excludes the asset already playing in the scene', sceneSource.scenes[0].availableBrollAssets.every(a => a.id !== 'asset_speaker'), sceneSource.scenes[0].availableBrollAssets.map(a => a.id).join(','));
+  check('the B-roll list offers the real project asset', sceneSource.scenes[0].availableBrollAssets.some(a => a.id === 'asset_broll'));
+
+  const clipOnlySource = buildStoryboardScenes((() => {
+    const p: any = { ...createInitialProject('No transcript'), analysisResults: undefined, transcript: undefined };
+    const track = p.tracks.find((t: any) => t.type === 'video');
+    track.clips.push(CLIP('only_clip', track.id, 4, 6));
+    return p;
+  })());
+  check('without a transcript scenes are the real clips', clipOnlySource.scenes.length === 1 && clipOnlySource.scenes[0].timelineStart === 4 && clipOnlySource.scenes[0].timelineEnd === 10);
+  check('clip-based scenes say the transcript is missing', clipOnlySource.notesSk.some(n => n.includes('Prepis nie je k dispozícii')));
+  check('clip-based scenes are not claimed as measured', clipOnlySource.measured === false);
+
+  const emptySource = buildStoryboardScenes({ ...createInitialProject('Empty'), analysisResults: undefined, transcript: undefined } as any);
+  check('no clips and no transcript means no storyboard at all', emptySource.scenes.length === 0 && emptySource.notesSk.some(n => n.includes('nedá postaviť')));
+
+  // Apply path: visual decisions -> Director decisions -> canonical commands.
+  const applyStoryProject: any = { ...createInitialProject('Storyboard apply'), analysisResults: undefined, transcript: undefined };
+  applyStoryProject.assets.push(brollAsset);
+  const applyStoryTrack = applyStoryProject.tracks.find((t: any) => t.type === 'video');
+  applyStoryTrack.clips.push(CLIP('va1', applyStoryTrack.id, 0, 20));
+  coreEngine.commandManager.setProject(applyStoryProject);
+
+  const visualDecisions = [
+    { id: 'vd_motion', timelineStart: 2, timelineEnd: 4, type: 'MICRO_MOTION', priority: 2, confidence: 0.92, reason: 'micro motion', reasonSk: 'Jemný pohyb drží oko.', source: 'EDITORIAL_ENGINE', status: 'pending', locked: false },
+    { id: 'vd_broll', timelineStart: 6, timelineEnd: 9, type: 'BROLL', priority: 2, confidence: 0.8, reason: 'broll', reasonSk: 'Podporný záber.', source: 'EDITORIAL_ENGINE', status: 'pending', locked: false, visualAssetId: 'asset_broll' },
+    { id: 'vd_punchout', timelineStart: 10, timelineEnd: 12, type: 'PUNCH_OUT', priority: 3, confidence: 0.7, reason: 'punch out', reasonSk: 'Zmenšenie záberu.', source: 'EDITORIAL_ENGINE', status: 'pending', locked: false },
+  ] as any;
+  const directorItems = VisualDecisionManager.toDirectorDecisionItems(coreEngine.getProject(), visualDecisions, 'sb_item1');
+  check('visual decisions map onto Director decisions one to one', directorItems.length === 3, `${directorItems.length}`);
+  check('micro motion becomes an executable punch-in', directorItems[0].proposedAction?.kind === 'PUNCH_IN');
+  check('B-roll maps to a B-roll insert with the real asset id', directorItems[1].proposedAction?.kind === 'BROLL_INSERT' && (directorItems[1].proposedAction as any).parameters.assetId === 'asset_broll');
+  check('punch-out is honestly a manual step (no punch-out command)', directorItems[2].proposedAction?.kind === 'MANUAL_ONLY');
+  check('the target clip is the real clip at that time', directorItems[0].affectedClipId === 'va1', String(directorItems[0].affectedClipId));
+
+  const beforeStoryScale = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'va1')?.scale;
+  const storyApply = coreEngine.applyDirectorDecisions(directorItems, 'AI Storyboard: 1 scéna');
+  const afterStoryScale = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'va1')?.scale;
+  check('the storyboard apply executes what it can', storyApply.success === true && storyApply.appliedCount === 1, JSON.stringify({ applied: storyApply.appliedCount, skipped: storyApply.skippedCount }));
+  check('the applied punch-in changed the canonical clip', beforeStoryScale === 100 && afterStoryScale === 115, `${beforeStoryScale} → ${afterStoryScale}`);
+  check('B-roll and punch-out are reported as manual, not as applied', storyApply.skippedCount === 2 && storyApply.skipped.every(s => s.reason.length > 5), storyApply.skipped.map(s => s.reason).join(' | '));
+  check('the transient plan is not written into the project', (coreEngine.getProject() as any).directorPlan === undefined);
+  const motionPreference = (coreEngine.getProject().editingPreferences || []).find((p: any) => p.category === 'MOTION');
+  check('only the really applied edit was learned', !!motionPreference && motionPreference.evidenceCount === 1, JSON.stringify(motionPreference && { count: motionPreference.evidenceCount, enabled: motionPreference.enabled }));
+
+  const panel = fs.readFileSync('src/components/AIStoryboardPanel.tsx', 'utf8');
+  check('the panel no longer contains the demo scenes', !panel.includes('sampleScenes') && !panel.includes('demo-broll.mp4') && !panel.includes('Hello and welcome'));
+  check('the panel builds scenes from the project', panel.includes('buildStoryboardScenes'));
+  check('the panel applies through the command system', panel.includes('applyDirectorDecisions'));
+  check('the panel reports the manual reason per scene', panel.includes('manualReasonSk') && panel.includes('Ručne:'));
+  check('the panel no longer prints "Math.round(" to the user', !panel.includes('Istota: Math.round('));
+  const generator = fs.readFileSync('src/visual/AIStoryboardGenerator.ts', 'utf8');
+  check('the storyboard confidence is the declared importance, not an invented 0.88 baseline', !generator.includes('0.88 + scene.semanticImportance'));
+  check('the storyboard item carries its evidence label', generator.includes('evidenceSk'));
+  check('the scene source contains no randomness', !fs.readFileSync('src/visual/StoryboardSceneSource.ts', 'utf8').includes('Math.random'));
 
   console.log(`\n=== ${fail === 0 ? 'ALL DIRECTOR MODE CHECKS PASSED' : 'DIRECTOR MODE CHECKS FAILED'} — ${pass} passed, ${fail} failed ===`);
   if (fail > 0) process.exitCode = 1;

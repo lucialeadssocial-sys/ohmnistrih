@@ -736,6 +736,58 @@ export class CoreEngine {
     return result;
   }
 
+  /**
+   * Applies a batch of Director decisions that were produced OUTSIDE the stored Director plan
+   * (e.g. the visual storyboard) through the canonical Command System.
+   *
+   * The decisions are wrapped in a transient plan (never stored on the project, so the user's real
+   * Director plan is not overwritten), validated and applied with a snapshot. Only the decisions
+   * that were really applied are learned as accepted — decisions the engine cannot execute are
+   * reported back to the caller instead of being counted as agreement.
+   */
+  public applyDirectorDecisions(
+    decisions: DirectorDecisionItem[],
+    title = 'AI vizuálny plán'
+  ): { success: boolean; appliedCount: number; skippedCount: number; skipped: { id: string; reason: string }[]; snapshotVersionId?: string; error?: string } {
+    const project = this.getProject();
+    if (decisions.length === 0) {
+      return { success: false, appliedCount: 0, skippedCount: 0, skipped: [], error: 'Plán neobsahuje žiadne rozhodnutia.' };
+    }
+
+    const plan: DirectorPlan = {
+      id: `plan_transient_${crypto.randomUUID()}`,
+      projectId: project.id,
+      title,
+      targetPlatform: 'General',
+      targetFormat: '9:16',
+      objectives: [],
+      audience: '—',
+      contentSummary: `${title}: ${decisions.length} rozhodnutí z vizuálneho plánu.`,
+      strategies: {},
+      decisions,
+      analysisReferences: project.analysisResults ? [project.analysisResults.projectId] : [],
+      insightReferences: [],
+      knowledgeReferences: [],
+      confidence: decisions.reduce((sum, d) => sum + d.confidence, 0) / decisions.length,
+      unresolvedAmbiguities: [],
+      createdAt: Date.now(),
+      analysisVersion: 2,
+      directorVersion: 1,
+    };
+
+    const result = directorEngine.safeBatchApply(this.commandManager, plan, decisions.map(d => d.id));
+
+    if (result.success && result.appliedCount > 0) {
+      const skippedIds = new Set(result.skipped.map(sk => sk.id));
+      const appliedIds = decisions.map(d => d.id).filter(id => !skippedIds.has(id));
+      const appliedPlan: DirectorPlan = { ...plan, decisions: decisions.filter(d => appliedIds.includes(d.id)) };
+      this.observePlanDecisions(appliedPlan, appliedIds);
+      this.saveCurrentProject();
+    }
+
+    return result;
+  }
+
   private observePlanDecisions(plan: DirectorPlan, acceptedDecisionIds: string[]): void {
     const accepted = new Set(acceptedDecisionIds);
     const perCategory = new Map<EditingPreference['category'], { accepted: number; rejected: number }>();
