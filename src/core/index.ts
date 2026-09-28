@@ -797,6 +797,10 @@ export class CoreEngine {
       const category = kind ? CoreEngine.preferenceCategoryForProposedAction(kind) : null;
       if (!category || !decision.proposedAction) continue;
 
+      // A decision the user already decided on (e.g. taken over with „Skúsim sama") is NOT
+      // re-counted in this batch: one user action must produce exactly one observation.
+      if (decision.status !== 'proposed' && decision.status !== 'needs-review') continue;
+
       const entry = perCategory.get(category) || { accepted: 0, rejected: 0 };
       if (accepted.has(decision.id)) entry.accepted++;
       else entry.rejected++;

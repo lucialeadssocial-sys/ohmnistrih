@@ -63,6 +63,8 @@ export const DirectorPlanCenter: React.FC = () => {
 
   const comparisons: EditComparison[] = plan ? coreEngine.compareUserAndAiEdits(plan) : [];
   const summary = plan ? coreEngine.getReadinessSummary(plan) : null;
+  /** How many proposals are still the AI's to apply (decisions handed over are excluded). */
+  const openDecisionsCount = decisions.filter(d => d.status !== 'rejected').length;
 
   const handleGeneratePlan = () => {
     const newPlan = coreEngine.generateDirectorPlan(targetPlatform, selectedObjectives, mode, quality);
@@ -75,7 +77,14 @@ export const DirectorPlanCenter: React.FC = () => {
    */
   const handleApplyAll = () => {
     if (!plan) return;
-    const allIds = plan.decisions.map(d => d.id);
+    // Decisions the user took over („Skúsim sama") are never part of „all" — they are theirs now.
+    const openDecisions = plan.decisions.filter(d => d.status !== 'rejected');
+    const allIds = openDecisions.map(d => d.id);
+    if (allIds.length === 0) {
+      setApplyStatus('Všetky návrhy si už vzala na seba — AI nemá čo aplikovať.');
+      setTimeout(() => setApplyStatus(null), 6000);
+      return;
+    }
     setApplyStatus('Použitie všetkého: aplikujem plán a vytváram zálohu...');
     const result = coreEngine.safeBatchApplyDirectorPlan(plan, allIds);
     if (result.success) {
@@ -361,14 +370,14 @@ export const DirectorPlanCenter: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <button
               onClick={handleApplyAll}
-              disabled={summary.decisions === 0}
+              disabled={openDecisionsCount === 0}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-lg flex items-center gap-2 transition ${
-                summary.decisions > 0
+                openDecisionsCount > 0
                   ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/10'
                   : 'bg-neutral-800 text-neutral-600 cursor-not-allowed'
               }`}
             >
-              <Zap className="w-4 h-4" /> Použiť všetko ({summary.decisions})
+              <Zap className="w-4 h-4" /> Použiť všetko ({openDecisionsCount})
             </button>
             <span className="text-[10px] text-neutral-500">
               alebo schváľ jednotlivé návrhy nižšie — nič sa neurobí potichu

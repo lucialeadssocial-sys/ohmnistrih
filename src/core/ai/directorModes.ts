@@ -166,6 +166,25 @@ const PRIORITY_ORDER: Record<DecisionPriority, number> = {
 const startOf = (decision: { timelineLocation?: { start: number } }): number | null =>
   typeof decision.timelineLocation?.start === 'number' ? decision.timelineLocation.start : null;
 
+/**
+ * A decision is LOCALIZED when it points at a moment of the timeline (an edit the viewer sees at
+ * that point) instead of describing the whole video.
+ *
+ * Product rule: a caption or a colour balance covering the whole timeline is one global
+ * recommendation — it must never eat the per-minute budget that a localized cut needs. Without this
+ * split, a full-length caption anchored at 0 s swallowed the minute-0 budget and a measured 95 %
+ * pause trim was dropped in favour of it (found by verify_director_ui.mjs).
+ */
+const LONG_RANGE_SECONDS = 15;
+
+function isLocalized(decision: { timelineLocation?: { start: number; end?: number } }): boolean {
+  const start = startOf(decision);
+  if (start === null) return false;
+  const end = decision.timelineLocation?.end;
+  if (typeof end !== 'number') return true; // a point in time without an end is localized
+  return end - start <= LONG_RANGE_SECONDS;
+}
+
 /** Infers the most fitting mode from the target platform (used when the caller does not choose). */
 export function inferModeForPlatform(platform: DirectorPlan['targetPlatform']): DirectorMode {
   switch (platform) {
@@ -268,8 +287,8 @@ export function applyDirectorMode(
       continue;
     }
 
-    // 3. Spacing between two decisions of the same kind (no machine-gun edits).
-    if (anchor !== null && kind) {
+    // 3. Spacing between two localized decisions of the same kind (no machine-gun edits).
+    if (anchor !== null && kind && isLocalized(decision)) {
       const last = lastKeptAtForKind.get(kind);
       if (last !== undefined && Math.abs(anchor - last) < config.minSpacingSeconds) {
         drop(
@@ -281,8 +300,8 @@ export function applyDirectorMode(
       }
     }
 
-    // 4. Budget per minute of material.
-    if (duration > 0 && anchor !== null) {
+    // 4. Budget per minute of material — localized interventions only (see isLocalized).
+    if (duration > 0 && anchor !== null && isLocalized(decision)) {
       const minute = Math.floor(anchor / 60);
       const used = perMinuteCount.get(minute) ?? 0;
       if (used >= maxPerMinute) {
@@ -296,7 +315,7 @@ export function applyDirectorMode(
       perMinuteCount.set(minute, used + 1);
     }
 
-    if (anchor !== null && kind) lastKeptAtKindSet(lastKeptAtForKind, kind, anchor);
+    if (anchor !== null && kind && isLocalized(decision)) lastKeptAtKindSet(lastKeptAtForKind, kind, anchor);
     kept.push(decision);
   }
 
@@ -307,6 +326,7 @@ export function applyDirectorMode(
       ? `Platí: prah istoty ${(minConfidence * 100).toFixed(0)} %, max ${maxPerMinute} zásahov/min, odstup ${config.minSpacingSeconds}s pre rovnaký typ.`
       : 'Bez dĺžky materiálu sa limit na minútu nedá uplatniť — platí iba prah istoty a odstup.',
     `Manuálne návody (MANUAL_ONLY) a vysvetlenia sa nikdy nevyhadzujú — nemenia timeline, takže nekonkurujú limitu zásahov.`,
+    `Globálne návrhy (napr. titulky alebo farebné zjednotenie pre celé video nad ${LONG_RANGE_SECONDS}s) nekonkurujú limitu na minútu — limit platí pre lokálne zásahy v konkrétnom čase.`,
   ];
   const modeNotesEn = [
     config.goalEn,
@@ -315,6 +335,7 @@ export function applyDirectorMode(
       ? `Applied: ${(minConfidence * 100).toFixed(0)}% confidence floor, max ${maxPerMinute} interventions/min, ${config.minSpacingSeconds}s spacing for the same kind.`
       : 'Without material duration the per-minute limit cannot apply — only the confidence floor and spacing do.',
     'Manual-only guidance and explanations are never dropped — they do not change the timeline, so they do not compete for the intervention budget.',
+    `Global proposals (e.g. captions or colour matching for the whole video longer than ${LONG_RANGE_SECONDS}s) do not compete for the per-minute budget — that budget is for localized interventions.`,
   ];
 
   return {

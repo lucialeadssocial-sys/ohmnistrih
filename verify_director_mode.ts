@@ -196,6 +196,23 @@ async function run() {
   );
   check('the budget drop quotes the limit', budgeted.dropped.some(d => d.reasonSk.includes('limit')));
 
+  // A global proposal (whole-timeline caption) must not eat the budget of localized cuts.
+  const withGlobal = applyDirectorMode(
+    planWith([
+      decision({ id: 'g_caption', priority: 'MUST_CONSIDER', confidence: 0.9, proposedAction: { kind: 'CAPTION_EMPHASIS' }, timelineLocation: { start: 0, end: 120 } }),
+      decision({ id: 'g_punch_a', priority: 'MUST_CONSIDER', confidence: 0.95, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.1 } }, timelineLocation: { start: 5, end: 7 } }),
+      decision({ id: 'g_punch_b', priority: 'MUST_CONSIDER', confidence: 0.93, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.1 } }, timelineLocation: { start: 45, end: 47 } }),
+    ]),
+    project,
+    'SOCIAL',
+    'PRO_QUALITY'
+  ).plan.decisions.map(d => d.id);
+  check(
+    'a whole-video proposal does not consume the localized per-minute budget',
+    withGlobal.includes('g_caption') && withGlobal.includes('g_punch_a') && withGlobal.includes('g_punch_b'),
+    withGlobal.join(',')
+  );
+
   // ---------------------------------------------------------------- §3 readiness
   console.log('\n--- 3. RAW → READY counts are measured, the time figure is a labelled estimate ---');
   const readinessProject: any = {
