@@ -27,14 +27,22 @@ class PipelineExecutorClass {
 
       step.status = "running";
       const routing = AIOrchestrator.routeTask(step.type);
-      
+
       if (routing.isCached) {
         console.log(`[Autopilot] Step ${step.type} served from cache`);
         step.status = "completed";
       } else {
-        await this.runStep(pipeline.projectId, step.type as any, step.priority);
-        step.status = "completed";
-        AIOrchestrator.updateQuota(routing.provider, 1);
+        try {
+          await this.runStep(pipeline.projectId, step.type as any, step.priority);
+          step.status = "completed";
+          AIOrchestrator.updateQuota(routing.provider, 1);
+        } catch (err: any) {
+          // A step that cannot run must stop the pipeline with the real reason instead
+          // of advancing as if the work had been done.
+          step.status = "failed";
+          console.error(`[Autopilot] Step ${step.type} failed:`, err?.message || err);
+          return;
+        }
       }
     }
   }
@@ -49,24 +57,51 @@ class PipelineExecutorClass {
     this.startPipeline(pipelineId);
   }
 
-  private async runStep(projectId: string, type: PipelineStepType, priority: string) {
+  /**
+   * Runs a single pipeline step.
+   *
+   * This used to enqueue a job with no executor and then poll the queue forever waiting
+   * for a `completed` status that could only ever arrive from the old timer-based fake
+   * progress. With the honest queue the job fails immediately, so the poll must resolve
+   * on failure and time out instead of leaking an interval for the lifetime of the tab.
+   */
+  private async runStep(projectId: string, type: PipelineStepType, priority: string): Promise<void> {
     const routing = AIOrchestrator.routeTask(type);
-    
-    // In a real implementation, this maps steps to actual jobs in AIJobQueue
-    AIJobQueue.addJob(projectId, type as any, priority as any);
-    
-    // Poll for completion
-    return new Promise<void>((resolve) => {
+
+    const jobId = AIJobQueue.addJob(projectId, type as any, priority as any);
+
+    return new Promise<void>((resolve, reject) => {
+      const POLL_INTERVAL_MS = 500;
+      const TIMEOUT_MS = 120_000;
+      const startedAt = Date.now();
+
       const interval = setInterval(() => {
-        const queue = AIJobQueue.getQueue();
-        const job = queue.find(j => j.project_id === projectId && j.type === (type as any) && j.status === 'completed');
-        if (job) {
+        const job = AIJobQueue.getQueue().find(j => j.job_id === jobId);
+
+        if (!job) {
           clearInterval(interval);
-          // Assuming successful completion updates quota
+          reject(new Error(`Pipeline step ${type} disappeared from the job queue.`));
+          return;
+        }
+
+        if (job.status === 'completed') {
+          clearInterval(interval);
           AIOrchestrator.updateQuota(routing.provider, 1);
           resolve();
+          return;
         }
-      }, 1000);
+
+        if (job.status === 'failed') {
+          clearInterval(interval);
+          reject(new Error(`Pipeline step ${type} failed: ${job.error || 'unknown error'}`));
+          return;
+        }
+
+        if (Date.now() - startedAt > TIMEOUT_MS) {
+          clearInterval(interval);
+          reject(new Error(`Pipeline step ${type} timed out after ${TIMEOUT_MS / 1000}s.`));
+        }
+      }, POLL_INTERVAL_MS);
     });
   }
 }

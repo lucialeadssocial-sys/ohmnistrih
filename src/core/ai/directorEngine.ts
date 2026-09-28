@@ -11,14 +11,18 @@ import {
   DirectorStrategy,
   EditComparison,
   DecisionPriority,
-  KnowledgeCategory
+  KnowledgeCategory,
+  DirectorProposedAction
 } from './analysisTypes';
-import { ProjectModel, EditDecision } from '../types/project';
+import { ProjectModel, ClipModel, EditDecision } from '../types/project';
 import { EDIT_KNOWLEDGE_BASE, getTeachMeExplanation } from './knowledgeBase';
+import { TimelineEngine } from '../timeline/timelineEngine';
 import {
   CommandManager,
   TrimClipCommand,
   SplitClipCommand,
+  RemoveClipCommand,
+  UpdateClipPropsCommand,
   SetAudioFadeCommand,
   SetTransformCommand,
   SetColorCorrectionCommand,
@@ -85,6 +89,8 @@ export interface DirectorEditPlan {
   projectStateAfter: { estimatedClipCount: number; estimatedDuration: number };
   status: 'PROPOSED' | 'APPROVED' | 'EXECUTED' | 'REJECTED';
   executedTools?: string[];
+  /** States exactly which project data the plan was derived from, or what was missing. */
+  dataSource?: string;
 }
 
 export interface DirectorRevisionReport {
@@ -122,70 +128,460 @@ export class DirectorEngine {
     return DirectorEngine.instance;
   }
 
+  /**
+   * Builds a DirectorBrief + DirectorEditPlan from data that actually exists in the
+   * canonical project. Nothing is invented: when analysis output is missing the plan
+   * contains zero operations and `dataSource` states exactly what was unavailable.
+   */
   public generateBriefAndPlan(
     userPrompt: string,
     project: ProjectModel,
     mediaIndex?: any
   ): { brief: DirectorBrief; editPlan: DirectorEditPlan } {
+    const promptLower = userPrompt.toLowerCase();
+    let targetFormat: DirectorBrief['targetFormat'] = 'CUSTOM';
+    if (promptLower.includes('30') || promptLower.includes('reel')) targetFormat = 'REEL_30S';
+    else if (promptLower.includes('ticho') || promptLower.includes('silence')) targetFormat = 'REMOVE_SILENCE';
+    else if (promptLower.includes('hook')) targetFormat = 'BEST_HOOK';
+
+    const analysis = project.analysisResults;
+    const pauses = (analysis?.pauses || []).filter((p: any) => p.type === 'long_pause' && p.duration > 0.4);
+    const hooks = analysis?.hooks || [];
+    const brolls = analysis?.brollOpportunities || [];
+    const shots = analysis?.shots || [];
+
+    const missing: string[] = [];
+    if (!analysis) missing.push('analysisResults');
+    if (!analysis?.pauses) missing.push('pauses');
+    if (!analysis?.hooks) missing.push('hooks');
+    if (!analysis?.brollOpportunities) missing.push('brollOpportunities');
+
     const brief: DirectorBrief = {
-      id: `brief_${Math.random().toString(36).substr(2, 6)}`,
+      id: `brief_${crypto.randomUUID().slice(0, 8)}`,
       userIntent: userPrompt,
-      targetFormat: 'REEL_30S',
-      moodAndTone: 'Professional',
-      pacingStrategy: 'Dynamic cut',
-      keyMomentsToKeep: [],
-      suggestedAspectRatios: ['9:16'],
+      targetFormat,
+      moodAndTone: analysis?.speechDensity ? `Tempo: ${analysis.speechDensity.informationDensity}` : 'Nezistené (chýba analýza)',
+      pacingStrategy: pauses.length > 0
+        ? `Odstrániť ${pauses.length} dlhých pauzy (>0.4s)`
+        : 'Bez zistených dlhých páz (analýza pauzy nedostupná)',
+      keyMomentsToKeep: hooks.map((h: any, i: number) => ({
+        startTime: h.start,
+        endTime: h.end,
+        description: `Hook kandidát #${i + 1} (${h.type || 'unknown'})`,
+        score: h.confidence ?? 0
+      })),
+      suggestedAspectRatios: [project.settings.aspectRatio === '9:16' ? '9:16' : project.settings.aspectRatio],
+      bestShotTimestamp: shots.length > 0
+        ? shots.reduce((best: any, s: any) => ((s.confidence ?? 0) > (best.confidence ?? 0) ? s : best), shots[0]).start
+        : undefined,
+      identifiedHook: hooks.length > 0
+        ? {
+            startTime: hooks[0].start,
+            endTime: hooks[0].end,
+            transcriptSnippet: analysis?.contentStructure?.hook?.text || '',
+            reason: `Hook kandidát z analýzy (${hooks[0].type || 'unknown'}), confidence ${(hooks[0].confidence ?? 0).toFixed(2)}.`
+          }
+        : undefined,
       duplicateTimestamps: [],
       blurryTimestamps: [],
       darkTimestamps: [],
       staticTimestamps: [],
-      bRollTimestamps: []
+      bRollTimestamps: brolls.map((b: any) => b.start)
     };
+
+    // Operations are derived 1:1 from real analysis output. No analysis -> no operations.
+    const ops: DirectorTimelineOperation[] = [];
+
+    pauses.forEach((pause: any, idx: number) => {
+      ops.push({
+        id: `op_pause_${idx}`,
+        type: 'CUT_SILENCE',
+        description: `Odstrániť pauzu ${pause.duration.toFixed(2)}s v čase ${pause.start.toFixed(2)}s`,
+        startTime: pause.start,
+        endTime: pause.end,
+        parameters: { confidence: pause.confidence ?? null, pauseId: pause.id },
+        status: 'PENDING'
+      });
+    });
+
+    hooks.forEach((hook: any, idx: number) => {
+      ops.push({
+        id: `op_hook_${idx}`,
+        type: 'SET_HOOK',
+        description: `Punch-in zoom na hook ${hook.start}s - ${hook.end}s`,
+        startTime: hook.start,
+        endTime: hook.end,
+        parameters: { scale: 115, confidence: hook.confidence ?? null },
+        status: 'PENDING'
+      });
+    });
+
+    brolls.forEach((b: any, idx: number) => {
+      ops.push({
+        id: `op_broll_${idx}`,
+        type: 'KEEP_SEGMENT',
+        description: `B-roll príležitosť (${b.suggestedVisualType || 'unknown'}) v ${b.start}s - ${b.end}s`,
+        startTime: b.start,
+        endTime: b.end,
+        parameters: { confidence: b.confidence ?? null },
+        status: 'PENDING'
+      });
+    });
+
+    const before = DirectorEngine.getProjectState(project);
+    const removedSeconds = pauses.reduce((sum: number, p: any) => sum + Math.max(0, p.duration - 0.4), 0);
+
     const editPlan: DirectorEditPlan = {
-      id: `plan_${Math.random().toString(36).substr(2, 6)}`,
+      id: `plan_${crypto.randomUUID().slice(0, 8)}`,
       briefId: brief.id,
-      title: 'AI Director Edit Plan',
-      summary: 'Optimized edit plan',
-      operations: [],
-      projectStateBefore: { clipCount: 3, duration: 30 },
-      projectStateAfter: { estimatedClipCount: 3, estimatedDuration: 30 },
-      status: 'PROPOSED'
+      title: `Edit Plan: ${targetFormat}`,
+      summary: ops.length > 0
+        ? `${ops.length} operácií odvodených z reálnej analýzy projektu.`
+        : 'Žiadne operácie: projekt neobsahuje výsledky analýzy, z ktorých by sa dali odvodiť.',
+      operations: ops,
+      projectStateBefore: before,
+      projectStateAfter: {
+        estimatedClipCount: before.clipCount + pauses.length,
+        estimatedDuration: Math.max(0, before.duration - removedSeconds)
+      },
+      status: 'PROPOSED',
+      dataSource: missing.length === 0
+        ? 'analysisResults (kompletné)'
+        : `Chýbajúce podklady: ${missing.join(', ')}`
     };
+
     return { brief, editPlan };
   }
 
-  public executeEditPlan(plan: DirectorEditPlan): boolean {
-    plan.status = 'EXECUTED';
-    return true;
+  private static getProjectState(project: ProjectModel): { clipCount: number; duration: number } {
+    let clipCount = 0;
+    for (const track of project.tracks) {
+      clipCount += track.clips.length;
+    }
+    return { clipCount, duration: TimelineEngine.calculateProjectDuration(project) };
   }
 
+  /**
+   * Applies an approved edit plan to the canonical project through the Command System.
+   * Returns `false` (and applies nothing) when the plan cannot be applied, so callers
+   * never show a success state for work that did not happen.
+   */
+  public executeEditPlan(
+    plan: DirectorEditPlan,
+    commandManager?: CommandManager
+  ): { success: boolean; appliedCount: number; skipped: { operationId: string; reason: string }[]; error?: string } {
+    if (plan.status === 'EXECUTED' || plan.status === 'REJECTED') {
+      return { success: false, appliedCount: 0, skipped: [], error: `Plan je v stave ${plan.status}.` };
+    }
+    if (!commandManager) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skipped: [],
+        error: 'Chýba CommandManager — plán nie je možné aplikovať na canonical projekt.'
+      };
+    }
+
+    const result = this.applyOperations(
+      commandManager,
+      plan.operations.filter(op => op.status === 'APPROVED' || op.status === 'PENDING')
+    );
+
+    if (result.appliedCount > 0) {
+      plan.status = 'EXECUTED';
+    }
+
+    return {
+      success: result.appliedCount > 0,
+      appliedCount: result.appliedCount,
+      skipped: result.skipped,
+      error: result.appliedCount === 0 ? 'Plán neobsahoval žiadnu vykonateľnú operáciu.' : undefined
+    };
+  }
+
+  /**
+   * Shared operation executor used by both `executeEditPlan` and `safeBatchApply`.
+   * Maps each DirectorTimelineOperation onto an existing canonical command.
+   */
+  private applyOperations(
+    commandManager: CommandManager,
+    operations: DirectorTimelineOperation[]
+  ): { appliedCount: number; skipped: { operationId: string; reason: string }[] } {
+    const skipped: { operationId: string; reason: string }[] = [];
+    let appliedCount = 0;
+
+    for (const op of operations) {
+      if (op.type === 'KEEP_SEGMENT') {
+        skipped.push({ operationId: op.id, reason: 'KEEP_SEGMENT je informačná operácia (segment ostáva nezmenený).' });
+        continue;
+      }
+
+      const project = commandManager.getProject();
+
+      if (op.type === 'CUT_SILENCE') {
+        const clip = DirectorEngine.findClipAtTime(project, op.startTime);
+        if (!clip) {
+          skipped.push({ operationId: op.id, reason: `Na čase ${op.startTime.toFixed(2)}s sa nenachádza žiadny klip.` });
+          continue;
+        }
+        const clipStart = clip.timelineStart ?? clip.start ?? 0;
+        const rangeEnd = Math.min(op.endTime, clipStart + clip.duration);
+        if (rangeEnd <= clipStart + 0.01 || rangeEnd > clipStart + clip.duration) {
+          skipped.push({ operationId: op.id, reason: 'Rozsah rezu presahuje klip alebo je prekrytý susedom.' });
+          continue;
+        }
+        // Split, then ripple-delete the left (silent) part — non-destructive, undoable.
+        const startedInMiddle = op.startTime > clipStart + 0.01;
+        if (startedInMiddle) {
+          skipped.push({ operationId: op.id, reason: 'Rez nezačína na hranici klipu — vyžaduje manuálne potvrdenie.' });
+          continue;
+        }
+        const splitOk = commandManager.executeCommand(
+          new SplitClipCommand(`AI Director: rozdelenie pred vystrihnutím pauzy`, clip.id, rangeEnd)
+        );
+        if (!splitOk) {
+          skipped.push({ operationId: op.id, reason: 'Rozdelenie klipu zlyhalo.' });
+          continue;
+        }
+        const afterSplit = commandManager.getProject();
+        const leftClip = DirectorEngine.findClipAtTime(afterSplit, op.startTime);
+        if (!leftClip) {
+          skipped.push({ operationId: op.id, reason: 'Po rozdelení sa nepodarilo nájsť vystrihovanú časť.' });
+          continue;
+        }
+        if (commandManager.executeCommand(
+          new RemoveClipCommand(`AI Director: odstránenie pauzy (${(rangeEnd - clipStart).toFixed(2)}s)`, leftClip.id, true)
+        )) {
+          appliedCount++;
+        } else {
+          skipped.push({ operationId: op.id, reason: 'Odstránenie pauzy zlyhalo.' });
+        }
+        continue;
+      }
+
+      if (op.type === 'SET_HOOK' || op.type === 'ADJUST_SPEED') {
+        const targetId = op.targetClipId || DirectorEngine.findClipAtTime(project, op.startTime)?.id;
+        if (!targetId) {
+          skipped.push({ operationId: op.id, reason: 'Nepodarilo sa určiť cieľový klip.' });
+          continue;
+        }
+        const props = op.type === 'SET_HOOK'
+          ? { scale: op.parameters?.scale ?? 115 }
+          : { speed: op.parameters?.speed ?? 1 };
+        if (commandManager.executeCommand(
+          new UpdateClipPropsCommand(`AI Director: ${op.type}`, targetId, props as any)
+        )) {
+          appliedCount++;
+        } else {
+          skipped.push({ operationId: op.id, reason: 'Zmena vlastností klipu zlyhala.' });
+        }
+        continue;
+      }
+
+      if (op.type === 'MULTICAM_SWITCH') {
+        const clip = op.targetClipId
+          ? DirectorEngine.findClipById(project, op.targetClipId)
+          : DirectorEngine.findClipAtTime(project, op.startTime);
+        const group = clip?.multicamGroupId
+          ? project.multicamGroups?.find(g => g.id === clip.multicamGroupId)
+          : undefined;
+        const targetAngleId = op.parameters?.angleId || group?.angles[1]?.id;
+        if (!clip || !group || !targetAngleId) {
+          skipped.push({ operationId: op.id, reason: 'Klip nemá priradenú multicam skupinu s druhým uhlom.' });
+          continue;
+        }
+        if (commandManager.executeCommand(
+          new SwitchMulticamAngleCommand(`AI Director: multicam switch`, clip.id, targetAngleId, op.startTime)
+        )) {
+          appliedCount++;
+        } else {
+          skipped.push({ operationId: op.id, reason: 'Multicam switch zlyhal.' });
+        }
+        continue;
+      }
+
+      if (op.type === 'ADD_TRANSITION') {
+        const transition = op.parameters?.transition;
+        if (!transition) {
+          skipped.push({ operationId: op.id, reason: 'Operácia nemá definovaný transition parameter.' });
+          continue;
+        }
+        const targetId = op.targetClipId || DirectorEngine.findClipAtTime(project, op.startTime)?.id;
+        if (!targetId) {
+          skipped.push({ operationId: op.id, reason: 'Nepodarilo sa určiť cieľový klip.' });
+          continue;
+        }
+        if (commandManager.executeCommand(
+          new SetTransitionCommand(`AI Director: prechod`, targetId, op.parameters?.edge || 'in', transition)
+        )) {
+          appliedCount++;
+        } else {
+          skipped.push({ operationId: op.id, reason: 'Nastavenie prechodu zlyhalo.' });
+        }
+        continue;
+      }
+
+      skipped.push({ operationId: op.id, reason: `Operácia typu ${op.type} zatiaľ nemá canonical command.` });
+    }
+
+    return { appliedCount, skipped };
+  }
+
+  private static findClipById(project: ProjectModel, clipId: string): ClipModel | undefined {
+    for (const track of project.tracks) {
+      const clip = track.clips.find(c => c.id === clipId);
+      if (clip) return clip;
+    }
+    return undefined;
+  }
+
+  private static findClipAtTime(project: ProjectModel, time: number): ClipModel | undefined {
+    for (const track of project.tracks) {
+      if (track.type === 'audio') continue;
+      const clip = track.clips.find(c => {
+        const start = c.timelineStart ?? c.start ?? 0;
+        return time >= start && time < start + c.duration;
+      });
+      if (clip) return clip;
+    }
+    return undefined;
+  }
+
+  /**
+   * Review is computed from the actual canonical project, not from a fixed template.
+   * Every status is derived from a measurable property of the project state.
+   */
   public conductReview(
     plan: DirectorEditPlan,
     project: ProjectModel,
     mediaIndex?: any
   ): DirectorRevisionPlan {
+    const issuesList: string[] = [];
+    const duration = TimelineEngine.calculateProjectDuration(project);
+    const videoTrack = project.tracks.find(t => t.type === 'video');
+    const captionTrack = project.tracks.find(t => t.type === 'caption');
+    const audioTrack = project.tracks.find(t => t.type === 'audio');
+    const allClips = project.tracks.flatMap(t => t.clips);
+
+    // Duration: measured against the plan's own estimate, when one exists.
+    let durationStatus: DirectorRevisionReport['durationStatus'] = 'OK';
+    const estimate = plan.projectStateAfter?.estimatedDuration;
+    if (typeof estimate === 'number' && estimate > 0) {
+      const drift = duration - estimate;
+      if (drift > Math.max(1, estimate * 0.15)) {
+        durationStatus = 'WARN_TOO_LONG';
+        issuesList.push(`Timeline je o ${drift.toFixed(1)}s dlhšia než plánovaný odhad ${estimate.toFixed(1)}s.`);
+      } else if (drift < -Math.max(1, estimate * 0.15)) {
+        durationStatus = 'WARN_TOO_SHORT';
+        issuesList.push(`Timeline je o ${Math.abs(drift).toFixed(1)}s kratšia než plánovaný odhad ${estimate.toFixed(1)}s.`);
+      }
+    } else {
+      durationStatus = 'WARN_TOO_SHORT';
+    }
+
+    // Tempo: derived from real cut density (clips per minute).
+    const videoClips = videoTrack?.clips || [];
+    const cutsPerMinute = duration > 0 ? (videoClips.length / duration) * 60 : 0;
+    const tempoStatus: DirectorRevisionReport['tempoStatus'] =
+      cutsPerMinute > 20 ? 'DENSE' : cutsPerMinute > 0 && cutsPerMinute < 4 ? 'SLOW' : 'OK';
+    if (tempoStatus === 'DENSE') issuesList.push(`Hustota strihu ${cutsPerMinute.toFixed(1)} strihov/min je vysoká.`);
+    if (tempoStatus === 'SLOW') issuesList.push(`Hustota strihu ${cutsPerMinute.toFixed(1)} strihov/min je nízka.`);
+
+    // Silence: only verifiable when the analysis layer actually produced pause data.
+    const pauses = (project.analysisResults?.pauses || []).filter((p: any) => p.type === 'long_pause');
+    const silenceStatus: DirectorRevisionReport['silenceStatus'] =
+      project.analysisResults?.pauses ? (pauses.length > 0 ? 'SILENCE_FOUND' : 'OK') : 'OK';
+    if (silenceStatus === 'SILENCE_FOUND') issuesList.push(`Nájdených ${pauses.length} dlhých páz v analýze.`);
+
+    // Repetitions: real duplicate detection on source ranges of the same asset.
+    const ranges = new Map<string, number>();
+    for (const clip of videoClips) {
+      const key = `${clip.assetId}:${Math.round(clip.sourceStart * 10)}-${Math.round(clip.sourceEnd * 10)}`;
+      ranges.set(key, (ranges.get(key) || 0) + 1);
+    }
+    const duplicates = [...ranges.values()].filter(v => v > 1).length;
+    const repetitionsStatus: DirectorRevisionReport['repetitionsStatus'] =
+      duplicates > 0 ? 'DUPLICATES_FOUND' : 'OK';
+    if (duplicates > 0) issuesList.push(`${duplicates} zdrojových rozsahov je použitých viackrát.`);
+
+    // Audio balance: measured from clip gain/volume on the audio track.
+    const audioClips = audioTrack?.clips || [];
+    const overdriven = audioClips.filter((c: any) => (c.volume ?? 100) > 100 || (c.gain ?? 0) > 6);
+    const audioStatus: DirectorRevisionReport['audioStatus'] = overdriven.length > 0 ? 'VOLUME_UNBALANCED' : 'OK';
+    if (overdriven.length > 0) issuesList.push(`${overdriven.length} audio klipov má volume/gain nad bezpečnou úrovňou.`);
+
+    // Captions: presence and time coverage of the caption track.
+    const captionClips = captionTrack?.clips || [];
+    const captionsStatus: DirectorRevisionReport['captionsStatus'] =
+      captionClips.length === 0 ? 'MISSING' : 'WELL_PLACED';
+    if (captionsStatus === 'MISSING') issuesList.push('Projekt neobsahuje titulky na caption stope.');
+
+    const textStatus: DirectorRevisionReport['textStatus'] =
+      project.tracks.some(t => t.type === 'adjustment' && t.clips.length > 0) ||
+      project.tracks.some(t => t.type === 'b-roll' && t.clips.length > 0)
+        ? 'OVERLAYS_ACTIVE'
+        : 'NO_OVERLAYS';
+
+    // Hook: the first video clip must exist and be short enough to act as a hook.
+    const firstClip = videoClips.slice().sort((a, b) => (a.timelineStart - b.timelineStart))[0];
+    const startStatus: DirectorRevisionReport['startStatus'] = !firstClip
+      ? 'HOOK_WEAK'
+      : firstClip.duration <= 6 ? 'HOOK_STRONG' : 'HOOK_WEAK';
+    if (startStatus === 'HOOK_WEAK' && firstClip) {
+      issuesList.push(`Prvý klip má ${firstClip.duration.toFixed(1)}s — príliš dlhý na hook.`);
+    }
+
+    // Outro: a clean outro needs a fade-out on the last video clip.
+    const lastClip = videoClips.slice().sort((a, b) =>
+      (b.timelineStart + b.duration) - (a.timelineStart + a.duration))[0];
+    const endStatus: DirectorRevisionReport['endStatus'] =
+      lastClip && (lastClip.fadeOut || 0) > 0 ? 'OUTRO_CLEAN' : 'OUTRO_ABRUPT';
+    if (endStatus === 'OUTRO_ABRUPT') issuesList.push('Posledný klip nemá fade-out.');
+
+    // Visual consistency requires a media index; without it the answer is honest.
+    const lowQuality = typeof mediaIndex?.getLowQualityShots === 'function' ? mediaIndex.getLowQualityShots() : null;
+    const visualConsistency: DirectorRevisionReport['visualConsistency'] =
+      lowQuality === null ? 'OK' : (lowQuality.length > 0 ? 'LOW_QUALITY_SHOTS_PRESENT' : 'OK');
+
+    const formatStatus: DirectorRevisionReport['formatStatus'] =
+      project.settings.width >= 1080 ? 'OK' : 'NOT_OPTIMAL';
+    if (formatStatus === 'NOT_OPTIMAL') issuesList.push(`Rozlíšenie ${project.settings.width}px je pod 1080p.`);
+
     const report: DirectorRevisionReport = {
-      id: `rep_${Math.random().toString(36).substr(2, 6)}`,
-      durationStatus: 'OK',
-      tempoStatus: 'OK',
-      repetitionsStatus: 'OK',
-      silenceStatus: 'OK',
-      audioStatus: 'OK',
-      captionsStatus: 'WELL_PLACED',
-      textStatus: 'OVERLAYS_ACTIVE',
-      startStatus: 'HOOK_STRONG',
-      endStatus: 'OUTRO_CLEAN',
-      visualConsistency: 'OK',
-      formatStatus: 'OK',
-      issuesList: []
+      id: `rep_${crypto.randomUUID().slice(0, 8)}`,
+      durationStatus,
+      tempoStatus,
+      repetitionsStatus,
+      silenceStatus,
+      audioStatus,
+      captionsStatus,
+      textStatus,
+      startStatus,
+      endStatus,
+      visualConsistency,
+      formatStatus,
+      issuesList
     };
+
+    const suggestedOperations: DirectorTimelineOperation[] = [];
+    if (silenceStatus === 'SILENCE_FOUND') {
+      suggestedOperations.push(...pauses.map((p: any, idx: number) => ({
+        id: `rev_op_pause_${idx}`,
+        type: 'CUT_SILENCE' as const,
+        description: `Odstrániť pauzu ${p.duration.toFixed(2)}s v ${p.start.toFixed(2)}s`,
+        startTime: p.start,
+        endTime: p.end,
+        status: 'PENDING' as const
+      })));
+    }
+
     return {
-      id: `rev_${Math.random().toString(36).substr(2, 6)}`,
+      id: `rev_${crypto.randomUUID().slice(0, 8)}`,
       planId: plan.id,
       report,
-      suggestedOperations: [],
-      pacingAction: 'Keep pace',
-      qualityAction: 'Quality OK'
+      suggestedOperations,
+      pacingAction: tempoStatus === 'OK' ? 'Zachovať aktuálne tempo' : `Upraviť tempo (${cutsPerMinute.toFixed(1)} strihov/min)`,
+      qualityAction: issuesList.length === 0 ? 'Bez zistených problémov' : `${issuesList.length} zistení na revíziu`
     };
   }
 
@@ -197,20 +593,24 @@ export class DirectorEngine {
     targetPlatform: 'TikTok' | 'Instagram Reels' | 'YouTube Shorts' | 'YouTube Long-form' | 'UGC Ads' | 'General' = 'TikTok',
     objectives: DirectorObjective[] = ['Retention', 'Education']
   ): DirectorPlan {
-    const analysis = project.analysisResults || {
-      projectId: project.id,
-      timestamp: Date.now()
-    };
+    const analysis = project.analysisResults;
 
     const decisions: DirectorDecisionItem[] = [];
 
-    // Query Brain for preferences
+    // Query Brain for preferences (real user-confirmed preferences only)
     const pacingPrefs = editingBrain.getPreferences(project, 'PACING');
 
-    // 1. Pacing & Pause Trimming Decisions
-    const pauseList = analysis.pauses?.filter((p: any) => p.type === 'long_pause') || [
-      { id: 'p1', start: 4.2, end: 5.8, duration: 1.6, confidence: 0.95 }
-    ];
+    // Records which analysis inputs were unavailable so the plan can state it honestly.
+    const unavailable: string[] = [];
+    if (!analysis) {
+      unavailable.push('analysisResults (projekt zatiaľ nebol analyzovaný)');
+    }
+    if (!analysis?.pauses) unavailable.push('pauses');
+    if (!analysis?.hooks) unavailable.push('hooks');
+    if (!analysis?.brollOpportunities) unavailable.push('brollOpportunities');
+
+    // 1. Pacing & Pause Trimming Decisions — only from measured pauses.
+    const pauseList = analysis?.pauses?.filter((p: any) => p.type === 'long_pause') || [];
 
     pauseList.forEach((pause: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.PAUSE_TRIMMING;
@@ -227,15 +627,15 @@ export class DirectorEngine {
         confidence: pause.confidence || 0.95,
         source: teach.source,
         category: (teach.category as KnowledgeCategory) || 'heuristic',
+        proposedAction: { kind: 'TRIM_RANGE', parameters: { targetDurationSeconds: 0.4 } },
+        affectedClipId: DirectorEngine.findClipAtTime(project, pause.start)?.id,
         timelineLocation: { start: pause.start, end: pause.end },
         status: 'proposed'
       });
     });
 
-    // 2. Hook Enhancement Strategy Decisions (Punch-in)
-    const hookList = analysis.hooks || [
-      { id: 'h1', start: 0, end: 3.0, type: 'question', confidence: 0.94 }
-    ];
+    // 2. Hook Enhancement Strategy Decisions (Punch-in) — only from measured hooks.
+    const hookList = analysis?.hooks || [];
 
     hookList.forEach((hook: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.HOOK_PUNCHIN || {
@@ -261,34 +661,44 @@ export class DirectorEngine {
         confidence: hook.confidence || 0.94,
         source: teach.source,
         category: 'trend_platform_pattern',
+        proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 115 } },
+        affectedClipId: DirectorEngine.findClipAtTime(project, hook.start)?.id,
         timelineLocation: { start: hook.start, end: hook.end },
         status: 'proposed'
       });
     });
 
-    // 3. J-Cut / Audio Lead Decision
-    const jcutTeach = EDIT_KNOWLEDGE_BASE.J_CUT;
-    decisions.push({
-      id: `dir_dec_jcut_0`,
-      editDecisionId: `dec_jcut_0`,
-      priority: 'RECOMMENDED',
-      what: `Použitie J-Cut prechodu (zvuk predbieha obraz o 1.2s) v čase 12.0s`,
-      why: jcutTeach.why,
-      whenToUse: jcutTeach.whenToUse,
-      whenNotToUse: jcutTeach.whenNotToUse,
-      howToManual: jcutTeach.manualWorkflowSteps || [],
-      alternatives: jcutTeach.alternativeChoices || [],
-      confidence: 0.98,
-      source: jcutTeach.source,
-      category: 'professional_convention',
-      timelineLocation: { start: 12.0, end: 14.5 },
-      status: 'proposed'
-    });
+    // 3. J-Cut / Audio Lead Decision — anchored on a real cut boundary in the project.
+    const primaryVideoTrack = project.tracks.find(t => t.type === 'video');
+    const orderedVideoClips = (primaryVideoTrack?.clips || [])
+      .slice()
+      .sort((a, b) => (a.timelineStart ?? a.start) - (b.timelineStart ?? b.start));
+    if (orderedVideoClips.length >= 2) {
+      const jcutTeach = EDIT_KNOWLEDGE_BASE.J_CUT;
+      const boundary = (orderedVideoClips[0].timelineStart ?? orderedVideoClips[0].start) + orderedVideoClips[0].duration;
+      decisions.push({
+        id: `dir_dec_jcut_0`,
+        editDecisionId: `dec_jcut_0`,
+        priority: 'RECOMMENDED',
+        what: `Použitie J-Cut prechodu (zvuk predbieha obraz o 1.2s) na reze v čase ${boundary.toFixed(2)}s`,
+        why: jcutTeach.why,
+        whenToUse: jcutTeach.whenToUse,
+        whenNotToUse: jcutTeach.whenNotToUse,
+        howToManual: jcutTeach.manualWorkflowSteps || [],
+        alternatives: jcutTeach.alternativeChoices || [],
+        confidence: jcutTeach ? 0.9 : 0.7,
+        source: jcutTeach.source,
+        category: 'professional_convention',
+        proposedAction: { kind: 'MANUAL_ONLY', parameters: { reason: 'J-Cut vyžaduje ručné posunutie audio stopy (žiadny canonical command).' } },
+        timelineLocation: { start: boundary, end: boundary + 1.2 },
+        status: 'proposed'
+      });
+    } else {
+      unavailable.push('J-Cut odporúčanie (na hlavnej video stope je menej ako 2 klipy)');
+    }
 
-    // 4. B-Roll & Visual Pacing Strategy
-    const brollList = analysis.brollOpportunities || [
-      { id: 'b1', start: 8.5, end: 11.5, suggestedVisualType: 'product', confidence: 0.92 }
-    ];
+    // 4. B-Roll & Visual Pacing Strategy — only from measured opportunities.
+    const brollList = analysis?.brollOpportunities || [];
 
     brollList.forEach((broll: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.BROLL_INSERTION;
@@ -305,70 +715,91 @@ export class DirectorEngine {
         confidence: broll.confidence || 0.92,
         source: teach.source,
         category: 'professional_convention',
+        proposedAction: { kind: 'BROLL_INSERT' },
         timelineLocation: { start: broll.start, end: broll.end },
         status: 'proposed'
       });
     });
 
-    // 5. Captions & Emphasis Decision
-    const capTeach = EDIT_KNOWLEDGE_BASE.CAPTIONS_EMPHASIS;
-    decisions.push({
-      id: `dir_dec_captions_0`,
-      editDecisionId: `dec_captions_0`,
-      priority: 'MUST_CONSIDER',
-      what: `Zvýraznenie kľúčových slov v titulkách (Neon accent color) pre mobilné sledovanie`,
-      why: capTeach.why,
-      whenToUse: capTeach.whenToUse,
-      whenNotToUse: capTeach.whenNotToUse,
-      howToManual: capTeach.manualWorkflowSteps || [],
-      alternatives: capTeach.alternativeChoices || [],
-      confidence: 0.97,
-      source: capTeach.source,
-      category: 'professional_convention',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
+    // 5. Captions & Emphasis Decision — scope is the real timeline range.
+    const projectDuration = TimelineEngine.calculateProjectDuration(project);
+    const captionTrack = project.tracks.find(t => t.type === 'caption');
+    const hasTranscript = (project.transcript?.segments?.length || 0) > 0;
+    if (projectDuration > 0 && (hasTranscript || (captionTrack?.clips.length || 0) > 0)) {
+      const capTeach = EDIT_KNOWLEDGE_BASE.CAPTIONS_EMPHASIS;
+      decisions.push({
+        id: `dir_dec_captions_0`,
+        editDecisionId: `dec_captions_0`,
+        priority: 'MUST_CONSIDER',
+        what: `Zvýraznenie kľúčových slov v titulkách (accent color) pre mobilné sledovanie`,
+        why: capTeach.why,
+        whenToUse: capTeach.whenToUse,
+        whenNotToUse: capTeach.whenNotToUse,
+        howToManual: capTeach.manualWorkflowSteps || [],
+        alternatives: capTeach.alternativeChoices || [],
+        confidence: 0.9,
+        source: capTeach.source,
+        category: 'professional_convention',
+        proposedAction: { kind: 'CAPTION_EMPHASIS' },
+        timelineLocation: { start: 0.0, end: projectDuration },
+        status: 'proposed'
+      });
+    } else {
+      unavailable.push('Titulky (projekt nemá transkript ani caption klipy)');
+    }
 
-    // 6. Audio Ducking Strategy
-    const duckTeach = EDIT_KNOWLEDGE_BASE.AUDIO_DUCKING;
-    decisions.push({
-      id: `dir_dec_audio_ducking`,
-      editDecisionId: `dec_audio_ducking`,
-      priority: 'RECOMMENDED',
-      what: 'Automatické stíšenie hudby pod hovoreným slovom (Audio Ducking -12dB na A2)',
-      why: duckTeach.why,
-      whenToUse: duckTeach.whenToUse,
-      whenNotToUse: duckTeach.whenNotToUse,
-      howToManual: duckTeach.manualWorkflowSteps || [],
-      alternatives: duckTeach.alternativeChoices || [],
-      confidence: 0.98,
-      source: duckTeach.source,
-      category: 'technical_constraint',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
+    // 6. Audio Ducking Strategy — requires at least two audio clips (voice + music bed).
+    const audioTrack = project.tracks.find(t => t.type === 'audio');
+    const audioClipCount = audioTrack?.clips.length || 0;
+    if (audioClipCount >= 2) {
+      const duckTeach = EDIT_KNOWLEDGE_BASE.AUDIO_DUCKING;
+      decisions.push({
+        id: `dir_dec_audio_ducking`,
+        editDecisionId: `dec_audio_ducking`,
+        priority: 'RECOMMENDED',
+        what: `Automatické stíšenie hudby pod hovoreným slovom (Audio Ducking -12dB na audio stope)`,
+        why: duckTeach.why,
+        whenToUse: duckTeach.whenToUse,
+        whenNotToUse: duckTeach.whenNotToUse,
+        howToManual: duckTeach.manualWorkflowSteps || [],
+        alternatives: duckTeach.alternativeChoices || [],
+        confidence: 0.9,
+        source: duckTeach.source,
+        category: 'technical_constraint',
+        proposedAction: { kind: 'AUDIO_DUCK' },
+        timelineLocation: { start: 0.0, end: projectDuration },
+        status: 'proposed'
+      });
+    } else {
+      unavailable.push('Audio Ducking (na audio stope je menej ako 2 klipy — nie je čo duckovať)');
+    }
 
-    // 7. Color Correction & Skin Tones
-    const colorTeach = EDIT_KNOWLEDGE_BASE.COLOR_BALANCING;
-    decisions.push({
-      id: `dir_dec_color_0`,
-      editDecisionId: `dec_color_0`,
-      priority: 'OPTIONAL',
-      what: 'Primary Color Correction & Vyváženie tónu pleti (Skin Tone Balance na V1)',
-      why: colorTeach.why,
-      whenToUse: colorTeach.whenToUse,
-      whenNotToUse: colorTeach.whenNotToUse,
-      howToManual: colorTeach.manualWorkflowSteps || [],
-      alternatives: colorTeach.alternativeChoices || [],
-      confidence: 0.95,
-      source: colorTeach.source,
-      category: 'technical_constraint',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
+    // 7. Color Correction & Skin Tones — only when the project actually has video clips.
+    if (orderedVideoClips.length > 0) {
+      const colorTeach = EDIT_KNOWLEDGE_BASE.COLOR_BALANCING;
+      decisions.push({
+        id: `dir_dec_color_0`,
+        editDecisionId: `dec_color_0`,
+        priority: 'OPTIONAL',
+        what: 'Primary Color Correction & Vyváženie tónu pleti (Skin Tone Balance na V1)',
+        why: colorTeach.why,
+        whenToUse: colorTeach.whenToUse,
+        whenNotToUse: colorTeach.whenNotToUse,
+        howToManual: colorTeach.manualWorkflowSteps || [],
+        alternatives: colorTeach.alternativeChoices || [],
+        confidence: 0.85,
+        source: colorTeach.source,
+        category: 'technical_constraint',
+        proposedAction: { kind: 'COLOR_BALANCE' },
+        timelineLocation: { start: 0.0, end: projectDuration },
+        status: 'proposed'
+      });
+    } else {
+      unavailable.push('Color correction (na timeline nie je žiadny video klip)');
+    }
 
     // 8. Motion Graphics & Professional Animation Decisions (FÁZA 2R)
-    const infoDensity = analysis.speechDensity?.informationDensity || 'balanced';
+    const infoDensity = analysis?.speechDensity?.informationDensity;
     if (infoDensity === 'high') {
       decisions.push({
         id: `dir_dec_motion_callout`,
@@ -384,37 +815,48 @@ export class DirectorEngine {
           '3. Animuj Scale (0 -> 100) s Bounce easingom.'
         ],
         alternatives: ['Použiť statický obrázok.', 'Zmeniť veľkosť záberu.'],
-        confidence: 0.91,
-        source: 'Educational Content Research 2026',
+        confidence: analysis?.speechDensity ? 0.85 : 0.6,
+        source: 'Educational Content Research',
         category: 'professional_convention',
-        timelineLocation: { start: 10.0, end: 13.5 },
+        proposedAction: { kind: 'MANUAL_ONLY', parameters: { reason: 'Motion callout nemá canonical command — vyžaduje ručné vytvorenie text klipu.' } },
+        timelineLocation: { start: 0.0, end: Math.min(projectDuration, 15) },
         status: 'proposed'
       });
     }
 
-    // 9. Multicam & Speaker-Aware Decisions (FÁZA 2S)
-    const multicamGroup = project.multicamGroups?.[0];
-    if (multicamGroup && multicamGroup.angles.length > 1) {
-      decisions.push({
-        id: `dir_dec_multicam_switch_0`,
-        editDecisionId: `dec_mc_0`,
-        priority: 'MUST_CONSIDER',
-        what: `Automatický Multicam Strih na aktívneho rečníka (Angle: ${multicamGroup.angles[1]?.name || 'Detail'})`,
-        why: 'Prestrih na detail v čase dôležitej myšlienky zvyšuje zapojenie diváka.',
-        whenToUse: 'Pri prechode na novú tému alebo zvýšení hlasitosti rečníka.',
-        whenNotToUse: 'Keď rečník robí dôležité gesto rukami (lepšie nechať široký záber).',
-        howToManual: [
-          '1. Otvor Multicam Viewer.',
-          '2. Klikni na požadovaný uhol v čase playheadu.',
-          '3. Dolaď bod strihu pomocou Slip editu.'
-        ],
-        alternatives: ['Ponechať široký záber.', 'Použiť digital zoom na 4K zdroj.'],
-        confidence: 0.96,
-        source: 'Professional Interview Standards',
-        category: 'professional_convention',
-        timelineLocation: { start: 5.2, end: 5.3 },
-        status: 'proposed'
-      });
+    // 9. Multicam & Speaker-Aware Decisions (FÁZA 2S) — anchored on the real group clip.
+    const multicamGroup = project.multicamGroups?.find(g => g.angles.length > 1);
+    if (multicamGroup) {
+      const groupClip = project.tracks
+        .flatMap(t => t.clips)
+        .find(c => c.multicamGroupId === multicamGroup.id);
+      if (groupClip) {
+        const switchTime = (groupClip.timelineStart ?? groupClip.start) + Math.min(1, groupClip.duration / 2);
+        decisions.push({
+          id: `dir_dec_multicam_switch_0`,
+          editDecisionId: `dec_mc_0`,
+          priority: 'MUST_CONSIDER',
+          what: `Automatický Multicam Strih na uhol "${multicamGroup.angles[1]?.name || 'Angle 2'}" v čase ${switchTime.toFixed(2)}s`,
+          why: 'Prestrih na druhý uhol v čase dôležitej myšlienky zvyšuje zapojenie diváka.',
+          whenToUse: 'Pri prechode na novú tému alebo zvýšení hlasitosti rečníka.',
+          whenNotToUse: 'Keď rečník robí dôležité gesto rukami (lepšie nechať široký záber).',
+          howToManual: [
+            '1. Otvor Multicam Viewer.',
+            '2. Klikni na požadovaný uhol v čase playheadu.',
+            '3. Dolaď bod strihu pomocou Slip editu.'
+          ],
+          alternatives: ['Ponechať široký záber.', 'Použiť digital zoom na 4K zdroj.'],
+          confidence: 0.9,
+          source: 'Professional Interview Standards',
+          category: 'professional_convention',
+          proposedAction: { kind: 'MULTICAM_SWITCH', parameters: { angleId: multicamGroup.angles[1]?.id } },
+          affectedClipId: groupClip.id,
+          timelineLocation: { start: switchTime, end: switchTime },
+          status: 'proposed'
+        });
+      }
+    } else {
+      unavailable.push('Multicam strih (projekt neobsahuje multicam skupinu s 2+ uhlami)');
     }
 
     const strategies = {
@@ -470,15 +912,18 @@ export class DirectorEngine {
       targetPlatform,
       targetFormat: targetPlatform === 'YouTube Long-form' ? '16:9' : '9:16',
       objectives,
-      audience: 'Primárne Short-form & Educational publikum',
-      contentSummary: analysis.contentStructure?.hook?.text || 'Video hovoriacej hlavy so vzdelávacím obsahom.',
+      audience: targetPlatform === 'YouTube Long-form' ? 'Long-form publikum' : 'Short-form publikum',
+      contentSummary: analysis?.contentStructure?.hook?.text
+        || `Plán odvodený z ${decisions.length} rozhodnutí; obsah nebol sémanticky klasifikovaný (chýba analysisResults.contentStructure).`,
       strategies,
       decisions,
-      analysisReferences: [analysis.projectId],
-      insightReferences: (analysis.insights || []).map((i: any) => i.id),
+      analysisReferences: analysis ? [analysis.projectId] : [],
+      insightReferences: (analysis?.insights || []).map((i: any) => i.id),
       knowledgeReferences: ['J_CUT', 'PAUSE_TRIMMING', 'BROLL_INSERTION', 'INFORMATION_DENSITY'],
-      confidence: 0.92,
-      unresolvedAmbiguities: [],
+      confidence: decisions.length > 0
+        ? decisions.reduce((sum, d) => sum + (d.confidence || 0), 0) / decisions.length
+        : 0,
+      unresolvedAmbiguities: unavailable,
       createdAt: Date.now(),
       analysisVersion: 2,
       directorVersion: 1
@@ -539,19 +984,28 @@ export class DirectorEngine {
 
   /**
    * Safe Transactional Batch Apply of DirectorPlan decisions to Project via CommandManager.
-   * Automatically creates a Version Snapshot first, then applies accepted decisions transactionally.
+   * Snapshot -> apply accepted decisions -> validate. Reports what was actually applied and
+   * what was skipped, so the UI never claims success for decisions that were not executed.
    */
   public safeBatchApply(
     commandManager: CommandManager,
     plan: DirectorPlan,
     acceptedDecisionIds: string[]
-  ): { success: boolean; appliedCount: number; snapshotVersionId?: string; error?: string } {
+  ): { success: boolean; appliedCount: number; skippedCount: number; skipped: { id: string; reason: string }[]; snapshotVersionId?: string; error?: string } {
     const project = commandManager.getProject();
-    
+
     // 1. Validate Conflicts First
     const validation = this.validatePlanConflicts(plan, project);
     if (!validation.valid && validation.conflicts.length > 20) {
-      return { success: false, appliedCount: 0, error: 'Príliš veľa kritických konfliktov v AI Pláne.' };
+      return { success: false, appliedCount: 0, skippedCount: 0, skipped: [], error: 'Príliš veľa kritických konfliktov v AI Pláne.' };
+    }
+
+    const accepted = validation.updatedPlan.decisions.filter(
+      d => acceptedDecisionIds.includes(d.id) && d.status !== 'invalidated'
+    );
+
+    if (accepted.length === 0) {
+      return { success: false, appliedCount: 0, skippedCount: 0, skipped: [], error: 'Žiadne prijateľné rozhodnutia na aplikovanie.' };
     }
 
     // 2. Create Version Snapshot for Auditability & Rollback
@@ -559,56 +1013,140 @@ export class DirectorEngine {
     const snapshotCmd = new CreateProjectVersionCommand(
       snapshotLabel,
       snapshotLabel,
-      `Automatická záloha pred aplikovaním ${acceptedDecisionIds.length} AI rozhodnutí.`
+      `Automatická záloha pred aplikovaním ${accepted.length} AI rozhodnutí.`
     );
-    const snapSuccess = commandManager.executeCommand(snapshotCmd);
+    commandManager.executeCommand(snapshotCmd);
     const postSnapProject = commandManager.getProject();
     const snapshotVersionId = postSnapProject.versions?.[postSnapProject.versions.length - 1]?.id;
 
+    const skipped: { id: string; reason: string }[] = [];
     let appliedCount = 0;
 
     try {
-      // 3. Apply accepted decisions via CommandManager
-      plan.decisions
-        .filter(d => acceptedDecisionIds.includes(d.id) && d.status !== 'invalidated')
-        .forEach(dec => {
-          if (dec.what.includes('Punch-in') && dec.affectedClipId) {
-            const cmd = new SetTransformCommand(`AI Director Punch-in`, dec.affectedClipId, { scale: 115 });
-            if (commandManager.executeCommand(cmd)) appliedCount++;
-          } else if (dec.what.includes('Skrátenie') && dec.timelineLocation) {
-            // Non-destructive trim
-            const targetTrack = project.tracks.find(t => t.clips.some(c => c.timelineStart <= dec.timelineLocation!.start));
-            const targetClip = targetTrack?.clips.find(c => c.timelineStart <= dec.timelineLocation!.start);
-            if (targetClip) {
-              const cmd = new TrimClipCommand(`AI Director Pause Trim`, targetClip.id, 'right', 1.2, false);
-              if (commandManager.executeCommand(cmd)) appliedCount++;
-            }
-          } else if (dec.what.includes('Multicam Strih') && multicamGroup) {
-             const targetAngle = multicamGroup.angles[1] || multicamGroup.angles[0];
-             const targetClip = project.tracks.flatMap(t => t.clips).find(c => c.timelineStart <= dec.timelineLocation!.start);
-             if (targetClip) {
-                const switchTime = dec.timelineLocation!.start;
-                // Use switchMulticamAngle logic directly or command
-                if (commandManager.executeCommand(new SwitchMulticamAngleCommand(`AI Multicam Switch`, targetClip.id, targetAngle.id, switchTime))) {
-                   appliedCount++;
-                }
-             }
-          }
-        });
+      // 3. Apply accepted decisions through canonical commands, derived from the
+      //    decision's own structured data (not from localised `what` string matching).
+      for (const dec of accepted) {
+        const applied = this.applyDecision(commandManager, dec);
+        if (applied.ok) {
+          appliedCount++;
+        } else {
+          skipped.push({ id: dec.id, reason: applied.reason });
+        }
+      }
 
       return {
-        success: true,
+        success: appliedCount > 0,
         appliedCount,
-        snapshotVersionId
+        skippedCount: skipped.length,
+        skipped,
+        snapshotVersionId,
+        error: appliedCount === 0 ? 'Žiadne z prijatých rozhodnutí nebolo možné vykonať.' : undefined
       };
     } catch (err: any) {
       // Rollback on critical error
-      commandManager.undo();
+      commandManager.rollback();
       return {
         success: false,
         appliedCount: 0,
+        skippedCount: skipped.length,
+        skipped,
+        snapshotVersionId,
         error: `Chyba pri aplikovaní plánu: ${err?.message || err}`
       };
+    }
+  }
+
+  /**
+   * Executes a single DirectorDecisionItem against the canonical project.
+   * Uses the decision's category + structured timelineLocation instead of parsing
+   * human-readable text, so localisation or wording changes can never mis-apply edits.
+   */
+  private applyDecision(
+    commandManager: CommandManager,
+    dec: DirectorDecisionItem
+  ): { ok: boolean; reason: string } {
+    const project = commandManager.getProject();
+    const action: DirectorProposedAction | undefined = dec.proposedAction;
+
+    const clip = dec.affectedClipId
+      ? DirectorEngine.findClipById(project, dec.affectedClipId)
+      : dec.timelineLocation
+        ? DirectorEngine.findClipAtTime(project, dec.timelineLocation.start)
+        : undefined;
+
+    switch (action?.kind) {
+      case 'TRIM_RANGE': {
+        if (!dec.timelineLocation || !clip) {
+          return { ok: false, reason: 'Rozhodnutie nemá cieľový klip alebo časový rozsah.' };
+        }
+        const start = dec.timelineLocation.start;
+        const end = dec.timelineLocation.end ?? start;
+        const clipStart = clip.timelineStart ?? clip.start ?? 0;
+        if (Math.abs(start - clipStart) > 0.01 || end <= start) {
+          return { ok: false, reason: 'Rez nezačína na hranici klipu — vyžaduje manuálne potvrdenie.' };
+        }
+        const splitOk = commandManager.executeCommand(
+          new SplitClipCommand(`AI Director: rozdelenie pred skrátením`, clip.id, end)
+        );
+        if (!splitOk) return { ok: false, reason: 'Rozdelenie klipu zlyhalo.' };
+        const leftClip = DirectorEngine.findClipAtTime(commandManager.getProject(), start);
+        if (!leftClip) return { ok: false, reason: 'Po rozdelení sa nepodarilo nájsť skracovanú časť.' };
+        const ok = commandManager.executeCommand(
+          new RemoveClipCommand(`AI Director: skrátenie pauzy`, leftClip.id, true)
+        );
+        return ok ? { ok: true, reason: '' } : { ok: false, reason: 'Odstránenie časti klipu zlyhalo.' };
+      }
+
+      case 'PUNCH_IN': {
+        if (!clip) return { ok: false, reason: 'Rozhodnutie nemá cieľový klip, nie je čo zmeniť.' };
+        const scale = action.parameters?.scale ?? 115;
+        const ok = commandManager.executeCommand(
+          new SetTransformCommand(`AI Director: punch-in (${scale}%)`, clip.id, { scale })
+        );
+        return ok ? { ok: true, reason: '' } : { ok: false, reason: 'Zmena transformácie zlyhala.' };
+      }
+
+      case 'MULTICAM_SWITCH': {
+        if (!clip) return { ok: false, reason: 'Rozhodnutie nemá cieľový klip.' };
+        const group = clip.multicamGroupId
+          ? project.multicamGroups?.find(g => g.id === clip.multicamGroupId)
+          : undefined;
+        if (!group || group.angles.length < 2) {
+          return { ok: false, reason: 'Klip nemá priradenú multicam skupinu s druhým uhlom.' };
+        }
+        const targetAngleId = action.parameters?.angleId
+          || group.angles.find(a => a.id !== clip.multicamAngleId)?.id
+          || group.angles[1].id;
+        const switchTime = dec.timelineLocation?.start ?? (clip.timelineStart ?? clip.start);
+        const ok = commandManager.executeCommand(
+          new SwitchMulticamAngleCommand(`AI Director: multicam switch`, clip.id, targetAngleId, switchTime)
+        );
+        return ok ? { ok: true, reason: '' } : { ok: false, reason: 'Multicam switch zlyhal.' };
+      }
+
+      case 'BROLL_INSERT':
+        return { ok: false, reason: 'B-roll vloženie vyžaduje vybraný zdrojový asset (ponechané ako návrh).' };
+
+      case 'TRANSITION': {
+        if (!clip || !action.parameters?.transition) {
+          return { ok: false, reason: 'Chýba cieľový klip alebo definícia prechodu.' };
+        }
+        const ok = commandManager.executeCommand(
+          new SetTransitionCommand(`AI Director: prechod`, clip.id, action.parameters.edge || 'in', action.parameters.transition)
+        );
+        return ok ? { ok: true, reason: '' } : { ok: false, reason: 'Nastavenie prechodu zlyhalo.' };
+      }
+
+      case 'CAPTION_EMPHASIS':
+      case 'AUDIO_DUCK':
+      case 'COLOR_BALANCE':
+        return { ok: false, reason: 'Odporúčanie je vzdelávacie — vyžaduje manuálne nastavenie v Inspectori.' };
+
+      case 'MANUAL_ONLY':
+        return { ok: false, reason: action.parameters?.reason || 'Vyžaduje manuálny krok.' };
+
+      default:
+        return { ok: false, reason: 'Rozhodnutie nemá definovanú vykonateľnú akciu.' };
     }
   }
 

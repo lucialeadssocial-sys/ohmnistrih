@@ -16,6 +16,10 @@ import { HistoryManager } from "./utils/historyManager";
 import { AIOrchestrator } from "./utils/aiRouter";
 import { PipelineExecutor } from "./utils/pipelineExecutor";
 import { ToolSuspenseFallback } from "./components/ToolSuspenseFallback";
+import { RenderEngineManager } from "./utils/renderEngineManager";
+import { RenderBackendSelector } from "./render/RenderBackendSelector";
+import { ExportPresetId } from "./types/renderEngine";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // On-Demand Lazy-Loaded Studios and Heavy Tools
 const AIVisualDirectorCenter = lazy(() => import("./components/AIVisualDirectorCenter").then(m => ({ default: m.AIVisualDirectorCenter })));
@@ -61,6 +65,7 @@ const LocalAIControlCenter = lazy(() => import("./components/LocalAIControlCente
 const LocalCaptionStudio = lazy(() => import("./components/LocalCaptionStudio").then(m => ({ default: m.LocalCaptionStudio })));
 const MediaIntelligenceInspector = lazy(() => import("./components/MediaIntelligenceInspector").then(m => ({ default: m.MediaIntelligenceInspector })));
 const DirectorStudio = lazy(() => import("./components/DirectorStudio").then(m => ({ default: m.DirectorStudio })));
+const EditAcademyCenter = lazy(() => import("./components/EditAcademyCenter").then(m => ({ default: m.EditAcademyCenter })));
 const QualityControlAndAnalytics = lazy(() => import("./components/QualityControlAndAnalytics").then(m => ({ default: m.QualityControlAndAnalytics })));
 const ProfessionalAutopilotCenter = lazy(() => import("./components/ProfessionalAutopilotCenter").then(m => ({ default: m.ProfessionalAutopilotCenter })));
 const EditorBrainCenter = lazy(() => import("./components/EditorBrainCenter").then(m => ({ default: m.EditorBrainCenter })));
@@ -72,6 +77,7 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { mediaEngine } from "./core/media/mediaEngine";
+import { coreEngine, TimelineEngine } from "./core";
 import {
   VideoProjectSettings,
   CaptionSegment,
@@ -83,6 +89,8 @@ import {
   SmartClipHighlight,
   VideoCategory,
   RawAIAnalysis,
+  TranscriptionSegment,
+  EditMapItem,
   StoryPlan,
   StoryFormat,
   StoryPlatform,
@@ -197,6 +205,7 @@ import {
   Camera,
   CheckCircle2,
   PanelRight,
+  GraduationCap,
 } from "lucide-react";
 
 function MainApp() {
@@ -226,6 +235,7 @@ function MainApp() {
     estimatedEditedDuration: 1840,
   });
   const [isAnalyzingRaw, setIsAnalyzingRaw] = useState(false);
+  const [rawAnalysisStatus, setRawAnalysisStatus] = useState<"IDLE" | "RUNNING" | "READY" | "UNAVAILABLE">("IDLE");
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [proxyQuality, setProxyQuality] = useState<ProxyQuality>("HIGH");
 
@@ -234,6 +244,9 @@ function MainApp() {
   const [isCaptionStudioOpen, setIsCaptionStudioOpen] = useState(false);
   const [isMediaIntelligenceOpen, setIsMediaIntelligenceOpen] = useState(false);
   const [isDirectorStudioOpen, setIsDirectorStudioOpen] = useState(false);
+  // Edit Academy is opened as a root-level overlay, so it renders from Home and from the
+  // editor alike (it must never depend on the current view/currentView state).
+  const [isAcademyOpen, setIsAcademyOpen] = useState(false);
   const [activePhase, setActivePhase] = useState<"prepare" | "review" | "deliver">("prepare");
   const [storyPlan, setStoryPlan] = useState<StoryPlan | null>(null);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
@@ -920,51 +933,105 @@ function MainApp() {
     }
   }, [multiExportProject, isExportingMulti, isSk]);
 
-  const handleStartMultiExport = () => {
+  /**
+   * Multi-platform export.
+   *
+   * Each enabled platform runs through the real render backend chain
+   * (RenderBackendSelector -> WebCodecs offline or MediaRecorder fallback) and produces
+   * an actual Blob. The previous implementation advanced a progress bar with
+   * `Math.random()` and reported COMPLETED without ever creating a file.
+   */
+  const handleStartMultiExport = async () => {
     setIsExportingMulti(true);
     showToast(isSk ? "🚀 Spúšťam Multi-platformový export..." : "🚀 Starting Multi-platform export...");
-    
+
     setMultiExportProject(prev => ({
       ...prev,
       isExporting: true,
-      configs: prev.configs.map(c => c.isEnabled ? { ...c, status: "PROCESSING" as const, progress: 0, isPaused: false, estimatedSecondsRemaining: 20 } : c)
+      configs: prev.configs.map(c => c.isEnabled ? { ...c, status: "PROCESSING" as const, progress: 0, isPaused: false, estimatedSecondsRemaining: undefined } : c)
     }));
 
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+
+    if (!canvas || !video) {
+      setMultiExportProject(prev => ({
+        ...prev,
+        isExporting: false,
+        configs: prev.configs.map(c => c.isEnabled ? { ...c, status: "FAILED" as const, progress: 0 } : c)
+      }));
+      setIsExportingMulti(false);
+      showToast(
+        isSk
+          ? "Export nie je možný: chýba renderovacie plátno alebo video element."
+          : "Export not possible: the render canvas or video element is missing."
+      );
+      return;
+    }
+
+    const presetFor = (config: typeof multiExportProject.configs[number]): ExportPresetId => {
+      if (config.aspectRatio === "9:16") return "SOCIAL_VERTICAL";
+      if (config.aspectRatio === "1:1") return "SOCIAL_SQUARE";
+      if (config.aspectRatio === "4:5") return "SOCIAL_PORTRAIT";
+      return config.quality === "4K" ? "YOUTUBE_4K" : "YOUTUBE_LANDSCAPE";
+    };
+
     const enabledConfigs = multiExportProject.configs.filter(c => c.isEnabled);
+    let produced = 0;
 
-    enabledConfigs.forEach((config) => {
-      let prog = 0;
-      let remaining = 20;
-      const interval = setInterval(() => {
-        setMultiExportProject(latest => {
-          const currentConfig = latest.configs.find(c => c.id === config.id);
-          if (!currentConfig || currentConfig.status === "COMPLETED" || currentConfig.status === "FAILED") {
-            clearInterval(interval);
-            return latest;
-          }
-          if (currentConfig.isPaused || currentConfig.status === "PAUSED") {
-            return latest; // paused
-          }
+    for (const config of enabledConfigs) {
+      try {
+        const plan = RenderEngineManager.createRenderPlan("current-project", presetFor(config));
+        const backend = await RenderBackendSelector.selectBackend(plan);
 
-          prog += Math.random() * 10 + 5;
-          remaining = Math.max(0, Math.ceil(((100 - prog) / 100) * 20));
-
-          if (prog >= 100) {
-            prog = 100;
-            clearInterval(interval);
-            return {
-              ...latest,
-              configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: 100, status: "COMPLETED" as const, estimatedSecondsRemaining: 0, isPaused: false } : c)
-            };
-          } else {
-            return {
-              ...latest,
-              configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: Math.floor(prog), status: "PROCESSING" as const, estimatedSecondsRemaining: remaining } : c)
-            };
-          }
+        await backend.prepare(plan, (info) => {
+          setMultiExportProject(latest => ({
+            ...latest,
+            configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: Math.round(info.percentage / 2) } : c)
+          }));
         });
-      }, 500);
-    });
+
+        const artifact = await backend.render(plan, canvas, video, (info) => {
+          setMultiExportProject(latest => ({
+            ...latest,
+            configs: latest.configs.map(c => c.id === config.id ? {
+              ...c,
+              progress: Math.round(50 + info.percentage / 2),
+              estimatedSecondsRemaining: info.estimatedRemainingSeconds
+            } : c)
+          }));
+        });
+
+        // A real file exists at artifact.blobUrl at this point.
+        const link = document.createElement("a");
+        link.href = artifact.blobUrl;
+        link.download = `${config.platform}_${config.aspectRatio.replace(":", "x")}.webm`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        produced++;
+        setMultiExportProject(latest => ({
+          ...latest,
+          configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: 100, status: "COMPLETED" as const, estimatedSecondsRemaining: 0, isPaused: false } : c)
+        }));
+      } catch (err: any) {
+        console.error(`[MultiExport] ${config.platform} failed:`, err);
+        setMultiExportProject(latest => ({
+          ...latest,
+          configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: 0, status: "FAILED" as const, isPaused: false } : c)
+        }));
+      }
+    }
+
+    setIsExportingMulti(false);
+    setMultiExportProject(prev => ({ ...prev, isExporting: false }));
+    showToast(
+      produced > 0
+        ? (isSk ? `Vygenerovaných ${produced} z ${enabledConfigs.length} verzií.` : `Generated ${produced} of ${enabledConfigs.length} versions.`)
+        : (isSk ? "Žiadnu verziu nebolo možné vyrenderovať." : "No version could be rendered.")
+    );
+    playSynthesizedSFX("ding", 0.8);
   };
 
   const handleRunCleanupDetection = () => {
@@ -1167,22 +1234,21 @@ function MainApp() {
   const [duration, setDuration] = useState<number>(15);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-  // PERFORMANCE ENGINE: AI JOB LISTENER
+  // PERFORMANCE ENGINE: surface failing jobs instead of silently "completing" them.
   useEffect(() => {
     return AIJobQueue.registerListener((queue) => {
-      const analysisJob = queue.find(j => j.type === 'VIDEO_ANALYSIS' && j.status === 'completed');
-      if (analysisJob && isAnalyzingRaw) {
-         completeRawAnalysis();
-      }
-      
-      const proxyJob = queue.find(j => j.type === 'PROXY_GENERATION' && j.status === 'queued');
-      if (proxyJob) {
-        generateProxyJob("current-project", currentVideoUrl, proxyQuality).then(url => {
-            setProxyUrl(url);
-        });
+      const failed = queue.find(j => j.status === 'failed' && !j.error?.startsWith('__seen'));
+      if (failed) {
+        // Mark as seen so the toast is shown once per job.
+        failed.error = `__seen${failed.error || ''}`;
+        showToast(
+          isSk
+            ? `Úloha ${failed.type} zlyhala: ${(failed.error || '').replace('__seen', '')}`
+            : `Job ${failed.type} failed: ${(failed.error || '').replace('__seen', '')}`
+        );
       }
     });
-  }, [isAnalyzingRaw, currentVideoUrl, proxyQuality]);
+  }, [isSk]);
 
 
   // Active navigation tab
@@ -1595,188 +1661,372 @@ function MainApp() {
     }, 1500);
   };
 
-  const handleRunRawAnalysis = () => {
-    setIsAnalyzingRaw(true);
-    AIJobQueue.addJob("current-project", "VIDEO_ANALYSIS", "P1");
-  };
+  /**
+   * Runs the real analysis engine over the canonical project and maps its output into
+   * the Raw Analysis view model. Nothing is synthesised: when the project has no media
+   * or no transcript, the user is told that there is nothing to analyse.
+   */
+  const handleRunRawAnalysis = async () => {
+    if (isAnalyzingRaw) return;
 
-  const completeRawAnalysis = () => {
-    setRawAnalysis({
+    const coreProject = coreEngine.getProject();
+    const hasVideoAsset = coreProject.assets.some(a => a.type === "video");
+    const transcriptSegments = coreProject.transcript?.segments || [];
+    const projectDuration = TimelineEngine.calculateProjectDuration(coreProject);
+
+    if (!hasVideoAsset && transcriptSegments.length === 0) {
+      showToast(
+        isSk
+          ? "Analýza nie je možná: projekt neobsahuje žiadne médium ani transkript. Najprv importujte video."
+          : "Analysis not possible: the project has no media and no transcript. Import a video first."
+      );
+      setRawAnalysisStatus("UNAVAILABLE");
+      return;
+    }
+
+    setIsAnalyzingRaw(true);
+    setRawAnalysisStatus("RUNNING");
+
+    try {
+      const results = await coreEngine.runProjectAnalysis(
+        ["metadata", "transcript", "audio", "silence", "shots", "content", "editing"],
+        undefined,
+        (progress) => setTranscriptionProgress(progress)
+      );
+
+      const videoAsset = coreProject.assets.find(a => a.type === "video");
+      const realSegments = transcriptSegments;
+
+      const transcription: TranscriptionSegment[] = realSegments.map((seg, idx) => ({
+        id: seg.id || `seg_${idx}`,
+        start: seg.start,
+        end: seg.end,
+        text: seg.text,
+        speaker: String((seg as any).speaker ?? "1"),
+        confidence: (seg as any).confidence ?? 0
+      }));
+
+      const pauses = results.pauses || [];
+      const hooks = results.hooks || [];
+      const brolls = results.brollOpportunities || [];
+
+      const editMap: EditMapItem[] = [
+        ...hooks.map((h, idx) => ({
+          id: `e_hook_${idx}`,
+          type: "HOOK" as const,
+          start: h.start,
+          end: h.end,
+          labelSk: `Hook (${h.type})`,
+          labelEn: `Hook (${h.type})`,
+          status: "KEEP" as const,
+          reasonSk: h.reason,
+          reasonEn: h.reason
+        })),
+        ...pauses.map((p, idx) => ({
+          id: `e_pause_${idx}`,
+          type: "PAUSE" as const,
+          start: p.start,
+          end: p.end,
+          labelSk: `Pauza ${p.duration.toFixed(2)}s (${p.type})`,
+          labelEn: `Pause ${p.duration.toFixed(2)}s (${p.type})`,
+          status: (p.type === "long_pause" ? "REMOVE" : "REVIEW") as "REMOVE" | "REVIEW",
+          reasonSk: "Zistené analýzou pauzy v transkripte.",
+          reasonEn: "Detected by transcript pause analysis."
+        }))
+      ].sort((a, b) => a.start - b.start);
+
+      const silenceRemoved = pauses.reduce((sum, p) => sum + p.duration, 0);
+
+      setRawAnalysis({
         isAnalyzed: true,
-        metadata: {
-          filename: "OMNISTRIH_RAW_4K.mp4",
-          duration: 2712,
-          resolution: "3840x2160",
-          fps: 30,
-          aspectRatio: "16:9",
-          fileSize: "4.2 GB",
-          hasAudio: true
-        },
-        totalFillerWords: 42,
-        totalSilenceRemoved: 128,
-        rawVideoDuration: 2712,
-        estimatedEditedDuration: 1840,
-        transcription: [
-          { id: "t1", start: 0.0, end: 5.2, speaker: "1", text: isSk ? "Vitajte v novom OmniStrih AI tutoriále." : "Welcome to the new OmniStrih AI tutorial.", confidence: 0.98 },
-          { id: "t2", start: 5.2, end: 12.5, speaker: "1", text: isSk ? "Dnes vám ukážem ako ušetriť až 95 percent času pri strihu videa." : "Today I'll show you how to save up to 95 percent of editing time.", confidence: 0.96 },
-          { id: "t3", start: 12.5, end: 28.4, speaker: "1", text: isSk ? "Najväčšou chybou je začať strihať hneď. Najskôr potrebujete plán." : "The biggest mistake is to start editing right away. First you need a plan.", confidence: 0.94 },
-          { id: "t4", start: 28.4, end: 35.0, speaker: "1", text: isSk ? "eee... no... v podstate... eee..." : "um... well... basically... um...", confidence: 0.75 },
-          { id: "t5", start: 35.0, end: 55.0, speaker: "1", text: isSk ? "S AI analýzou OmniStrih pochopíte obsah ešte pred prvým strihom." : "With OmniStrih AI analysis, you'll understand the content before the first cut.", confidence: 0.97 },
-        ],
-        editMap: [
-          { id: "e1", type: "HOOK", start: 0, end: 5.2, labelSk: "Silný úvodný háčik", labelEn: "Strong opening hook", status: "KEEP", reasonSk: "Vysoká emócia a jasná téma." },
-          { id: "e2", type: "CONTEXT", start: 5.2, end: 12.5, labelSk: "Kontext a sľub hodnoty", labelEn: "Context & value promise", status: "KEEP" },
-          { id: "e3", type: "PROBLEM", start: 12.5, end: 28.4, labelSk: "Identifikácia problému", labelEn: "Problem identification", status: "KEEP" },
-          { id: "e4", type: "PAUSE", start: 28.4, end: 35.0, labelSk: "Dlhá pauza a filler slová", labelEn: "Long pause and fillers", status: "REMOVE", reasonSk: "Rušivé elementy znižujúce retenciu." },
-          { id: "e5", type: "EXPLANATION", start: 35.0, end: 55.0, labelSk: "Vysvetlenie riešenia", labelEn: "Solution explanation", status: "KEEP" },
-          { id: "e6", type: "PAYOFF", start: 55.0, end: 68.2, labelSk: "Záverečná pointa", labelEn: "Final payoff", status: "KEEP", reasonSk: "Jasný výsledok a uspokojenie diváka." },
-        ],
+        metadata: videoAsset
+          ? {
+              filename: videoAsset.name,
+              duration: videoAsset.duration || projectDuration,
+              resolution: videoAsset.width && videoAsset.height
+                ? `${videoAsset.width}x${videoAsset.height}`
+                : "neznáme",
+              fps: (videoAsset as any).fps || coreProject.settings.fps,
+              aspectRatio: coreProject.settings.aspectRatio,
+              fileSize: videoAsset.size ? `${(videoAsset.size / (1024 * 1024)).toFixed(1)} MB` : "neznáme",
+              hasAudio: (videoAsset.channels ?? 0) > 0
+            }
+          : undefined,
+        transcription,
+        editMap,
         shortsSuggestions: [],
         notes: [
-          { id: "n1", type: "info", textSk: "Úvod trvá 5.2 sekundy, kým sa objaví hlavná myšlienka.", textEn: "The introduction takes 5.2 seconds before the main idea appears.", timestamp: 0 },
-          { id: "n2", type: "warning", textSk: "Na čase 00:28 je 6.6 sekundová pauza s výplňovými slovami.", textEn: "There is a 6.6-second pause at 00:28 with filler words.", timestamp: 28.4 },
-          { id: "n3", type: "tip", textSk: "Odpoveď na čase 04:18 by mohla fungovať ako samostatný Short.", textEn: "The answer at 04:18 could work as a standalone short.", timestamp: 258 },
-        ]
-    });
-    setIsAnalyzingRaw(false);
-  };
-
-  const handleGenerateStory = (config: { format: StoryFormat, platform: StoryPlatform, goal: StoryGoal, structure: StoryStructure, targetDuration: number }) => {
-    setIsGeneratingStory(true);
-    // Simulate story building logic using rawAnalysis data
-    setTimeout(() => {
-      const segments: StorySegment[] = [
-        { 
-          id: "st1", sourceId: "e1", type: "HOOK", start: 0, end: 5.2, 
-          transcript: "Vitajte v novom OmniStrih AI tutoriále.", 
-          purposeSk: "Zachytenie pozornosti hneď v úvode.",
-          purposeEn: "Capturing attention at the very start.",
-          contextRisk: false 
-        },
-        { 
-          id: "st2", sourceId: "e3", type: "PROBLEM", start: 12.5, end: 28.4, 
-          transcript: "Najväčšou chybou je začať strihať hneď. Najskôr potrebujete plán.", 
-          purposeSk: "Identifikácia bolesti strihača.",
-          purposeEn: "Identifying the editor's pain point.",
-          contextRisk: true,
-          contextWarningSk: "Vynechaný úsek pred touto vetou môže pôsobiť náhle.",
-          contextWarningEn: "The missing section before this sentence may feel abrupt."
-        },
-        { 
-          id: "st3", sourceId: "e5", type: "EXPLANATION", start: 35.0, end: 55.0, 
-          transcript: "S AI analýzou OmniStrih pochopíte obsah ešte pred prvým strihom.", 
-          purposeSk: "Predstavenie riešenia.",
-          purposeEn: "Presenting the solution.",
-          contextRisk: false 
-        },
-        { 
-          id: "st4", sourceId: "e6", type: "PAYOFF", start: 55.0, end: 68.2, 
-          transcript: "Jasný výsledok a uspokojenie diváka.", 
-          purposeSk: "Zavŕšenie myšlienky.",
-          purposeEn: "Concluding the thought.",
-          contextRisk: false 
-        }
-      ];
-
-      setStoryPlan({
-        id: "plan-001",
-        format: config.format,
-        platform: config.platform,
-        goal: config.goal,
-        structure: config.structure,
-        targetDuration: config.targetDuration,
-        segments,
-        pacing: { hook: "Fast", middle: "Balanced", ending: "Balanced" },
-        infoDensity: "High",
-        isApplied: false
+          ...(results.speechDensity
+            ? [{
+                id: "n_speech",
+                type: "info" as const,
+                textSk: `Informačná hustota: ${results.speechDensity.informationDensity} (${results.speechDensity.wordsPerMinute} slov/min).`,
+                textEn: `Information density: ${results.speechDensity.informationDensity} (${results.speechDensity.wordsPerMinute} wpm).`,
+                timestamp: 0
+              }]
+            : []),
+          ...brolls.map((b, idx) => ({
+            id: `n_broll_${idx}`,
+            type: "tip" as const,
+            textSk: `B-roll príležitosť v ${b.start.toFixed(1)}s — ${b.reason}`,
+            textEn: `B-roll opportunity at ${b.start.toFixed(1)}s — ${b.reason}`,
+            timestamp: b.start
+          }))
+        ],
+        totalFillerWords: 0,
+        totalSilenceRemoved: silenceRemoved,
+        rawVideoDuration: videoAsset?.duration || projectDuration,
+        estimatedEditedDuration: Math.max(0, projectDuration - silenceRemoved)
       });
-      setIsGeneratingStory(false);
-      showToast(isSk ? "✅ Príbeh vygenerovaný! Skontrolujte Storyboard." : "✅ Story generated! Check the Storyboard.");
-    }, 2500);
+
+      setRawAnalysisStatus("READY");
+      if (transcription.length === 0) {
+        showToast(
+          isSk
+            ? "Analýza dokončená, ale projekt nemá transkript — spustite prepis v Captions štúdiu."
+            : "Analysis finished, but the project has no transcript — run transcription in the Captions studio."
+        );
+      }
+    } catch (err: any) {
+      setRawAnalysisStatus("UNAVAILABLE");
+      showToast(
+        isSk
+          ? `Analýza zlyhala: ${err?.message || err}`
+          : `Analysis failed: ${err?.message || err}`
+      );
+    } finally {
+      setIsAnalyzingRaw(false);
+    }
   };
 
+  /**
+   * Builds a story plan from the real edit map produced by the analysis engine.
+   * If nothing has been analysed yet, the user is told instead of receiving a
+   * plausible-looking story that was not derived from their footage.
+   */
+  const handleGenerateStory = (config: { format: StoryFormat, platform: StoryPlatform, goal: StoryGoal, structure: StoryStructure, targetDuration: number }) => {
+    if (!rawAnalysis.isAnalyzed || rawAnalysis.editMap.length === 0) {
+      showToast(
+        isSk
+          ? "Najprv spustite analýzu média (Raw Analysis) — bez nej nie je z čoho postaviť príbeh."
+          : "Run media analysis (Raw Analysis) first — there is no data to build a story from."
+      );
+      return;
+    }
+
+    setIsGeneratingStory(true);
+
+    const ordered = [...rawAnalysis.editMap].sort((a, b) => a.start - b.start);
+    const segments: StorySegment[] = ordered.map((item, idx) => ({
+      id: `st_${idx + 1}`,
+      sourceId: item.id,
+      type: item.type,
+      start: item.start,
+      end: item.end,
+      transcript: rawAnalysis.transcription.find(t => t.start >= item.start && t.start < item.end)?.text || '',
+      purposeSk: item.reasonSk || `Segment ${item.type} z analýzy média.`,
+      purposeEn: item.reasonEn || `${item.type} segment from media analysis.`,
+      contextRisk: item.status === "REMOVE",
+      contextWarningSk: item.status === "REMOVE" ? "Odstránenie tohto úseku môže zmeniť nadväznosť." : undefined,
+      contextWarningEn: item.status === "REMOVE" ? "Removing this section may break continuity." : undefined
+    }));
+
+    setStoryPlan({
+      id: `plan_${crypto.randomUUID().slice(0, 8)}`,
+      format: config.format,
+      platform: config.platform,
+      goal: config.goal,
+      structure: config.structure,
+      targetDuration: config.targetDuration,
+      segments,
+      pacing: { hook: "Balanced", middle: "Balanced", ending: "Balanced" },
+      infoDensity: "Balanced",
+      isApplied: false
+    });
+    setIsGeneratingStory(false);
+    showToast(isSk ? `Príbeh zostavený z ${segments.length} segmentov analýzy.` : `Story built from ${segments.length} analysed segments.`);
+  };
+
+  /**
+   * Applies the story plan to the canonical timeline.
+   *
+   * Every segment that the analysis flagged as removable is ripple-deleted through the
+   * Command System (one undo step each), so the timeline really changes. If no canonical
+   * command matches a segment, the user is told instead of seeing a success toast.
+   */
   const handleApplyStoryToTimeline = () => {
     if (!storyPlan) return;
-    
-    showToast(isSk ? "🚀 Aplikujem príbeh na timeline... (Non-destructive)" : "🚀 Applying story to timeline... (Non-destructive)");
-    
-    // In a real app, this would re-sequence the timeline
-    // For demo, we just mark it as applied
-    setStoryPlan({ ...storyPlan, isApplied: true });
-    
-    // Jump to the first segment of the story
-    if (storyPlan.segments.length > 0) {
-       handleSeek(storyPlan.segments[0].start);
+
+    const project = coreEngine.getProject();
+    const removable = storyPlan.segments.filter(seg => seg.contextRisk);
+
+    if (removable.length === 0) {
+      showToast(
+        isSk
+          ? "Príbeh neobsahuje žiadne odstrániteľné segmenty — timeline zostáva bez zmien."
+          : "The story has no removable segments — the timeline stays unchanged."
+      );
+      return;
     }
-    
-    playSynthesizedSFX("paper-rip", 0.6);
+
+    let applied = 0;
+    let skipped = 0;
+
+    for (const seg of removable) {
+      const clip = project.tracks
+        .filter(t => t.type === "video")
+        .flatMap(t => t.clips)
+        .find(c => {
+          const start = c.timelineStart ?? c.start;
+          return Math.abs(start - seg.start) < 0.05;
+        });
+
+      if (!clip) {
+        skipped++;
+        continue;
+      }
+
+      // Ripple delete keeps the following clips contiguous (non-destructive edit).
+      if (coreEngine.removeClip(clip.id, true)) {
+        applied++;
+      } else {
+        skipped++;
+      }
+    }
+
+    if (applied > 0) {
+      setStoryPlan({ ...storyPlan, isApplied: true });
+      if (storyPlan.segments.length > 0) {
+        handleSeek(storyPlan.segments[0].start);
+      }
+      playSynthesizedSFX("paper-rip", 0.6);
+    }
+
+    showToast(
+      isSk
+        ? `Príbeh aplikovaný: ${applied} segmentov odstránených${skipped > 0 ? `, ${skipped} preskočených (bez zhody klipu)` : ""}.`
+        : `Story applied: ${applied} segments removed${skipped > 0 ? `, ${skipped} skipped (no matching clip)` : ""}`
+    );
   };
 
+  /**
+   * Turns analysed pauses into jump-cut proposals. Cut positions and the counts shown
+   * come from the analysis results, so they reflect the real edit map.
+   */
   const handleGenerateCuts = (mode: JumpCutMode, density: number) => {
-    setIsGeneratingCuts(true);
-    // Simulate jump cut detection logic
-    setTimeout(() => {
-      const markers: AICutMarker[] = [
-        { 
-          id: "m1", start: 28.4, end: 35.0, type: "REMOVE", category: "pause", pauseType: "DEAD_AIR",
-          reasonSk: "Dlhá pauza s výplňovými slovami.",
-          reasonEn: "Long pause with filler words.",
-          contextRisk: false 
-        },
-        { 
-          id: "m2", start: 45.2, end: 46.8, type: "REMOVE", category: "filler",
-          reasonSk: "Odstránenie 'ehm... vlastne'.",
-          reasonEn: "Removing 'um... basically'.",
-          contextRisk: false 
-        },
-        { 
-          id: "m3", start: 82.5, end: 84.1, type: "REVIEW", category: "repetition",
-          reasonSk: "Opakovanie začiatku vety.",
-          reasonEn: "Repetition of sentence start.",
-          contextRisk: true 
-        },
-        { 
-          id: "m4", start: 110.4, end: 112.0, type: "REMOVE", category: "stutter",
-          reasonSk: "Zajaknutie pri slove 'analýza'.",
-          reasonEn: "Stutter on the word 'analysis'.",
-          contextRisk: false 
-        },
-        { 
-          id: "m5", start: 155.0, end: 156.5, type: "KEEP", category: "pause", pauseType: "EMOTIONAL_PAUSE",
-          reasonSk: "Emocionálna pauza pred pointou.",
-          reasonEn: "Emotional pause before payoff.",
-          contextRisk: false 
-        }
-      ];
+    if (!rawAnalysis.isAnalyzed) {
+      showToast(
+        isSk
+          ? "Najprv spustite analýzu média — bez výsledkov nie je možné navrhnúť strihy."
+          : "Run media analysis first — cuts cannot be proposed without results."
+      );
+      return;
+    }
 
-      setJumpSequence({
-        id: "jump-001",
-        mode,
-        cutDensity: density,
-        markers,
-        originalDuration: 2712,
-        editedDuration: 2661,
-        stats: {
-          removedPauses: 21,
-          removedFillers: 12,
-          removedRepetitions: 5,
-          removedStutters: 3,
-          totalCuts: 37
-        },
-        isApplied: false
-      });
-      setIsGeneratingCuts(false);
-      showToast(isSk ? "✅ Jump-Cut návrhy sú pripravené!" : "✅ Jump-Cut proposals are ready!");
-    }, 3000);
+    setIsGeneratingCuts(true);
+
+    const pauseItems = rawAnalysis.editMap.filter(i => i.type === "PAUSE");
+    const markers: AICutMarker[] = pauseItems.map((item, idx) => ({
+      id: `m_${idx + 1}`,
+      start: item.start,
+      end: item.end,
+      type: item.status === "REMOVE" ? "REMOVE" : "REVIEW",
+      category: "pause",
+      pauseType: "DEAD_AIR",
+      reasonSk: item.reasonSk || "Zistená pauza.",
+      reasonEn: item.reasonEn || "Detected pause.",
+      contextRisk: false
+    }));
+
+    const timelineDuration = TimelineEngine.calculateProjectDuration(coreEngine.getProject());
+    const removedSeconds = markers
+      .filter(m => m.type === "REMOVE")
+      .reduce((sum, m) => sum + Math.max(0, m.end - m.start), 0);
+
+    setJumpSequence({
+      id: `jump_${crypto.randomUUID().slice(0, 8)}`,
+      mode,
+      cutDensity: density,
+      markers,
+      originalDuration: timelineDuration,
+      editedDuration: Math.max(0, timelineDuration - removedSeconds),
+      stats: {
+        removedPauses: markers.filter(m => m.type === "REMOVE").length,
+        removedFillers: 0,
+        removedRepetitions: 0,
+        removedStutters: 0,
+        totalCuts: markers.length
+      },
+      isApplied: false
+    });
+    setIsGeneratingCuts(false);
+    showToast(
+      markers.length > 0
+        ? (isSk ? `Navrhnutých ${markers.length} strihov z reálnej analýzy páz.` : `${markers.length} cuts proposed from real pause analysis.`)
+        : (isSk ? "Analýza nenašla žiadne pauzy na vystrihnutie." : "Analysis found no pauses to cut.")
+    );
   };
 
+  /**
+   * Applies the selected jump cuts as real edits: the clip containing the marker is
+   * split at the marker bounds and the flagged range is ripple-deleted.
+   */
   const handleApplyCuts = (selectedIds: string[]) => {
     if (!jumpSequence) return;
-    
-    showToast(isSk ? `✂️ Aplikujem ${selectedIds.length} strihov...` : `✂️ Applying ${selectedIds.length} cuts...`);
-    
-    setJumpSequence({ ...jumpSequence, isApplied: true });
-    playSynthesizedSFX("camera-shutter", 0.7);
+
+    const markers = jumpSequence.markers.filter(m => selectedIds.includes(m.id) && m.type === "REMOVE");
+    if (markers.length === 0) {
+      showToast(
+        isSk
+          ? "Žiadny z vybraných markerov nie je typu REMOVE — timeline zostáva bez zmien."
+          : "None of the selected markers are REMOVE type — the timeline stays unchanged."
+      );
+      return;
+    }
+
+    const ordered = [...markers].sort((a, b) => a.end - b.end);
+    let applied = 0;
+    let skipped = 0;
+
+    for (const marker of ordered) {
+      const project = coreEngine.getProject();
+      const clip = project.tracks
+        .filter(t => t.type === "video")
+        .flatMap(t => t.clips)
+        .find(c => {
+          const start = c.timelineStart ?? c.start;
+          return marker.start >= start && marker.start < start + c.duration;
+        });
+
+      if (!clip) {
+        skipped++;
+        continue;
+      }
+
+      const clipStart = clip.timelineStart ?? clip.start;
+      if (Math.abs(marker.start - clipStart) > 0.05) {
+        // Only cuts that start at a clip boundary can be ripple-deleted safely today.
+        skipped++;
+        continue;
+      }
+
+      if (coreEngine.splitSelectedClip(clip.id, marker.end) && coreEngine.removeClip(clip.id, true)) {
+        applied++;
+      } else {
+        skipped++;
+      }
+    }
+
+    if (applied > 0) {
+      setJumpSequence({ ...jumpSequence, isApplied: true });
+      playSynthesizedSFX("camera-shutter", 0.7);
+    }
+
+    showToast(
+      isSk
+        ? `Aplikovaných ${applied} strihov${skipped > 0 ? `, ${skipped} preskočených (marker nezačína na hranici klipu)` : ""}.`
+        : `Applied ${applied} cuts${skipped > 0 ? `, ${skipped} skipped (marker does not start on a clip boundary)` : ""}.`
+    );
   };
 
   const handleRunMagicSplit = () => {
@@ -2538,7 +2788,22 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] selection:bg-rose-500 selection:text-white">
-      {view === 'home' && <OmniStrihHome onNewProject={() => setView('editor')} onOpenProject={() => setView('editor')} />}
+      {view === 'home' && (
+        <OmniStrihHome
+          onNewProject={() => {
+            // Home -> New Video must reach the editor with a real project + import flow,
+            // not only flip the outer `view` flag (which left the dashboard on screen).
+            setView('editor');
+            handleCreateNewProject();
+          }}
+          onOpenProject={() => {
+            setView('editor');
+            setCurrentView('dashboard');
+            showToast(isSk ? "Otváram vaše projekty…" : "Opening your projects…");
+          }}
+          onOpenAcademy={() => setIsAcademyOpen(true)}
+        />
+      )}
       
       <div style={{ display: view === 'home' ? 'none' : 'block' }}>
         {toastMessage && (
@@ -2642,6 +2907,13 @@ function MainApp() {
                   >
                     <Play className="w-4 h-4 fill-current text-rose-500" />
                     {isSk ? "Pokračovať v poslednom" : "Continue Latest"}
+                  </button>
+                  <button
+                    onClick={() => setIsAcademyOpen(true)}
+                    className="px-6 py-3.5 rounded-2xl bg-neutral-800 text-neutral-200 font-bold text-sm hover:bg-neutral-700 transition-all flex items-center gap-2 border border-neutral-700 cursor-pointer"
+                  >
+                    <GraduationCap className="w-4 h-4 text-indigo-400" />
+                    {isSk ? "Edit Academy" : "Edit Academy"}
                   </button>
                 </div>
               </div>
@@ -3943,8 +4215,8 @@ function MainApp() {
         </div>
       )}
       
-      <Suspense fallback={null}>
-        <PerformancePanel />
+      <Suspense fallback={<ToolSuspenseFallback isSk={isSk} />}>
+        <ErrorBoundary label="Performance & Suggestions"><PerformancePanel />
         <SuggestionPanel
           suggestions={suggestions}
           onApply={(id) => {
@@ -3954,7 +4226,7 @@ function MainApp() {
           onReject={(id) => {
             showToast(isSk ? `Návrh [${id}] bol odmietnutý.` : `Suggestion [${id}] rejected.`);
           }}
-        />
+        /></ErrorBoundary>
 
         {/* Professional Export Center */}
         {isExportOpen && (
@@ -4025,7 +4297,8 @@ function MainApp() {
       />
 
       {/* Media Ingestion & Source Hub Modal (Disk, Smartphone/QR, Cloud, URL, Samples) */}
-      <Suspense fallback={null}>
+      <Suspense fallback={<ToolSuspenseFallback isSk={isSk} label={isSk ? "Načítavam import médií…" : "Loading media import…"} />}>
+        <ErrorBoundary label="Import médií" language={language}>
         {isImportModalOpen && (
           <ImportMediaModal
             isOpen={isImportModalOpen}
@@ -4048,10 +4321,12 @@ function MainApp() {
             }}
           />
         )}
+        </ErrorBoundary>
       </Suspense>
 
       {/* Local AI Control Center Modal (100% Offline, Zero Startup Impact) */}
-      <Suspense fallback={null}>
+      <Suspense fallback={<ToolSuspenseFallback isSk={isSk} label={isSk ? "Načítavam AI štúdio…" : "Loading AI studio…"} />}>
+        <ErrorBoundary label="AI štúdiá (Local AI / Captions / Director)" language={language}>
         {isLocalAIModalOpen && (
           <LocalAIControlCenter
             isOpen={isLocalAIModalOpen}
@@ -4076,6 +4351,15 @@ function MainApp() {
             onClose={() => setIsDirectorStudioOpen(false)}
           />
         )}
+        {isAcademyOpen && (
+          <EditAcademyCenter
+            isOpen={isAcademyOpen}
+            onClose={() => setIsAcademyOpen(false)}
+            language={language}
+            showToast={showToast}
+          />
+        )}
+        </ErrorBoundary>
       </Suspense>
 
       {/* Real-time Error Catcher & Debugger Overlay */}
@@ -4086,8 +4370,10 @@ function MainApp() {
 
 export default function App() {
   return (
-    <AdaptiveDeviceExperienceProvider>
-      <MainApp />
-    </AdaptiveDeviceExperienceProvider>
+    <ErrorBoundary label="OmniStrih AI (root)">
+      <AdaptiveDeviceExperienceProvider>
+        <MainApp />
+      </AdaptiveDeviceExperienceProvider>
+    </ErrorBoundary>
   );
 }

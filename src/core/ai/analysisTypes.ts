@@ -205,6 +205,22 @@ export type DirectorObjective =
 
 export type DecisionPriority = 'MUST_CONSIDER' | 'RECOMMENDED' | 'OPTIONAL';
 
+/**
+ * The concrete, machine-readable edit a decision proposes.
+ * Kept separate from the human-readable `what`/`why` text so the executor never has to
+ * parse localised copy to know which canonical command to run.
+ */
+export type DirectorProposedAction =
+  | { kind: 'PUNCH_IN'; parameters?: { scale?: number } }
+  | { kind: 'TRIM_RANGE'; parameters?: { targetDurationSeconds?: number } }
+  | { kind: 'MULTICAM_SWITCH'; parameters?: { angleId?: string } }
+  | { kind: 'BROLL_INSERT'; parameters?: { assetId?: string } }
+  | { kind: 'CAPTION_EMPHASIS' }
+  | { kind: 'AUDIO_DUCK' }
+  | { kind: 'COLOR_BALANCE' }
+  | { kind: 'TRANSITION'; parameters?: { edge?: 'in' | 'out'; transition?: any } }
+  | { kind: 'MANUAL_ONLY'; parameters?: { reason?: string } };
+
 export interface DirectorDecisionItem {
   id: string;
   editDecisionId: string;
@@ -218,6 +234,8 @@ export interface DirectorDecisionItem {
   confidence: number;
   source: string;
   category: KnowledgeCategory;
+  /** Canonical edit this decision proposes. Absent for pure education/awareness items. */
+  proposedAction?: DirectorProposedAction;
   affectedClipId?: string;
   timelineLocation?: { start: number; end?: number };
   status: 'proposed' | 'accepted' | 'modified' | 'rejected' | 'applied' | 'needs-review' | 'invalidated';

@@ -90,7 +90,7 @@ export class AnalysisEngine {
 
       const contentTypes = types.includes('content')
         ? this.analyzeContentTypes(project)
-        : [{ type: 'Talking Head' as const, confidence: 0.85 }];
+        : [];
 
       const hooks = types.includes('content') || types.includes('editing')
         ? this.analyzeHooks(project)
@@ -212,7 +212,9 @@ export class AnalysisEngine {
   public analyzeSpeechDensity(project: ProjectModel): SpeechDensityMetrics {
     const transcript = project.transcript;
     if (!transcript || transcript.segments.length === 0) {
-      return { wordsPerSecond: 2.2, wordsPerMinute: 132, pauseDensity: 0.15, informationDensity: 'balanced' };
+      // No transcript means nothing was measured. Returning plausible-looking numbers
+      // here (2.2 w/s, 132 wpm) would present invented metrics as real analysis.
+      return { wordsPerSecond: 0, wordsPerMinute: 0, pauseDensity: 0, informationDensity: 'low' };
     }
 
     let totalWords = 0;
@@ -250,15 +252,9 @@ export class AnalysisEngine {
           type: clip.duration > 10 ? 'talking_head' : 'broll'
         });
       });
-    } else {
-      shots.push({
-        id: 'shot_default_1',
-        start: 0,
-        end: 10,
-        confidence: 0.9,
-        type: 'talking_head'
-      });
     }
+    // No video clips on the timeline means there are no shots to report.
+    // An invented placeholder shot would travel into the Director plan as if measured.
 
     return shots;
   }
@@ -289,10 +285,11 @@ export class AnalysisEngine {
   public analyzeContentStructure(project: ProjectModel): ContentStructure {
     const transcript = project.transcript;
     if (!transcript || transcript.segments.length === 0) {
+      // Without a transcript the structure is unknown, not "hook/setup/solution".
       return {
-        hook: { start: 0, end: 3, text: 'Predstavenie témy', present: true },
-        setup: { start: 3, end: 7, present: true },
-        solution: { start: 7, end: 10, text: 'Zhrnutie', present: true }
+        hook: { start: 0, end: 0, present: false },
+        setup: { start: 0, end: 0, present: false },
+        solution: { start: 0, end: 0, present: false }
       };
     }
 
@@ -307,11 +304,18 @@ export class AnalysisEngine {
   }
 
   public analyzeContentTypes(project: ProjectModel): ContentTypeCandidate[] {
-    return [
-      { type: 'Talking Head', confidence: 0.88 },
-      { type: 'Educational', confidence: 0.74 },
-      { type: 'Short-form', confidence: 0.65 }
-    ];
+    const transcript = project.transcript;
+    if (!transcript || transcript.segments.length === 0) {
+      // Content classification needs transcript text; guessing here would be fabrication.
+      return [];
+    }
+    const videoClips = project.tracks.filter(t => t.type === 'video').flatMap(t => t.clips);
+    const hasTalkingHead = videoClips.some(c => c.duration > 10);
+    const candidates: ContentTypeCandidate[] = [];
+    if (hasTalkingHead) candidates.push({ type: 'Talking Head', confidence: 0.7 });
+    if (transcript.segments.length > 4) candidates.push({ type: 'Educational', confidence: 0.6 });
+    if (videoClips.length >= 3) candidates.push({ type: 'Short-form', confidence: 0.55 });
+    return candidates;
   }
 
   public analyzeHooks(project: ProjectModel): HookCandidate[] {

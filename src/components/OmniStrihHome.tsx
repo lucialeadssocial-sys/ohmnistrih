@@ -1,10 +1,11 @@
 import React from 'react';
-import { Plus, FolderOpen, Film, Tv, User, Mic, Briefcase, Zap, Settings } from 'lucide-react';
+import { Plus, FolderOpen, Film, Tv, User, Mic, Briefcase, Zap, Settings, GraduationCap } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface Props {
   onNewProject: (type: string) => void;
   onOpenProject: () => void;
+  onOpenAcademy: () => void;
 }
 
 const ProjectTypeCard = ({ title, icon: Icon, onClick }: { title: string, icon: any, onClick: () => void }) => (
@@ -19,7 +20,7 @@ const ProjectTypeCard = ({ title, icon: Icon, onClick }: { title: string, icon: 
   </motion.button>
 );
 
-export const OmniStrihHome: React.FC<Props> = ({ onNewProject, onOpenProject }) => {
+export const OmniStrihHome: React.FC<Props> = ({ onNewProject, onOpenProject, onOpenAcademy }) => {
   return (
     <div className="min-h-screen bg-neutral-950 p-6 md:p-12 text-neutral-200">
       <header className="flex justify-between items-center mb-16">
@@ -49,6 +50,13 @@ export const OmniStrihHome: React.FC<Props> = ({ onNewProject, onOpenProject }) 
           >
             <FolderOpen className="w-6 h-6" />
             Open Project
+          </button>
+          <button 
+            onClick={onOpenAcademy}
+            className="flex-1 flex items-center justify-center gap-3 p-6 rounded-3xl bg-neutral-900 border border-neutral-800 text-white font-black uppercase tracking-wider hover:bg-neutral-800 transition-all"
+          >
+            <GraduationCap className="w-6 h-6 text-indigo-400" />
+            Edit Academy
           </button>
         </div>
 

@@ -148,12 +148,18 @@ class MediaCacheManagerClass {
 export const MediaCacheManager = new MediaCacheManagerClass();
 
 // 3. BACKGROUND JOB QUEUE SYSTEM WITH PLAYBACK PREEMPTION & YIELDING
+/**
+ * A job may only report progress that comes from real work.
+ * Callers pass the function that does the work; the queue never advances a job on a timer.
+ */
+export type JobExecutor = (report: (progress: number) => void) => Promise<Record<string, any> | void>;
+
 class AIJobQueueManager {
   private queue: AIJob[] = [];
   private listeners: ((queue: AIJob[]) => void)[] = [];
   private isProcessing = false;
   private isPlaybackActive = false;
-  private activeIntervals: Map<string, any> = new Map();
+  private executors: Map<string, JobExecutor> = new Map();
 
   public getQueue(): AIJob[] {
     return [...this.queue];
@@ -179,8 +185,14 @@ class AIJobQueueManager {
     PerformanceMonitor.updateMetric("activeAIJobs", this.queue.filter((j) => j.status === "running" || j.status === "queued").length);
   }
 
-  public addJob(projectId: string, type: JobType, priority: JobPriority = "P3", metadata?: Record<string, any>): string {
-    const job_id = "job_" + Math.random().toString(36).substring(2, 11);
+  public addJob(
+    projectId: string,
+    type: JobType,
+    priority: JobPriority = "P3",
+    metadata?: Record<string, any>,
+    executor?: JobExecutor
+  ): string {
+    const job_id = "job_" + crypto.randomUUID().slice(0, 8);
 
     const duplicate = this.queue.find(
       (j) => j.project_id === projectId && j.type === type && (j.status === "queued" || j.status === "running")
@@ -200,10 +212,24 @@ class AIJobQueueManager {
       metadata,
     };
 
+    if (executor) {
+      this.executors.set(job_id, executor);
+    }
+
     this.queue.push(newJob);
     this.notifyListeners();
     this.scheduleProcessing();
     return job_id;
+  }
+
+  public failJob(jobId: string, error: string): void {
+    const job = this.queue.find((j) => j.job_id === jobId);
+    if (!job) return;
+    job.status = "failed";
+    job.error = error;
+    job.finished_at = new Date().toISOString();
+    this.executors.delete(jobId);
+    this.notifyListeners();
   }
 
   public setPlaybackState(active: boolean): void {
@@ -212,12 +238,8 @@ class AIJobQueueManager {
       // Pause non-critical running jobs immediately to dedicate 100% CPU/GPU to smooth 60fps playback
       this.queue.forEach((job) => {
         if (job.status === "running" && job.priority !== "P0") {
+          // The running executor keeps its own state; the queue only stops starting new work.
           job.status = "paused";
-          const timer = this.activeIntervals.get(job.job_id);
-          if (timer) {
-            clearInterval(timer);
-            this.activeIntervals.delete(job.job_id);
-          }
         }
       });
       this.isProcessing = false;
@@ -243,11 +265,7 @@ class AIJobQueueManager {
       if (resultMetadata) {
         job.metadata = { ...job.metadata, ...resultMetadata };
       }
-      const timer = this.activeIntervals.get(jobId);
-      if (timer) {
-        clearInterval(timer);
-        this.activeIntervals.delete(jobId);
-      }
+      this.executors.delete(jobId);
       this.notifyListeners();
       this.scheduleProcessing();
     }
@@ -257,7 +275,7 @@ class AIJobQueueManager {
     if (this.isProcessing) return;
     this.isProcessing = true;
 
-    const processNext = () => {
+    const processNext = async () => {
       if (this.isPlaybackActive) {
         this.isProcessing = false;
         return;
@@ -274,56 +292,61 @@ class AIJobQueueManager {
       }
 
       const job = pending[0];
+      const executor = this.executors.get(job.job_id);
+
+      if (!executor) {
+        // A job with no executor cannot do any work. It fails loudly instead of
+        // climbing to 100% on a timer and reporting a success that never happened.
+        job.status = "failed";
+        job.error = `Pre typ úlohy "${job.type}" nie je pripojený žiadny vykonávateľ.`;
+        job.finished_at = new Date().toISOString();
+        this.notifyListeners();
+        setTimeout(() => {
+          this.isProcessing = false;
+          this.scheduleProcessing();
+        }, 0);
+        return;
+      }
+
       job.status = "running";
       job.started_at = new Date().toISOString();
       this.notifyListeners();
 
-      let progress = job.progress || 0;
-      const stepTime = job.priority === "P1" ? 100 : job.priority === "P2" ? 200 : 350;
+      let reported = job.progress || 0;
+      const report = (progress: number) => {
+        if (this.isPlaybackActive) return;
+        // Progress is monotonic and capped below 100 until the work really finishes.
+        reported = Math.max(reported, Math.min(99, Math.round(progress)));
+        job.progress = reported;
+        this.notifyListeners();
+      };
 
-      const interval = setInterval(() => {
-        if (this.isPlaybackActive) {
-          clearInterval(interval);
-          this.activeIntervals.delete(job.job_id);
-          job.status = "paused";
+      try {
+        const resultMetadata = await executor(report);
+        job.status = "completed";
+        job.progress = 100;
+        if (resultMetadata) {
+          job.metadata = { ...job.metadata, ...resultMetadata };
+        }
+      } catch (err: any) {
+        job.status = "failed";
+        job.error = err?.message || String(err);
+      } finally {
+        job.finished_at = new Date().toISOString();
+        this.executors.delete(job.job_id);
+        this.notifyListeners();
+        setTimeout(() => {
           this.isProcessing = false;
-          this.notifyListeners();
-          return;
-        }
-
-        progress += Math.floor(Math.random() * 20) + 10;
-        if (progress >= 100) {
-          progress = 100;
-          clearInterval(interval);
-          this.activeIntervals.delete(job.job_id);
-          job.status = "completed";
-          job.progress = 100;
-          job.finished_at = new Date().toISOString();
-          this.notifyListeners();
-
-          // Yield thread briefly before starting next job
-          setTimeout(() => {
-            this.isProcessing = false;
-            this.scheduleProcessing();
-          }, 80);
-        } else {
-          job.progress = progress;
-          this.notifyListeners();
-        }
-      }, stepTime);
-
-      this.activeIntervals.set(job.job_id, interval);
+          this.scheduleProcessing();
+        }, 0);
+      }
     };
 
-    setTimeout(processNext, 50);
+    void processNext();
   }
 
   public cancelJob(jobId: string, reason = "Cancelled by user"): void {
-    const timer = this.activeIntervals.get(jobId);
-    if (timer) {
-      clearInterval(timer);
-      this.activeIntervals.delete(jobId);
-    }
+    this.executors.delete(jobId);
     const job = this.queue.find((j) => j.job_id === jobId);
     if (job) {
       job.status = "failed";
@@ -335,8 +358,7 @@ class AIJobQueueManager {
   }
 
   public cancelAllJobs(reason = "Cancelled all jobs"): void {
-    this.activeIntervals.forEach((timer) => clearInterval(timer));
-    this.activeIntervals.clear();
+    this.executors.clear();
     this.queue.forEach((job) => {
       if (job.status === "running" || job.status === "queued" || job.status === "paused") {
         job.status = "failed";
@@ -353,12 +375,8 @@ class AIJobQueueManager {
       // Pause non-realtime background jobs during scrubbing/interaction (P0 Priority)
       this.queue.forEach((job) => {
         if (job.status === "running" && job.priority !== "P0") {
+          // The running executor keeps its own state; the queue only stops starting new work.
           job.status = "paused";
-          const timer = this.activeIntervals.get(job.job_id);
-          if (timer) {
-            clearInterval(timer);
-            this.activeIntervals.delete(job.job_id);
-          }
         }
       });
       this.isProcessing = false;
@@ -378,15 +396,10 @@ class AIJobQueueManager {
   }
 
   public clearProjectJobs(projectId: string): void {
-    // Clear running timers for this project first
     this.queue
       .filter((j) => j.project_id === projectId)
       .forEach((j) => {
-        const timer = this.activeIntervals.get(j.job_id);
-        if (timer) {
-          clearInterval(timer);
-          this.activeIntervals.delete(j.job_id);
-        }
+        this.executors.delete(j.job_id);
       });
     this.queue = this.queue.filter((j) => j.project_id !== projectId);
     this.notifyListeners();
@@ -573,10 +586,21 @@ export const getProxyDimensions = (quality: "HIGH" | "MEDIUM" | "LOW", sourceWid
   };
 };
 
-export const generateProxyJob = async (projectId: string, sourceUrl: string, quality: ProxyQuality): Promise<string> => {
-  AIJobQueue.addJob(projectId, "PROXY_GENERATION", "P3");
-  // For the current phase, return the original source URL directly without fake delays
-  return sourceUrl;
+/**
+ * No proxy encoder is wired up yet, so the original file is returned unchanged.
+ * The returned metadata makes the passthrough explicit instead of reporting a
+ * finished proxy job that never produced a proxy.
+ */
+export const generateProxyJob = async (
+  projectId: string,
+  sourceUrl: string,
+  quality: ProxyQuality
+): Promise<{ url: string; isProxy: boolean; reason?: string }> => {
+  return {
+    url: sourceUrl,
+    isProxy: false,
+    reason: `Proxy generovanie (${quality}) nie je pripojené — používa sa originálny zdroj.`,
+  };
 };
 
 // --- IN-MEMORY LRU THUMBNAIL CACHE & LAZY CAPTURER ---
@@ -640,30 +664,48 @@ export const generateThumbnailJob = async (projectId: string, videoUrl: string, 
   const cached = ThumbnailCache.get(videoUrl, timestamp);
   if (cached) return cached;
 
-  AIJobQueue.addJob(projectId, "THUMBNAILS", "P2");
-
   try {
-    const thumb = await mediaEngineV1.getThumbnail(projectId, videoUrl, timestamp);
+    const thumb = await new Promise<string>((resolve, reject) => {
+      AIJobQueue.addJob(projectId, "THUMBNAILS", "P2", undefined, async (report) => {
+        report(10);
+        try {
+          const result = await mediaEngineV1.getThumbnail(projectId, videoUrl, timestamp);
+          report(100);
+          resolve(result || "");
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
     if (thumb) {
       ThumbnailCache.set(videoUrl, timestamp, thumb);
       return thumb;
     }
   } catch {
-    // fallback gracefully
+    // Thumbnail generation is best-effort; callers receive an empty string.
   }
   return "";
 };
 
 export const generateWaveformJob = async (projectId: string, videoUrl: string): Promise<number[]> => {
-  AIJobQueue.addJob(projectId, "WAVEFORM", "P2");
-
   try {
-    const peaks = await mediaEngineV1.getWaveform(projectId, videoUrl);
+    const peaks = await new Promise<number[]>((resolve, reject) => {
+      AIJobQueue.addJob(projectId, "WAVEFORM", "P2", undefined, async (report) => {
+        report(10);
+        try {
+          const result = await mediaEngineV1.getWaveform(projectId, videoUrl);
+          report(100);
+          resolve(result || []);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
     if (peaks && peaks.length > 0) {
       return peaks;
     }
   } catch {
-    // fallback gracefully
+    // Waveform generation is best-effort; callers receive a flat waveform.
   }
   return new Array(100).fill(0);
 };

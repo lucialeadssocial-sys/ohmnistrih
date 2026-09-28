@@ -1963,7 +1963,12 @@ process.on("unhandledRejection", (reason, promise) => {
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        // Requests arrive through a proxy, so the Host header is the public preview
+        // domain instead of localhost. Without this Vite rejects them with HTTP 403.
+        allowedHosts: true,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

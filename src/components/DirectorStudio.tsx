@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useCoreProject } from '../core';
+import { coreEngine, useCoreProject } from '../core';
 import { mediaIntelligenceEngine, MediaAnalysisIndex } from '../core/media/mediaIntelligenceIndex';
 import { directorEngine, DirectorBrief, DirectorEditPlan } from '../core/ai/directorEngine';
 import { directorToolRegistry } from '../ai/director/directorTools';
@@ -46,6 +46,12 @@ export const DirectorStudio: React.FC<{ isOpen: boolean; onClose: () => void }> 
   const [workflowPhase, setWorkflowPhase] = useState<'input' | 'plan' | 'rendering' | 'review' | 'revision'>('input');
   const [revisionPlan, setRevisionPlan] = useState<any | null>(null);
   const [renderProgress, setRenderProgress] = useState(0);
+  const [executionResult, setExecutionResult] = useState<{
+    success: boolean;
+    appliedCount: number;
+    skipped: { operationId: string; reason: string }[];
+    error?: string;
+  } | null>(null);
   const [planningStep, setPlanningStep] = useState<number>(0);
   const [planningLogs, setPlanningLogs] = useState<string[]>([]);
 
@@ -120,10 +126,14 @@ export const DirectorStudio: React.FC<{ isOpen: boolean; onClose: () => void }> 
       setRenderProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
-          const success = directorEngine.executeEditPlan(editPlan);
-          if (success) {
+
+          // Apply the approved operations to the canonical project through the Command
+          // System. Nothing is reported as executed unless a command actually ran.
+          const result = directorEngine.executeEditPlan(editPlan, coreEngine.commandManager);
+          if (result.appliedCount > 0) {
             setEditPlan({ ...editPlan, status: 'EXECUTED' });
           }
+          setExecutionResult(result);
 
           const rev = directorEngine.conductReview(editPlan, project, mediaIndex);
           setRevisionPlan(rev);
@@ -136,11 +146,17 @@ export const DirectorStudio: React.FC<{ isOpen: boolean; onClose: () => void }> 
   };
 
   const handleApplyRevision = () => {
-    if (!revisionPlan) return;
-    const success = directorEngine.executeEditPlan({
-      ...editPlan!,
-      operations: revisionPlan.suggestedOperations.map((o: any) => ({ ...o, status: 'APPROVED' }))
-    });
+    if (!revisionPlan || !editPlan) return;
+    // Revision operations run through the same canonical command path.
+    const result = directorEngine.executeEditPlan(
+      {
+        ...editPlan,
+        status: 'PROPOSED',
+        operations: revisionPlan.suggestedOperations.map((o: any) => ({ ...o, status: 'APPROVED' }))
+      },
+      coreEngine.commandManager
+    );
+    setExecutionResult(result);
     setWorkflowPhase('input');
     setBrief(null);
     setEditPlan(null);
@@ -340,9 +356,33 @@ export const DirectorStudio: React.FC<{ isOpen: boolean; onClose: () => void }> 
                   </div>
                 </div>
                 <span className="px-3 py-1 bg-emerald-950 text-emerald-400 font-mono text-[11px] font-bold rounded-lg border border-emerald-800">
-                  STATUS: {revisionPlan.report.issuesList.length > 0 ? "VYŽADUJE REVÍZIU" : "100% KVALITA"}
+                  STATUS: {revisionPlan.report.issuesList.length > 0 ? "VYŽADUJE REVÍZIU" : "BEZ ZISTENÍ"}
                 </span>
               </div>
+
+              {/* Truthful execution report — what actually changed on the timeline */}
+              {executionResult && (
+                <div className={`p-3 rounded-xl border text-xs ${executionResult.appliedCount > 0 ? 'bg-zinc-900 border-zinc-700' : 'bg-amber-950/30 border-amber-800/70'}`}>
+                  <p className="font-semibold text-zinc-200">
+                    {executionResult.appliedCount > 0
+                      ? `Aplikované operácie: ${executionResult.appliedCount}`
+                      : 'Na timeline nebola aplikovaná žiadna operácia'}
+                  </p>
+                  {executionResult.error && (
+                    <p className="text-amber-300 mt-1">{executionResult.error}</p>
+                  )}
+                  {executionResult.skipped.length > 0 && (
+                    <ul className="mt-2 space-y-0.5 text-zinc-400">
+                      {executionResult.skipped.slice(0, 4).map((s) => (
+                        <li key={s.operationId}>• {s.reason}</li>
+                      ))}
+                      {executionResult.skipped.length > 4 && (
+                        <li>• …a ďalších {executionResult.skipped.length - 4}</li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 

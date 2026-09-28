@@ -5,6 +5,8 @@ import { AddClipCommand, UpdateKeyframeCommand, UpdateClipPropsCommand } from '.
 
 export const MotionAcademy: React.FC = () => {
   const [activePracticeId, setActivePracticeId] = useState<string | null>(null);
+  // Progress counts lessons whose practice the user actually started in this session.
+  const [startedLessons, setStartedLessons] = useState<number[]>([]);
   const [comparisonResult, setComparisonResult] = useState<{ score: number; message: string } | null>(null);
 
   useEffect(() => {
@@ -32,6 +34,7 @@ export const MotionAcademy: React.FC = () => {
     const clipId = `practice_${crypto.randomUUID().slice(0, 8)}`;
     setActivePracticeId(clipId);
     setComparisonResult(null);
+    setStartedLessons(prev => (prev.includes(lessonId) ? prev : [...prev, lessonId]));
 
     const addCmd = new AddClipCommand(
       `Start Practice: ${lessons.find(l => l.id === lessonId)?.title}`,
@@ -122,7 +125,7 @@ export const MotionAcademy: React.FC = () => {
       <div className="flex justify-between items-center mb-4">
         <h2 className="font-black flex items-center gap-2"><BookOpen className="w-4 h-4 text-rose-500" /> MOTION ACADEMY</h2>
         <div className="px-2 py-0.5 bg-rose-950/50 text-rose-500 rounded-full text-[8px] font-bold border border-rose-900/50 flex items-center gap-1">
-          <GraduationCap className="w-2 h-2" /> 24% COMPLETE
+          <GraduationCap className="w-2 h-2" /> {startedLessons.length}/{lessons.length} LEKCIÍ SPUSTENÝCH
         </div>
       </div>
 

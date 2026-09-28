@@ -5,6 +5,11 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export const MulticamAcademy: React.FC = () => {
   const { project } = useCoreProject();
+  // Real count of angle decisions written to the canonical timeline by
+  // coreEngine.switchMulticamAngle (Multicam Viewer). No sample/AI score is invented.
+  const angleDecisions = project.tracks
+    .flatMap(t => t.clips)
+    .filter(c => !!c.multicamAngleId).length;
   const [activeLesson, setActiveLesson] = useState(0);
   const [practiceMode, setPracticeMode] = useState(false);
   const [score, setTrophyScore] = useState(0);
@@ -125,18 +130,18 @@ export const MulticamAcademy: React.FC = () => {
                 <div>
                    <h3 className="text-lg font-black text-white uppercase tracking-tight">Interactive Practice</h3>
                    <p className="text-xs text-zinc-400 max-w-xs mx-auto">
-                     Teraz prepínaj medzi uhlami v Multicam Vieweri počas prehrávania. AI Režisér ťa bude sledovať a hodnotiť tvoje rozhodnutia.
+                     Prepínaj uhly v Multicam Vieweri (Workspace → Multicam Viewer). Každá zmena uhla sa zapíše do časovej osi ako reálny Multicam klip.
                    </p>
                 </div>
                 
                 <div className="w-full grid grid-cols-2 gap-3 mt-4">
                    <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl">
-                      <span className="text-[9px] text-zinc-500 font-bold uppercase block">Tvoje strihy</span>
-                      <span className="text-xl font-mono text-white font-black">12</span>
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase block">Zmeny uhla na časovej osi</span>
+                      <span className="text-xl font-mono text-white font-black">{angleDecisions}</span>
                    </div>
                    <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl">
-                      <span className="text-[9px] text-zinc-500 font-bold uppercase block">AI Zhoda</span>
-                      <span className="text-xl font-mono text-emerald-400 font-black">84%</span>
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase block">AI porovnanie</span>
+                      <span className="text-[11px] text-zinc-500 font-bold block mt-1">NEMERANÉ — porovnanie rozhodnutí nie je implementované</span>
                    </div>
                 </div>
              </div>

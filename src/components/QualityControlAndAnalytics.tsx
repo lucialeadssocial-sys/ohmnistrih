@@ -32,6 +32,181 @@ import {
 } from "lucide-react";
 import { playSynthesizedSFX } from "../utils/audioSynth";
 import { INITIAL_QC_GATE_CHECKS, QCGateCheck } from "../data/qcGateChecksData";
+import { coreEngine } from "../core";
+import { RenderEngineManager } from "../utils/renderEngineManager";
+import { ClipModel, ProjectModel } from "../core/types/project";
+import { TimelineEngine } from "../core/timeline/timelineEngine";
+
+type QcGateEvaluation = { status: QCGateCheck["status"]; evidenceSk: string; evidenceEn: string };
+
+interface QcAuditFacts {
+  totalClips: number;
+  videoClips: number;
+  audioClips: number;
+  captionClips: number;
+  duration: number;
+  gaps: number;
+  overlaps: number;
+  gapDetails: string;
+  hasExport: boolean;
+  exportLabel: string;
+  analysisPauses: number;
+  analysisShots: number;
+  analysisScenes: number;
+  analysisHooks: number;
+  analysisCtas: number;
+  analysisBroll: number;
+  hasSpeechDensity: boolean;
+}
+
+const EMPTY_AUDIT_FACTS: QcAuditFacts = {
+  totalClips: 0, videoClips: 0, audioClips: 0, captionClips: 0, duration: 0,
+  gaps: 0, overlaps: 0, gapDetails: "", hasExport: false, exportLabel: "",
+  analysisPauses: 0, analysisShots: 0, analysisScenes: 0, analysisHooks: 0,
+  analysisCtas: 0, analysisBroll: 0, hasSpeechDensity: false,
+};
+
+const NO_MEASUREMENT_REASON = {
+  sk: "Táto brána nemá automatické meranie — vyžaduje manuálny podklad alebo dáta z EDL.",
+  en: "This gate has no automated measurement — it requires manual input or EDL evidence.",
+};
+
+/**
+ * Evaluates the QC gates from the canonical project and the real render history.
+ *
+ * No value in this function is invented: clip counts, durations, track gaps/overlaps and
+ * analysis counters are computed from the project, and export gates open only when an
+ * artifact with status COMPLETED and a real fileUrl exists. Gates whose measurement is not
+ * implemented (LUFS/peak, pixel safe zones, naturalness scoring, lock-aware EDL) are
+ * reported NOT_VERIFIED instead of PASS.
+ */
+function evaluateQcGates(project: ProjectModel, history: any[]): { evaluations: Record<string, QcGateEvaluation>; facts: QcAuditFacts } {
+  const tracks = project.tracks || [];
+  const clipsOf = (type: string) => tracks.filter(t => t.type === type).flatMap(t => t.clips || []);
+  const videoClips = clipsOf("video");
+  const audioClips = clipsOf("audio");
+  const captionClips = clipsOf("caption");
+  const totalClips = tracks.reduce((n, t) => n + (t.clips?.length || 0), 0);
+
+  let gaps = 0;
+  let overlaps = 0;
+  const gapSamples: string[] = [];
+  tracks.forEach(track => {
+    const sorted = [...(track.clips || [])].sort((a, b) => a.timelineStart - b.timelineStart);
+    for (let i = 1; i < sorted.length; i++) {
+      const previousEnd = sorted[i - 1].timelineStart + sorted[i - 1].duration;
+      const delta = sorted[i].timelineStart - previousEnd;
+      if (delta > 0.05) {
+        gaps++;
+        if (gapSamples.length < 3) gapSamples.push(`${track.name} @ ${sorted[i].timelineStart.toFixed(2)}s`);
+      } else if (delta < -0.05) {
+        overlaps++;
+      }
+    }
+  });
+
+  const artifact = (history || []).find((h: any) => h.status === "COMPLETED" && h.fileUrl);
+  const hasExport = !!artifact;
+  const analysis = project.analysisResults;
+  const duration = TimelineEngine.calculateProjectDuration(project);
+
+  const evaluations: Record<string, QcGateEvaluation> = {
+    "QC-01": {
+      status: "NOT_VERIFIED",
+      evidenceSk: "Projekt neuchováva informáciu o uzamknutých segmentoch, preto nemožno potvrdiť ich ochranu.",
+      evidenceEn: "The project stores no lock information, so lock protection cannot be confirmed.",
+    },
+    "QC-02": {
+      status: analysis?.pauses ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: analysis?.pauses ? `Analýza páz prebehla (${analysis.pauses.length} záznamov).` : "Analýza páz nebola spustená.",
+      evidenceEn: analysis?.pauses ? `Pause analysis ran (${analysis.pauses.length} entries).` : "Pause analysis has not been run.",
+    },
+    "QC-03": {
+      status: videoClips.length > 0 ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: `${videoClips.length} video klipov na časovej osi (${duration.toFixed(1)}s).`,
+      evidenceEn: `${videoClips.length} video clips on the timeline (${duration.toFixed(1)}s).`,
+    },
+    "QC-04": {
+      status: "NOT_VERIFIED",
+      evidenceSk: "Naturalness index nie je v aplikácii meraný.",
+      evidenceEn: "The naturalness index is not measured by the application.",
+    },
+    "QC-05": {
+      status: audioClips.length > 0 ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: `${audioClips.length} audio klipov na časovej osi.`,
+      evidenceEn: `${audioClips.length} audio clips on the timeline.`,
+    },
+    "QC-06": {
+      status: "NOT_VERIFIED",
+      evidenceSk: "Meranie LUFS/peaku vyžaduje analýzu audio bitstreamu (nie je implementovaná).",
+      evidenceEn: "LUFS/peak measurement requires audio bitstream analysis (not implemented).",
+    },
+    "QC-07": {
+      status: captionClips.length > 0 ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: `${captionClips.length} titulkových klipov.`,
+      evidenceEn: `${captionClips.length} caption clips.`,
+    },
+    "QC-08": {
+      status: hasExport ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: hasExport ? `Export existuje: ${artifact?.fileName || artifact?.id || "súbor"} (${artifact?.fileSize || "veľkosť neznáma"}).` : "Žiadny export nebol vytvorený.",
+      evidenceEn: hasExport ? `Export exists: ${artifact?.fileName || artifact?.id || "file"} (${artifact?.fileSize || "size unknown"}).` : "No export has been created.",
+    },
+    "QC-09": {
+      status: "NOT_VERIFIED",
+      evidenceSk: "Kontrola bezpečných zón vyžaduje pixelovú analýzu titulkov (nie je implementovaná).",
+      evidenceEn: "Safe-zone verification requires pixel analysis of captions (not implemented).",
+    },
+    "QC-10": {
+      status: hasExport ? "PASS" : "NOT_VERIFIED",
+      evidenceSk: hasExport ? `Overený súbor: ${artifact?.resolution}, ${artifact?.duration}s, ${artifact?.fps} fps.` : "Bez exportu nie je čo overiť.",
+      evidenceEn: hasExport ? `Verified file: ${artifact?.resolution}, ${artifact?.duration}s, ${artifact?.fps} fps.` : "Nothing to verify without an export.",
+    },
+  };
+
+  const facts: QcAuditFacts = {
+    totalClips,
+    videoClips: videoClips.length,
+    audioClips: audioClips.length,
+    captionClips: captionClips.length,
+    duration,
+    gaps,
+    overlaps,
+    gapDetails: gapSamples.join(", "),
+    hasExport,
+    exportLabel: hasExport
+      ? `${artifact?.fileName || artifact?.id || "export"} • ${artifact?.resolution || "?"} • ${artifact?.duration || "?"}s • ${artifact?.fps || "?"} fps`
+      : "",
+    analysisPauses: analysis?.pauses?.length || 0,
+    analysisShots: analysis?.shots?.length || 0,
+    analysisScenes: analysis?.scenes?.length || 0,
+    analysisHooks: analysis?.hooks?.length || 0,
+    analysisCtas: analysis?.ctas?.length || 0,
+    analysisBroll: analysis?.brollOpportunities?.length || 0,
+    hasSpeechDensity: !!analysis?.speechDensity,
+  };
+
+  return { evaluations, facts };
+}
+
+/**
+ * Applies gate evaluations to the 25-point grid. Gates without an automatic evaluation are
+ * explicitly marked NOT_VERIFIED so that no gate can inherit a hardcoded PASS from the data
+ * file after an audit.
+ */
+function applyGateEvaluations(checks: QCGateCheck[], evaluations: Record<string, QcGateEvaluation>): QCGateCheck[] {
+  return checks.map(check => {
+    const evaluation = evaluations[check.id];
+    if (evaluation) {
+      return { ...check, status: evaluation.status, evidenceSk: evaluation.evidenceSk, evidenceEn: evaluation.evidenceEn };
+    }
+    return {
+      ...check,
+      status: "NOT_VERIFIED" as const,
+      evidenceSk: NO_MEASUREMENT_REASON.sk,
+      evidenceEn: NO_MEASUREMENT_REASON.en,
+    };
+  });
+}
 
 export const QualityControlAndAnalytics: React.FC<{
   language: "sk" | "en";
@@ -46,6 +221,7 @@ export const QualityControlAndAnalytics: React.FC<{
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditStep, setAuditStep] = useState(0);
   const [hasAudited, setHasAudited] = useState(false);
+  const [auditFacts, setAuditFacts] = useState<QcAuditFacts>(EMPTY_AUDIT_FACTS);
   
   // Searching & Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -141,17 +317,14 @@ export const QualityControlAndAnalytics: React.FC<{
     "LOCK SHIELD STATUS: Neaktívny. Čaká na overenie."
   ]);
 
+  // Each step describes work that is really performed below — no invented measurements.
   const auditSteps = [
-    { sk: "Inicializácia vrstvy Quality Gate 2.0 a čítanie EDL...", en: "Initializing Quality Gate 2.0 layers & parsing EDL streams..." },
-    { sk: "Kontrola nedotknuteľnosti DO_NOTHING a USER LOCK segmentov...", en: "Asserting lock boundaries and DO_NOTHING protected zones..." },
-    { sk: "Analýza zvukovej vlny: Rozpoznávanie BAD SILENCE vs dramatické ticho...", en: "Waveform analysis: Segregating BAD SILENCE from dramatic pauses..." },
-    { sk: "Analýza rytmu: Skenovanie mechanických 3-sekundových strihov...", en: "Rhythm scan: Searching for robotic 3-second repetitive zoom patterns..." },
-    { sk: "Meranie indexu Naturalness (mikrostrihy, timing, dych)...", en: "Naturalness calculations (breath cuts, sentence flow, syllable overlap)..." },
-    { sk: "Kontrola zvukových mostíkov (L-cut / J-cut / Room Tone)...", en: "Checking audio continuity bridges (L-cuts, J-cuts, room tone matching)..." },
-    { sk: "Meranie vyváženia hlasitosti (Voice > Music > SFX)...", en: "Audio balance check: Verifying spoken voice priority over backing track..." },
-    { sk: "Kontrola zaťaženia časovej osi (Effect Stack Overload)...", en: "Timeline complexity audit: Checking concurrent layer overload limits..." },
-    { sk: "Validácia bezpečných zón (TikTok / Reels UI Safe Zones)...", en: "Social safe zones audit: Aligning overlays with Reels/TikTok UI vectors..." },
-    { sk: "Syntéza RenderPlan a overovanie finálneho Master exportu...", en: "Synthesizing final RenderPlan and simulating WebM container export..." }
+    { sk: "Načítavam canonical projekt a časovú os...", en: "Loading the canonical project & timeline..." },
+    { sk: "Počítam video, audio a titulkové klipy...", en: "Counting video, audio and caption clips..." },
+    { sk: "Kontrolujem medzery a presahy medzi klipmi...", en: "Checking clip gaps and overlaps on every track..." },
+    { sk: "Čítam históriu reálnych exportov...", en: "Reading the real export history..." },
+    { sk: "Vyhodnocujem 25 QC brán proti dostupným dôkazom...", en: "Evaluating the 25 QC gates against available evidence..." },
+    { sk: "Brány bez merateľných podkladov označujem NOT_VERIFIED...", en: "Marking gates without measurable evidence NOT_VERIFIED..." }
   ];
 
   const stressTestSteps = [
@@ -168,234 +341,304 @@ export const QualityControlAndAnalytics: React.FC<{
   ];
 
   // Run Standard Quality Gate Audit
+  /**
+   * Quality gate audit.
+   *
+   * The previous implementation animated ten scripted "measurement" steps, then flipped the
+   * whole UI to PASS without reading the project at all. This version runs the same visible
+   * steps while reading the canonical project and the render history, and every gate status
+   * comes from evaluateQcGates(). Gates the app cannot measure stay NOT_VERIFIED.
+   */
   const runQualityGateAudit = () => {
     setIsAuditing(true);
     setHasAudited(false);
     setAuditStep(0);
     playSynthesizedSFX("whoosh", 0.3);
 
+    const project = coreEngine.getProject();
+    const history = RenderEngineManager.getExportHistory("current-project");
+    const { evaluations, facts } = evaluateQcGates(project, history);
+
+    let step = 0;
     const interval = setInterval(() => {
-      setAuditStep((prev) => {
-        if (prev >= auditSteps.length - 1) {
-          clearInterval(interval);
-          setTimeout(() => {
-            setIsAuditing(false);
-            setHasAudited(true);
-            playSynthesizedSFX("cash", 0.5);
-            showToast(isSk ? "Audit Quality Gate dokončený!" : "Quality Gate audit completed!", "success");
-          }, 300);
-          return prev;
-        }
+      if (step < auditSteps.length - 1) {
+        step++;
+        setAuditStep(step);
         playSynthesizedSFX("pop", 0.2);
-        return prev + 1;
-      });
+        return;
+      }
+
+      clearInterval(interval);
+      setQcGateChecks(prevChecks => applyGateEvaluations(prevChecks, evaluations));
+      setAuditFacts(facts);
+      setIsAuditing(false);
+      setHasAudited(true);
+      playSynthesizedSFX("pop", 0.4);
+
+      const values = Object.values(evaluations);
+      const passed = values.filter(e => e.status === "PASS").length;
+      const notVerified = 25 - passed;
+      showToast(
+        isSk
+          ? `Audit dokončený: ${passed} brán PASS • ${notVerified} NOT_VERIFIED (bez merateľných podkladov).`
+          : `Audit finished: ${passed} gates PASS • ${notVerified} NOT_VERIFIED (no measurable evidence).`,
+        "info"
+      );
     }, 150);
   };
 
   // Run Real Output bitstream verification
-  const triggerPhysicalOutputTest = () => {
+  /**
+   * Physical output verification.
+   *
+   * The previous implementation "verified" a WebM file that never existed by writing
+   * hardcoded numbers (742s, 154.8 MB, VP9/Opus) into the UI. This version inspects an
+   * export that actually exists in the render history, reads its real byte size and
+   * container signature, and reports NOT_VERIFIED when there is nothing to inspect.
+   */
+  const triggerPhysicalOutputTest = async () => {
     setIsTestingOutput(true);
     playSynthesizedSFX("whoosh", 0.35);
 
-    setTimeout(() => {
+    const project = coreEngine.getProject();
+    const history = RenderEngineManager.getExportHistory("current-project");
+    const artifact = history.find((h: any) => h.status === "COMPLETED" && h.fileUrl);
+
+    if (!artifact || !artifact.fileUrl) {
+      // No real export exists yet — say so instead of inventing a verified file.
       setFileDetails({
-        exists: true,
-        duration: 742,
-        fps: 30,
-        width: 1080,
-        height: 1920,
-        container: "WebM Container (ebml parser checked)",
-        videoCodec: "VP9 Profile 0",
-        audioCodec: "Opus (Stereo, 48kHz)",
+        exists: false,
+        duration: 0,
+        fps: 0,
+        width: 0,
+        height: 0,
+        container: isSk ? "Žiadny export nebol vytvorený" : "No export has been created yet",
+        videoCodec: isSk ? "Neznáme" : "Unknown",
+        audioCodec: isSk ? "Neznáme" : "Unknown",
         corrupted: false,
-        sizeBytes: 154820104,
+        sizeBytes: 0,
       });
-
-      setExtractedFrames(prev =>
-        prev.map((f, idx) => ({
-          ...f,
-          status: idx === 5 ? "NOT_APPLICABLE" : "PASS",
-          detailsSk: idx === 5 ? "Funkcia PHOTO nebola v projekte použitá" : "Fyzická kontrola pixelov prebehla úspešne, bez chýb.",
-          detailsEn: idx === 5 ? "PHOTO track not used in current project" : "Pixel inspection matches layout margins perfectly."
-        }))
-      );
-
-      setVisualElements([
-        { element: "CUT", descriptionSk: "Fyzická zmena časovej osi.", descriptionEn: "Physical timeline offset match.", status: "PASS", evidenceSk: "24 čistých strihov s okamžitou obmenou obsahu frame-by-frame.", evidenceEn: "24 frame-accurate cuts verified." },
-        { element: "ZOOM", descriptionSk: "Mierka obrazu sa reálne zmenila.", descriptionEn: "Rendered canvas scale alteration.", status: "PASS", evidenceSk: "8 zoomov detegovaných s plynulou sínusovou interpoláciou.", evidenceEn: "8 zoom scaling transforms confirmed through frame tracking." },
-        { element: "CAPTION", descriptionSk: "Titulkový text vyrenderovaný v obraze.", descriptionEn: "Characters rasterized on screen.", status: "PASS", evidenceSk: "Textové polia sú fyzicky zlúčené do video bufferu.", evidenceEn: "Characters rasterized inside frame buffer with safety margins checked." },
-        { element: "KINETIC TEXT", descriptionSk: "Fyzické zmeny polohy a rotácie medzi frames.", descriptionEn: "Word position transforms verified.", status: "PASS", evidenceSk: "Zmena súradníc ohraničenia textu potvrdila plynulé posuny.", evidenceEn: "Kinetic translation matrices verified dynamically across 15 frames." },
-        { element: "B-ROLL", descriptionSk: "Sekundárne zábery prekryli talking head.", descriptionEn: "Visual stream switch verified.", status: "PASS", evidenceSk: "B-roll drone_nature.mp4 overený v trvaní 14.5s.", evidenceEn: "Drone overlay verified on tracks cleanly." },
-        { element: "PHOTO", descriptionSk: "Fotografie rasterizované do videa.", descriptionEn: "Static photos rasterized on screen.", status: "NOT_APPLICABLE", evidenceSk: "Žiadne fotografie v časovej osi", evidenceEn: "No static photos used" },
-        { element: "GRAPHIC", descriptionSk: "Overlay grafika a štatistiky.", descriptionEn: "Graphics overlaid on final master.", status: "PASS", evidenceSk: "Grafický panel 'performance_metrics.png' vyrenderovaný na 01:20.", evidenceEn: "Infographic panel correctly composited at timestamp 01:20." },
-        { element: "TRANSITION", descriptionSk: "Prechodové efekty sú prítomné.", descriptionEn: "Whip/fade transitions verified.", status: "PASS", evidenceSk: "Detegované prechodové snímky s motion rozostrením.", evidenceEn: "Transition frames identified with progressive pixel blending." },
-        { element: "COLLAGE", descriptionSk: "Zložené vrstvy sú zlúčené.", descriptionEn: "Multi-layered compositing verified.", status: "NOT_APPLICABLE", evidenceSk: "Koláže neboli v projekte využité", evidenceEn: "No collage layers active in current sequence" }
-      ]);
-
+      setExtractedFrames(prev => prev.map(f => ({
+        ...f,
+        status: "NOT_VERIFIED" as const,
+        detailsSk: "Bez reálneho exportu nie je možné overiť snímky.",
+        detailsEn: "Frames cannot be verified without a real export.",
+      })));
+      setVisualElements(prev => prev.map(el => ({
+        ...el,
+        status: "NOT_VERIFIED" as const,
+        evidenceSk: "Žiadny exportný súbor na kontrolu.",
+        evidenceEn: "No exported file to inspect.",
+      })));
       setAudioStreamDetails({
-        status: "PASS",
-        voicePresent: true,
-        musicPresent: true,
-        duckingDetected: true,
+        status: "NOT_VERIFIED",
+        voicePresent: false,
+        musicPresent: false,
+        duckingDetected: false,
         clippingDetected: false,
         audioGapsDetected: false,
-        audioBridgesActive: true,
-        continuityMatchesEDL: true,
-        noiseReductionDb: -18,
-        lufsLevel: -14,
-        peakDb: -0.1,
-        evidenceSk: "Hlas na -14 LUFS, peak -0.1 dBFS. Redukcia šumu -18dB. Hudba utlmená o -15dB počas reči. J-cuts/L-cuts plynulé.",
-        evidenceEn: "Dialogue peak at -0.1 dBFS, continuous -14 LUFS. Noise subtracted by -18dB. Music sidechain ducked by -15dB. No clicks."
+        audioBridgesActive: false,
+        continuityMatchesEDL: false,
+        noiseReductionDb: 0,
+        lufsLevel: 0,
+        peakDb: 0,
+        evidenceSk: "Bez exportu nie je možné zmerať audio bitstream.",
+        evidenceEn: "Audio bitstream cannot be measured without an export.",
       });
-
       setLockVerificationLog([
-        "USER LOCK CHECK: seg_user_02 - Úspešne uzamknuté (0 zmien)",
-        "USER LOCK CHECK: seg_int_08 - Úspešne uzamknuté (0 zmien)",
-        "DO_NOTHING CHECK: edl_lock_1 - Úspešne chránené (0 pridaných efektov)"
+        isSk
+          ? "LOCK SHIELD: neoverené — chýba reálny exportný súbor."
+          : "LOCK SHIELD: not verified — no real export file available.",
       ]);
-
-      setRealOutputVerified(true);
-      setRealAudioVerified(true);
-      setRealVisualVerified(true);
+      setRealOutputVerified(false);
+      setRealAudioVerified(false);
+      setRealVisualVerified(false);
       setIsTestingOutput(false);
       setHasTestedOutput(true);
+      showToast(
+        isSk
+          ? "Nie je čo overiť: najprv vytvorte export v Export Center."
+          : "Nothing to verify: create an export in the Export Center first.",
+        "warning"
+      );
+      return;
+    }
+
+    try {
+      // Inspect the real bytes of the exported artifact.
+      const response = await fetch(artifact.fileUrl);
+      const blob = await response.blob();
+      const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+      const isEbml = head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+      const isMp4 = head[1] === 0x66 && head[2] === 0x74 && head[3] === 0x79; // 'ftyp'
+
+      const [width, height] = (artifact.resolution || "0x0").split("x").map(n => parseInt(n, 10) || 0);
+
+      setFileDetails({
+        exists: true,
+        duration: artifact.duration,
+        fps: artifact.fps,
+        width,
+        height,
+        container: isEbml
+          ? "WebM/EBML (magic bytes overené)"
+          : isMp4
+          ? "MP4/ISOBMFF (ftyp overené)"
+          : (isSk ? "Neznámy kontajner" : "Unknown container"),
+        videoCodec: isSk ? "Neznáme (nezisťované z bitstreamu)" : "Unknown (not parsed from bitstream)",
+        audioCodec: isSk ? "Neznáme (nezisťované z bitstreamu)" : "Unknown (not parsed from bitstream)",
+        corrupted: blob.size === 0,
+        sizeBytes: blob.size,
+      });
+
+      setRealOutputVerified(blob.size > 0);
+
+      // Timeline inspection — derived from the canonical project, not from scripted copy.
+      const videoClips = project.tracks.filter(t => t.type === "video").flatMap(t => t.clips);
+      const captionClips = project.tracks.filter(t => t.type === "caption").flatMap(t => t.clips);
+      const brollClips = project.tracks.filter(t => t.type === "b-roll").flatMap(t => t.clips);
+      const hasTransitions = videoClips.some((c: ClipModel) => !!(c.transitions?.in || c.transitions?.out));
+      const hasMotion = videoClips.some(c => (c.keyframes?.length || 0) > 0 || c.scale !== 100);
+
+      const elementStatus = (active: boolean) => active ? "PASS" as const : "NOT_APPLICABLE" as const;
+      setVisualElements(prev => prev.map(el => {
+        switch (el.element) {
+          case "CUT":
+            return { ...el, status: elementStatus(videoClips.length > 1), evidenceSk: `${videoClips.length} video klipov na časovej osi.`, evidenceEn: `${videoClips.length} video clips on the timeline.` };
+          case "ZOOM":
+            return { ...el, status: elementStatus(hasMotion), evidenceSk: hasMotion ? "Aspoň jeden klip má zmenenú mierku alebo keyframes." : "Žiadny klip nemá zmenu mierky.", evidenceEn: hasMotion ? "At least one clip has a scale change or keyframes." : "No clip has a scale change." };
+          case "CAPTION":
+            return { ...el, status: elementStatus(captionClips.length > 0), evidenceSk: `${captionClips.length} titulkových klipov.`, evidenceEn: `${captionClips.length} caption clips.` };
+          case "B-ROLL":
+            return { ...el, status: elementStatus(brollClips.length > 0), evidenceSk: `${brollClips.length} B-roll klipov.`, evidenceEn: `${brollClips.length} B-roll clips.` };
+          case "TRANSITION":
+            return { ...el, status: elementStatus(hasTransitions), evidenceSk: hasTransitions ? "Na klipoch sú nastavené prechody." : "Žiadne prechody neboli nájdené.", evidenceEn: hasTransitions ? "Transitions are configured on clips." : "No transitions found." };
+          default:
+            return { ...el, status: "NOT_VERIFIED" as const, evidenceSk: "Vyžaduje pixelovú analýzu exportu (nie je implementovaná).", evidenceEn: "Requires pixel analysis of the export (not implemented)." };
+        }
+      }));
+
+      setAudioStreamDetails(prev => ({
+        ...prev,
+        status: "NOT_VERIFIED",
+        voicePresent: project.tracks.some(t => t.type === "audio" && t.clips.some(c => (c.volume ?? 100) > 0)),
+        musicPresent: false,
+        duckingDetected: false,
+        clippingDetected: project.tracks.some(t => t.type === "audio" && t.clips.some(c => (c.volume ?? 100) > 100 || (c.gain ?? 0) > 6)),
+        evidenceSk: "LUFS/peak neboli merané — vyžaduje audio analýzu exportu.",
+        evidenceEn: "LUFS/peak were not measured — requires audio analysis of the export.",
+      }));
+      setRealAudioVerified(false);
+      setRealVisualVerified(false);
+
+      setLockVerificationLog([
+        isSk
+          ? `Export overený: ${(blob.size / (1024 * 1024)).toFixed(2)} MB, ${artifact.fileName}.`
+          : `Export verified: ${(blob.size / (1024 * 1024)).toFixed(2)} MB, ${artifact.fileName}.`,
+        isSk
+          ? "Pixelová a audio analýza bitstreamu nie je implementovaná — zostáva NOT_VERIFIED."
+          : "Pixel and audio bitstream analysis is not implemented — remains NOT_VERIFIED.",
+      ]);
+
+      setHasTestedOutput(true);
       playSynthesizedSFX("cash", 0.5);
-      showToast(isSk ? "Reálny WebM bitstream bol overený!" : "Real WebM bitstream verified successfully!", "success");
-    }, 1200);
+      showToast(
+        isSk
+          ? "Reálny exportný súbor bol skontrolovaný (veľkosť + kontajner)."
+          : "The real exported file was checked (size + container).",
+        "success"
+      );
+    } catch (err: any) {
+      setHasTestedOutput(true);
+      setRealOutputVerified(false);
+      showToast(
+        isSk
+          ? `Export sa nepodarilo prečítať: ${err?.message || err}`
+          : `Could not read the export: ${err?.message || err}`,
+        "warning"
+      );
+    } finally {
+      setIsTestingOutput(false);
+    }
   };
 
   // Run E2E RAW Stress Test (Real Raw -> Final Video Pipeline)
+  /**
+   * Stress test / editorial gate audit.
+   *
+   * Previously this marked every QC gate "PASS" after a scripted animation and wrote a
+   * fabricated WebM (742s, 154.8 MB) into the output panel. Now each gate is evaluated
+   * against the canonical project and the real export history; anything that cannot be
+   * measured stays NOT_VERIFIED and says why.
+   */
   const handleRunStressTest = () => {
     setIsStressTesting(true);
     setStressTestStep(0);
     setStressTestLogs([]);
     playSynthesizedSFX("whoosh", 0.4);
 
+    const stages = stressTestSteps.map(s => s.stage);
+
+    let current = 0;
     const interval = setInterval(() => {
-      setStressTestStep((prev) => {
-        const nextStep = prev + 1;
-        if (nextStep >= stressTestSteps.length) {
-          clearInterval(interval);
-          setTimeout(() => {
-            // Trigger complete system update showing absolute PASS
-            setEdlVersion(2.0); // Version 2.0 (Stress Tested)
-            setQcGateChecks((prevChecks) =>
-              prevChecks.map((check) => ({
-                ...check,
-                status: "PASS" as const,
-                fixed: true,
-                evidenceSk: `STRESS TEST VERIFIED: Plne vyhovuje profesionálnym redakčným štandardom pre verziu EDL v2.0.`,
-                evidenceEn: `STRESS TEST VERIFIED: Met all professional editorial criteria for EDL version 2.0.`
-              }))
-            );
+      if (current < stages.length) {
+        const step = stressTestSteps[current];
+        setStressTestLogs(old => [...old, `[${step.stage}] ${isSk ? step.descSk : step.descEn}`]);
+        setStressTestStep(current);
+        current++;
+        return;
+      }
 
-            // Populate all verification panels
-            setFileDetails({
-              exists: true,
-              duration: 742,
-              fps: 30,
-              width: 1080,
-              height: 1920,
-              container: "WebM container (verified ebml structure)",
-              videoCodec: "VP9 Profile 0 (verified packets)",
-              audioCodec: "Opus Stereo (verified continuous frames)",
-              corrupted: false,
-              sizeBytes: 154820104,
-            });
+      clearInterval(interval);
 
-            // Update frame extraction lists based on RAW checks
-            setExtractedFrames([
-              { nameSk: "1. RAW-like Opening (Hook)", nameEn: "1. RAW-like Opening (Hook)", timestamp: "00:00.00", status: "PASS", detailsSk: "Nájdená tvár rečníka, vysoký kontrast, stabilná kompozícia, hluk -50dBFS", detailsEn: "Speaker face detected, high contrast ratio, stable talking head, background noise -50dBFS" },
-              { nameSk: "2. Prvý strih (First Cut)", nameEn: "2. First Cut", timestamp: "00:04.12", status: "PASS", detailsSk: "Rez sedí na nulovom prechode hlasovej sinusoidy, bez kliknutia", detailsEn: "Visual cut aligns perfectly to zero-crossing audio boundary, zero pop/click" },
-              { nameSk: "3. Prvý titulok (First Caption)", nameEn: "3. First Caption", timestamp: "00:08.15", status: "PASS", detailsSk: "Titulok 'OmniStrih' vyrenderovaný v bezpečnej zóne, žlté zvýraznenie", detailsEn: "Rasterized text 'OmniStrih' identified inside Instagram/TikTok vertical boundaries" },
-              { nameSk: "4. Prvý punch-in zoom", nameEn: "4. First Punch-In Zoom", timestamp: "00:12.18", status: "PASS", detailsSk: "Zväčšenie 115% na kľúčové slovo, plynulá sínusová interpolácia", detailsEn: "115% scale increase at core semantic word, smooth ease-in transition verified" },
-              { nameSk: "5. B-roll overlay", nameEn: "5. B-roll overlay", timestamp: "00:32.00", status: "PASS", detailsSk: "B-roll 'editing_studio_setup.mp4' úspešne načítaný a zobrazený", detailsEn: "Video track overlay 'editing_studio_setup.mp4' verified over talking head" },
-              { nameSk: "6. Fotografia (Photo Asset)", nameEn: "6. Photograph (Photo Asset)", timestamp: "00:41.10", status: "NOT_APPLICABLE", detailsSk: "Fotografia nebola v projekte dostupná (NOT_AVAILABLE)", detailsEn: "No photograph asset in current project context (NOT_AVAILABLE)" },
-              { nameSk: "7. Hustá sekvencia (Dense Section)", nameEn: "7. Dense Section", timestamp: "01:05.15", status: "PASS", detailsSk: "Prechod Whip-Spin zaznamenaný s lineárnym pohybovým rozmazaním", detailsEn: "Physical motion blur frames found matching whip transition duration" },
-              { nameSk: "8. Čistá sekvencia (Clean Section)", nameEn: "8. Clean Section (DO_NOTHING)", timestamp: "06:11.00", status: "PASS", detailsSk: "Čistý talking-head bez efektov, audio na -14 LUFS", detailsEn: "Midpoint keyframe: speaker centered, stable focus, dialogue amplitude -14 LUFS" },
-              { nameSk: "9. Emocionálna pauza", nameEn: "9. Emotional Pause", timestamp: "08:14.22", status: "PASS", detailsSk: "Dramatická pauza (1.8s) zachovaná s miernym zoomom bez rušivých prvkov", detailsEn: "Emotional silence (1.8s) fully verified, no accidental B-roll or effects" },
-              { nameSk: "10. Záver videa (Ending)", nameEn: "10. Ending Section", timestamp: "12:20.15", status: "PASS", detailsSk: "Outro grafika zlúčená s logom, plynulý fade-out do čiernej", detailsEn: "Fade out frames verified, signal drops to digital zero at 12:22" }
-            ]);
+      const project = coreEngine.getProject();
+      const history = RenderEngineManager.getExportHistory("current-project");
+      const { evaluations, facts } = evaluateQcGates(project, history);
 
-            setVisualElements([
-              { element: "CUT", descriptionSk: "Fyzická zmena časovej osi.", descriptionEn: "Physical timeline offset match.", status: "PASS", evidenceSk: "Zistených 32 čistých strihov s okamžitou obmenou obsahu frame-by-frame.", evidenceEn: "32 frame-accurate cuts verified." },
-              { element: "ZOOM", descriptionSk: "Mierka obrazu sa reálne zmenila.", descriptionEn: "Rendered canvas scale alteration.", status: "PASS", evidenceSk: "12 zoomov detegovaných s plynulou sínusovou interpoláciou.", evidenceEn: "12 zoom scaling transforms confirmed through geometric frame tracking." },
-              { element: "CAPTION", descriptionSk: "Titulkový text vyrenderovaný v obraze.", descriptionEn: "Characters rasterized on screen.", status: "PASS", evidenceSk: "Textové polia sú fyzicky zlúčené do video bufferu.", evidenceEn: "Characters rasterized inside frame buffer with safety margins checked." },
-              { element: "KINETIC TEXT", descriptionSk: "Fyzické zmeny polohy a rotácie medzi frames.", descriptionEn: "Word position transforms verified.", status: "PASS", evidenceSk: "Sledovanie zmeny súradníc ohraničenia textu potvrdilo plynulé posuny.", evidenceEn: "Kinetic translation matrices verified dynamically across 15 frames." },
-              { element: "B-ROLL", descriptionSk: "Sekundárne zábery prekryli talking head.", descriptionEn: "Visual stream switch verified.", status: "PASS", evidenceSk: "drone_nature.mp4 úspešne načítaný a vyrenderovaný na spoji.", evidenceEn: "Drone overlay verified on tracks cleanly." },
-              { element: "PHOTO", descriptionSk: "Fotografie rasterizované do videa.", descriptionEn: "Static photos rasterized on screen.", status: "NOT_APPLICABLE", evidenceSk: "Fotografie neboli v projekte dostupné (NOT_AVAILABLE)", evidenceEn: "No photograph asset in current project context (NOT_AVAILABLE)" },
-              { element: "GRAPHIC", descriptionSk: "Overlay grafika a štatistiky.", descriptionEn: "Graphics overlaid on final master.", status: "PASS", evidenceSk: "Grafický panel 'performance_metrics.png' vyrenderovaný na 01:20.", evidenceEn: "Infographic panel correctly composited at timestamp 01:20." },
-              { element: "TRANSITION", descriptionSk: "Prechodové efekty sú prítomné.", descriptionEn: "Whip/fade transitions verified.", status: "PASS", evidenceSk: "Detegované prechodové snímky s motion rozostrením.", evidenceEn: "Transition frames identified with progressive pixel blending." },
-              { element: "COLLAGE", descriptionSk: "Zložené vrstvy sú zlúčené.", descriptionEn: "Multi-layered compositing verified.", status: "NOT_APPLICABLE", evidenceSk: "Koláže neboli v projekte dostupné (NOT_AVAILABLE)", evidenceEn: "Collage layers not in current story sequence (NOT_AVAILABLE)" }
-            ]);
+      setQcGateChecks(prevChecks => applyGateEvaluations(prevChecks, evaluations));
+      setAuditFacts(facts);
 
-            setAudioStreamDetails({
-              status: "PASS",
-              voicePresent: true,
-              musicPresent: true,
-              duckingDetected: true,
-              clippingDetected: false,
-              audioGapsDetected: false,
-              audioBridgesActive: true,
-              continuityMatchesEDL: true,
-              noiseReductionDb: -18,
-              lufsLevel: -14,
-              peakDb: -0.1,
-              evidenceSk: "Hlas na -14 LUFS, peak -0.1 dBFS. Redukcia šumu -18dB. Hudba utlmená o -15dB počas reči. J-cuts/L-cuts plynulé.",
-              evidenceEn: "Dialogue peak at -0.1 dBFS, continuous -14 LUFS. Noise subtracted by -18dB. Music sidechain ducked by -15dB. No clicks."
-            });
+      setStressTestLogs(old => [
+        ...old,
+        isSk
+          ? `[SÚHRN] Trvanie timeline: ${facts.duration.toFixed(1)}s • video klipy: ${facts.videoClips} • audio klipy: ${facts.audioClips} • titulky: ${facts.captionClips} • medzery: ${facts.gaps} • presahy: ${facts.overlaps} • reálny export: ${facts.hasExport ? "áno" : "nie"}`
+          : `[SUMMARY] Timeline duration: ${facts.duration.toFixed(1)}s • video clips: ${facts.videoClips} • audio clips: ${facts.audioClips} • captions: ${facts.captionClips} • gaps: ${facts.gaps} • overlaps: ${facts.overlaps} • real export: ${facts.hasExport ? "yes" : "no"}`
+      ]);
 
-            setLockVerificationLog([
-              "USER LOCK CHECK: seg_user_02 - Úspešne uzamknuté (0 zmien)",
-              "USER LOCK CHECK: seg_int_08 - Úspešne uzamknuté (0 zmien)",
-              "DO_NOTHING CHECK: edl_lock_1 - Úspešne chránené (0 pridaných efektov)"
-            ]);
-
-            setRealOutputVerified(true);
-            setRealAudioVerified(true);
-            setRealVisualVerified(true);
-            setIsStressTesting(false);
-            setHasTestedOutput(true);
-            setHasAudited(true);
-            playSynthesizedSFX("cash", 0.9);
-            showToast(isSk ? "End-to-End Stress Test dokončený s výsledkom VERIFIED!" : "End-to-End Stress Test completed with VERIFIED result!", "success");
-          }, 300);
-          return prev;
-        }
-
-        const logMsg = isSk ? stressTestSteps[nextStep].descSk : stressTestSteps[nextStep].descEn;
-        setStressTestLogs((old) => [...old, `[${stressTestSteps[nextStep].stage}] ${logMsg}`]);
-        playSynthesizedSFX("pop", 0.2);
-        return nextStep;
-      });
+      setIsStressTesting(false);
+      setHasTestedOutput(true);
+      playSynthesizedSFX("pop", 0.4);
+      showToast(
+        isSk
+          ? "Kontrola dokončená — brány bez merateľných podkladov zostávajú NOT_VERIFIED."
+          : "Audit finished — gates without measurable evidence remain NOT_VERIFIED.",
+        "info"
+      );
     }, 450);
   };
 
+  /**
+   * Auto-fix is only allowed to flip a gate when a canonical command actually changed
+   * the project. The app has no automated fixers wired to the QC gates yet, so this
+   * reports that honestly instead of marking every gate PASS.
+   */
   const handleAutoFixAllSafe = () => {
-    playSynthesizedSFX("whoosh", 0.3);
-    showToast(isSk ? "Spúšťam bezpečný Auto-Fix s opätovnou verifikáciou..." : "Executing safe Auto-Fix with re-verification loop...", "info");
+    const fixable = qcGateChecks.filter(c => c.autoFixAvailable && c.status !== "PASS");
 
-    const nextVersion = Number((edlVersion + 0.1).toFixed(1));
-    setEdlVersion(nextVersion);
-
-    setTimeout(() => {
-      setQcGateChecks((prev) =>
-        prev.map((item) => {
-          if (item.autoFixAvailable && item.status !== "PASS") {
-            return {
-              ...item,
-              status: "PASS" as const,
-              fixed: true,
-              evidenceSk: `Upravené: Redakčný sentinel opravil položku pre EDL v${nextVersion}. Žiadny nový konflikt nevznikol.`,
-              evidenceEn: `Resolved: Editorial sentinel adjusted parameters for EDL v${nextVersion}. No new conflicts detected.`
-            };
-          }
-          return item;
-        })
+    if (fixable.length === 0) {
+      showToast(
+        isSk
+          ? "Žiadna brána nevyžaduje automatickú opravu."
+          : "No gate requires an automatic fix."
       );
-      playSynthesizedSFX("cash", 0.5);
-      showToast(isSk ? `EDL úspešne aktualizovaný na v${nextVersion}!` : `EDL updated to v${nextVersion}!`, "success");
-    }, 800);
+      return;
+    }
+
+    showToast(
+      isSk
+        ? `Automatické opravy pre ${fixable.length} brán nie sú pripojené na canonical commands — vyžadujú manuálny zásah.`
+        : `Automatic fixes for ${fixable.length} gates are not wired to canonical commands — manual action required.`
+    );
   };
 
   const handleAutoFixSingle = (id: string) => {
@@ -441,8 +684,13 @@ export const QualityControlAndAnalytics: React.FC<{
       });
     });
 
-    let evidenceSk = hasAudited ? `Všetkých ${passCount} bodov plne vyhovuje.` : "Čaká na prebehnutie auditu.";
-    let evidenceEn = hasAudited ? `All ${passCount} constraints fully met.` : "Awaiting audit execution.";
+    const notVerifiedCount = relevant.filter(r => r.status === "NOT_VERIFIED").length;
+    let evidenceSk = hasAudited
+      ? `${passCount} PASS • ${reviewCount + warningCount} na kontrolu • ${failCount} FAIL • ${notVerifiedCount} NOT_VERIFIED.`
+      : "Čaká na prebehnutie auditu.";
+    let evidenceEn = hasAudited
+      ? `${passCount} PASS • ${reviewCount + warningCount} to review • ${failCount} FAIL • ${notVerifiedCount} NOT_VERIFIED.`
+      : "Awaiting audit execution.";
 
     return {
       status: overallStatus,
@@ -465,15 +713,25 @@ export const QualityControlAndAnalytics: React.FC<{
     { id: "PLATFORM", nameSk: "PLATFORM (Platforma)", nameEn: "PLATFORM", categories: ["PLATFORM"], descSk: "Orez videa, platform safe zóny.", descEn: "Aspect crops, mobile safe zone grids." }
   ];
 
-  const getFinalVerificationStatus = () => {
-    const codeVerified = true;
-    const runtimeVerified = true;
-    const edlVerified = hasAudited;
-    const renderPlanVerified = hasAudited;
-    const realOutputOk = hasTestedOutput && realOutputVerified;
-    const editorialQcOk = hasAudited && !qcGateChecks.some(c => c.status !== "PASS");
+  const gateStats = {
+    pass: qcGateChecks.filter(c => c.status === "PASS").length,
+    notVerified: qcGateChecks.filter(c => c.status === "NOT_VERIFIED").length,
+    review: qcGateChecks.filter(c => c.status === "REVIEW" || c.status === "WARNING").length,
+    fail: qcGateChecks.filter(c => c.status === "FAIL").length,
+  };
 
-    if (codeVerified && runtimeVerified && edlVerified && renderPlanVerified && realOutputOk && editorialQcOk) {
+  /**
+   * The app cannot observe its own compile status, memory behaviour or encoder-buffer
+   * equality at runtime, so those rows are reported as NOT VERIFIED instead of hardcoded
+   * VERIFIED values.
+   */
+  const getFinalVerificationStatus = () => {
+    const edlChecked = hasAudited && auditFacts.totalClips > 0;
+    const edlClean = edlChecked && auditFacts.gaps === 0 && auditFacts.overlaps === 0;
+    const realOutputOk = hasTestedOutput && realOutputVerified;
+    const editorialQcOk = hasAudited && gateStats.notVerified === 0 && gateStats.review === 0 && gateStats.fail === 0 && gateStats.pass > 0;
+
+    if (edlClean && realOutputOk && editorialQcOk) {
       return "VERIFIED";
     } else if (hasAudited || hasTestedOutput) {
       return "PARTIAL";
@@ -633,8 +891,12 @@ export const QualityControlAndAnalytics: React.FC<{
         <div className="p-5 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block">VALIDITY LEVEL A</span>
-            <span className={`px-2 py-0.5 rounded text-[10px] font-black ${hasAudited ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35" : "bg-neutral-850 text-neutral-500"}`}>
-              {hasAudited ? "PASS" : "AWAITING AUDIT"}
+            <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
+              !hasAudited ? "bg-neutral-850 text-neutral-500" :
+              auditFacts.gaps === 0 && auditFacts.overlaps === 0 ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35" :
+              "bg-amber-500/15 text-amber-400 border border-amber-500/35"
+            }`}>
+              {!hasAudited ? "AWAITING AUDIT" : auditFacts.gaps === 0 && auditFacts.overlaps === 0 ? "PASS" : "REVIEW"}
             </span>
           </div>
           <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
@@ -648,10 +910,14 @@ export const QualityControlAndAnalytics: React.FC<{
           </p>
           {hasAudited ? (
             <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-850 font-mono text-[11px] text-neutral-300 space-y-1">
-              <div>✔ Chronology integrity: 100% continuous</div>
-              <div>✔ Gaps found: 0 (No black gaps)</div>
-              <div>✔ Overlaps found: 0 (Gapless cuts verified)</div>
-              <div className="text-indigo-400 mt-1">Status: TECHNICAL CHRONOLOGY PASSED</div>
+              <div>{isSk ? "Klipy na časovej osi" : "Clips on the timeline"}: {auditFacts.totalClips}</div>
+              <div>{isSk ? "Medzery medzi klipmi" : "Gaps found"}: {auditFacts.gaps}{auditFacts.gapDetails ? ` (${auditFacts.gapDetails})` : ""}</div>
+              <div>{isSk ? "Presahy klipov" : "Overlaps found"}: {auditFacts.overlaps}</div>
+              <div className={auditFacts.gaps === 0 && auditFacts.overlaps === 0 ? "text-emerald-400 mt-1" : "text-amber-400 mt-1"}>
+                {auditFacts.gaps === 0 && auditFacts.overlaps === 0
+                  ? (isSk ? "Status: bez medzier a presahov v rámci trackov" : "Status: no gaps or overlaps within tracks")
+                  : (isSk ? "Status: časová os vyžaduje kontrolu (viď počty vyššie)" : "Status: timeline needs review (see counts above)")}
+              </div>
             </div>
           ) : (
             <p className="text-xs text-neutral-500 font-mono italic">Awaiting EDL stream parsing...</p>
@@ -664,9 +930,13 @@ export const QualityControlAndAnalytics: React.FC<{
             <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block">VALIDITY LEVEL B</span>
             <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
               !hasAudited ? "bg-neutral-850 text-neutral-500" :
-              qcGateChecks.some(c => c.status === "WARNING" || c.status === "REVIEW") ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/35" : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35"
+              gateStats.fail > 0 ? "bg-rose-500/15 text-rose-400 border border-rose-500/35" :
+              gateStats.review > 0 || gateStats.notVerified > 0 ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/35" :
+              "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35"
             }`}>
-              {!hasAudited ? "AWAITING AUDIT" : qcGateChecks.some(c => c.status === "WARNING" || c.status === "REVIEW") ? "REVIEW REQUIRED" : "PASS"}
+              {!hasAudited ? "AWAITING AUDIT" :
+               gateStats.fail > 0 ? "FAIL" :
+               gateStats.review > 0 || gateStats.notVerified > 0 ? "REVIEW REQUIRED" : "PASS"}
             </span>
           </div>
           <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
@@ -680,10 +950,14 @@ export const QualityControlAndAnalytics: React.FC<{
           </p>
           {hasAudited ? (
             <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-850 font-mono text-[11px] text-neutral-300 space-y-1">
-              <div>✔ User Locks Honored: 100% preserved</div>
-              <div>✔ Speech Naturalness Index: 94/100</div>
-              <div>✔ Fillers & Bad Takes: Successfully filtered</div>
-              <div className="text-emerald-400 mt-1">Status: EDITORIAL QUALITY OK</div>
+              <div>{isSk ? "PASS brán" : "Gates PASS"}: {gateStats.pass} / 25</div>
+              <div>NOT_VERIFIED ({isSk ? "bez merania" : "no measurement"}): {gateStats.notVerified}</div>
+              <div>{isSk ? "Na kontrolu / FAIL" : "To review / FAIL"}: {gateStats.review} / {gateStats.fail}</div>
+              <div className="text-indigo-400 mt-1">
+                {isSk
+                  ? "Zámky používateľa a naturalness index: NOT_VERIFIED (aplikácia ich nemeria)"
+                  : "User locks and naturalness index: NOT_VERIFIED (not measured by the app)"}
+              </div>
             </div>
           ) : (
             <p className="text-xs text-neutral-500 font-mono italic">Awaiting semantic metrics calculation...</p>
@@ -706,9 +980,13 @@ export const QualityControlAndAnalytics: React.FC<{
             </p>
           </div>
           <span className={`px-3 py-1 rounded-xl font-mono text-[10px] font-black uppercase ${
-            hasTestedOutput ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35" : "bg-neutral-950 text-neutral-500 border border-neutral-850"
+            realOutputVerified ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/35" : "bg-neutral-950 text-neutral-500 border border-neutral-850"
           }`}>
-            {hasTestedOutput ? "VP9 / OPUS CONTAINER VERIFIED" : "AWAITING PHYSICAL EXPORT TEST"}
+            {realOutputVerified
+              ? (isSk ? "SYSTÉMOVÝ PODPIS KONTENERA OVERENÝ" : "CONTAINER SIGNATURE VERIFIED")
+              : hasTestedOutput
+              ? (isSk ? "NEÚSPEŠNÉ — ŽIADNY REÁLNY EXPORT" : "NOT VERIFIED — NO REAL EXPORT")
+              : (isSk ? "ČAKÁ NA FYZICKÝ TEST EXPORTU" : "AWAITING PHYSICAL EXPORT TEST")}
           </span>
         </div>
 
@@ -717,7 +995,11 @@ export const QualityControlAndAnalytics: React.FC<{
             <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-850 space-y-2">
               <span className="text-[9px] font-black text-neutral-400 uppercase tracking-widest block">CONTAINER FORMAT</span>
               <p className="text-sm font-bold text-white">{fileDetails.container}</p>
-              <span className="text-[10px] text-emerald-400 font-mono block">EBML structure OK • Non-empty</span>
+              <span className="text-[10px] text-emerald-400 font-mono block">
+                {fileDetails.sizeBytes > 0
+                  ? (isSk ? "Neprázdny payload — prečítaných " + fileDetails.sizeBytes + " B" : `Non-empty payload — ${fileDetails.sizeBytes} B read`)
+                  : (isSk ? "Prázdny súbor" : "Empty file")}
+              </span>
             </div>
 
             <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-850 space-y-2">
@@ -729,13 +1011,17 @@ export const QualityControlAndAnalytics: React.FC<{
             <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-850 space-y-2">
               <span className="text-[9px] font-black text-neutral-400 uppercase tracking-widest block">AUDIO STREAM SPECS</span>
               <p className="text-sm font-bold text-white">{fileDetails.audioCodec}</p>
-              <span className="text-[10px] text-emerald-400 font-mono block">Stereo • Sample Rate 48kHz</span>
+              <span className="text-[10px] text-neutral-500 font-mono block">
+                {isSk ? "Kodek ani vzorkovacia frekvencia sa z bitstreamu nečítajú" : "Codec and sample rate are not parsed from the bitstream"}
+              </span>
             </div>
 
             <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-850 space-y-2">
               <span className="text-[9px] font-black text-neutral-400 uppercase tracking-widest block">EXPORT VALIDATION</span>
               <p className="text-sm font-bold text-white">Size: {(fileDetails.sizeBytes / 1024 / 1024).toFixed(1)} MB</p>
-              <span className="text-[10px] text-emerald-400 font-mono block">100% Uncorrupted • {fileDetails.duration}s length</span>
+              <span className="text-[10px] text-emerald-400 font-mono block">
+                {fileDetails.corrupted ? (isSk ? "Prázdny súbor" : "Empty file") : (isSk ? "Podpis kontenera prítomný" : "Container signature present")} • {fileDetails.duration}s
+              </span>
             </div>
           </div>
         ) : (
@@ -1110,12 +1396,14 @@ export const QualityControlAndAnalytics: React.FC<{
                     OMNISTRIH QUALITY GATE 2.0 - FINAL REPORT
 ================================================================================
 DATE: ${new Date().toISOString()}
-EDL STATE: Version ${edlVersion.toFixed(1)} (Chronology verified gapless/overlap-free)
+EDL STATE: Version ${edlVersion.toFixed(1)} (check performed within track bounds, not a full EDL audit)
 --------------------------------------------------------------------------------
-CODE:                    VERIFIED (tsc compiled cleanly, 0 errors)
-RUNTIME:                 VERIFIED (Reactions secure, zero memory leaks)
-EDL:                     VERIFIED (Chronologically valid, 0 overlaps, 0 gaps)
-RENDER PLAN:             VERIFIED (RenderPlan matched encoder buffers)
+CODE:                    NOT VERIFIED HERE (compile/type-check is a build step; no runtime telemetry)
+RUNTIME:                 NOT VERIFIED HERE (no runtime counters are collected by this panel)
+EDL:                     ${hasAudited
+  ? `CHECKED (${auditFacts.totalClips} clips, ${auditFacts.gaps} gaps, ${auditFacts.overlaps} overlaps within tracks)`
+  : "AWAITING AUDIT"}
+RENDER PLAN:             NOT VERIFIED (RenderPlan is not compared against encoder buffers in this panel)
 REAL OUTPUT:             ${hasTestedOutput && realOutputVerified ? "VERIFIED (VP9 streams validated in EBML)" : "NOT_VERIFIED (Awaiting physical export check)"}
 AUDIO OUTPUT:            ${hasTestedOutput && realAudioVerified ? "VERIFIED (Opus bitstream at -14.0 LUFS)" : "NOT_VERIFIED (Awaiting physical export check)"}
 VISUAL OUTPUT:           ${hasTestedOutput && realVisualVerified ? "VERIFIED (Frames verified pixel-by-pixel)" : "NOT_VERIFIED (Awaiting physical export check)"}
