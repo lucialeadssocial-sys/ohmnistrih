@@ -17,6 +17,8 @@ import { editingBrain } from './src/core/ai/editingBrain';
 import { measureLoudness, normalizationGainDb } from './src/core/audio/loudness';
 import { TimelineEngine } from './src/core/timeline/timelineEngine';
 import { encodeWavFromPcm, computeRms, arrayBufferToBase64 } from './src/utils/audioExtraction';
+import { computeClipTransitionState, transitionProgress } from './src/core/render/transitionMath';
+import { buildReviewQueue, buildLearnedRules, isActionExecutable } from './src/core/ai/reviewQueue';
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -353,6 +355,131 @@ console.log('=== 13. No fabricated output in the remaining paths (source guard) 
   const trim = fs.readFileSync('src/components/editor/AdvancedTrimmingUI.tsx', 'utf8');
   check('trim studio has real roll wiring', trim.includes("coreEngine.rollClip("));
   check('trim studio no longer shows stock photos as clip previews', !trim.includes('picsum.photos'));
+}
+
+
+console.log('=== 14. Smart review queue and learned rules come from the project ===');
+{
+  // A fresh project has no plan and no observations: both lists must be empty (no placeholders).
+  const fresh = coreEngine.getProject();
+  check('review queue is empty without a Director plan', buildReviewQueue({ ...fresh, directorPlan: undefined }).length === 0);
+  check('learned rules are empty without observations', buildLearnedRules({ ...fresh, editingPreferences: [] }).length === 0);
+
+  const project = coreEngine.getProject();
+  const plan = project.directorPlan;
+  check('project has a Director plan from the earlier section', !!plan && (plan?.decisions.length ?? 0) > 0, `${plan?.decisions.length ?? 0} decisions`);
+
+  if (plan) {
+    const queue = coreEngine.listReviewQueue();
+    check('review queue lists the plan decisions', queue.length === plan.decisions.filter(d => !!d.proposedAction && d.status !== 'invalidated').length, `${queue.length} items`);
+    check('every queue row carries real confidence (0..1)', queue.every(i => i.confidence > 0 && i.confidence <= 1));
+    check('titles come from the structured action', queue.every(i => i.titleSk.length > 0 && i.titleEn.length > 0));
+    check('executability matches the executor', queue.every(i => i.executable === isActionExecutable(i.kind)));
+    check('pattern match is only shown for real observations', queue.every(i => i.patternMatch === undefined || (i.patternMatch >= 0 && i.patternMatch <= 100)));
+
+    // Reject one decision: it must be stored on the plan and observed by the Brain.
+    const target = queue[0];
+    const beforePrefs = (coreEngine.getProject().editingPreferences || []).find(p => p.category === 'PACING');
+    const beforeCount = beforePrefs?.evidenceCount ?? 0;
+    const rejected = coreEngine.decideOnReviewItem(target.id, 'REJECTED');
+    check('reject is accepted by the core', rejected.ok, rejected.reason);
+    check('reject does not apply any edit', rejected.applied === false);
+
+    const afterDecision = coreEngine.getProject().directorPlan?.decisions.find(d => d.id === target.id);
+    check('reject is stored on the plan decision', afterDecision?.status === 'rejected', `${afterDecision?.status}`);
+    const afterQueue = coreEngine.listReviewQueue();
+    check('review queue reflects the stored status', afterQueue.find(i => i.id === target.id)?.status === 'REJECTED');
+
+    const pacingCategory = target.kind === 'TRIM_RANGE' ? 'PACING' : null;
+    if (pacingCategory) {
+      const afterPrefs = (coreEngine.getProject().editingPreferences || []).find(p => p.category === 'PACING');
+      check('reject was observed by the Brain', (afterPrefs?.evidenceCount ?? 0) === beforeCount + 1, `${beforePrefs?.evidenceCount ?? 0} -> ${afterPrefs?.evidenceCount}`);
+    }
+
+    // Accept a non-executable decision: honest "recorded, not applied" answer.
+    const nonExecutable = queue.find(i => !i.executable);
+    if (nonExecutable) {
+      const accepted = coreEngine.decideOnReviewItem(nonExecutable.id, 'ACCEPTED');
+      check('accepting a non-executable decision is reported honestly', accepted.ok && accepted.applied === false && /manuál|manual/i.test(accepted.reason), accepted.reason);
+    } else {
+      console.log('SKIP  no non-executable decision in this plan');
+    }
+
+    // Learned rules mirror the real observations and their enabled flag.
+    const rules = coreEngine.listLearnedRules();
+    check('learned rules are built from observations', rules.length > 0 && rules.every(r => r.occurrences > 0), `${rules.length} rules`);
+    const rule = rules[0];
+    check('rule text reports the real observation count', rule.ruleSk.includes(`${rule.occurrences}×`) && rule.ruleEn.includes(`${rule.occurrences} observations`), rule.ruleSk);
+
+    const disabled = coreEngine.setPreferenceEnabled(rule.id, false);
+    check('a rule can be disabled on the canonical project', disabled === true);
+    const stillObservable = coreEngine.getProject().editingPreferences?.find(p => p.id === rule.id)?.enabled === false;
+    check('disabled rule is stored as disabled', stillObservable);
+    check('the Director no longer sees the disabled rule', editingBrain.describeObservation(coreEngine.getProject(), rule.category as any, 1) === null);
+    coreEngine.setPreferenceEnabled(rule.id, true);
+
+    check('unknown preference cannot be toggled', coreEngine.setPreferenceEnabled('does-not-exist', true) === false);
+    check('unknown review decision is refused', coreEngine.decideOnReviewItem('dir_dec_nope', 'ACCEPTED').ok === false);
+  }
+}
+
+console.log('=== 15. Transition maths really animates clips ===');
+{
+  const fs = await import('node:fs');
+  const clip = createCanonicalClip({
+    id: 'clip_transition', trackId: 'track_video', name: 'Fade clip', type: 'video',
+    timelineStart: 10, duration: 5,
+  });
+
+  const noTransition = computeClipTransitionState(clip, 12, 1920);
+  check('clip without transitions renders unchanged', noTransition.alpha === 1 && noTransition.scaleMultiplier === 1 && noTransition.offsetX === 0 && noTransition.reveal === null);
+
+  const fadeIn = { ...clip, transitions: { in: { type: 'fade' as const, duration: 1 } } };
+  check('fade-in at 25% gives 25% opacity', Math.abs(computeClipTransitionState(fadeIn, 10.25, 1920).alpha - 0.25) < 0.001, `${computeClipTransitionState(fadeIn, 10.25, 1920).alpha}`);
+  check('fade-in is finished after its duration', computeClipTransitionState(fadeIn, 11.5, 1920).alpha === 1);
+  check('fade-in is inactive before the clip starts', transitionProgress(fadeIn, 9.5, 'in') === null);
+
+  const fadeOut = { ...clip, transitions: { out: { type: 'fade' as const, duration: 2 } } };
+  check('fade-out at halfway gives 50% opacity', Math.abs(computeClipTransitionState(fadeOut, 14, 1920).alpha - 0.5) < 0.001, `${computeClipTransitionState(fadeOut, 14, 1920).alpha}`);
+  check('fade-out is finished before the window opens', computeClipTransitionState(fadeOut, 12, 1920).alpha === 1);
+
+  const wipe = { ...clip, transitions: { in: { type: 'wipeLeft' as const, duration: 1 } } };
+  const wipeState = computeClipTransitionState(wipe, 10.5, 1920);
+  check('wipe reveals half of the frame', wipeState.reveal?.from === 'left' && Math.abs(wipeState.reveal.progress - 0.5) < 0.001);
+
+  const zoom = { ...clip, transitions: { in: { type: 'zoomIn' as const, duration: 1 } } };
+  check('zoom-in starts below 100% and reaches it', Math.abs(computeClipTransitionState(zoom, 10.5, 1920).scaleMultiplier - 0.8) < 0.001);
+
+  const slide = { ...clip, transitions: { in: { type: 'slideLeft' as const, duration: 4 } } };
+  check('slide offsets the clip by the remaining width', Math.abs(computeClipTransitionState(slide, 11, 1920).offsetX - 1440) < 0.001, `${computeClipTransitionState(slide, 11, 1920).offsetX}`);
+
+  const cutTransition = { ...clip, transitions: { in: { type: 'cut' as const, duration: 1 } } };
+  check('a hard cut never animates', computeClipTransitionState(cutTransition, 10.1, 1920).alpha === 1 && transitionProgress(cutTransition, 10.1, 'in') === null);
+
+  const renderEngineSource = fs.readFileSync('src/core/render/renderEngine.ts', 'utf8');
+  check('the compositor applies the transition state', renderEngineSource.includes('computeClipTransitionState(clip, currentTime, width)') && renderEngineSource.includes('transitionState.offsetX'));
+}
+
+console.log('=== 16. Project storage: no invented ids, no wiped timelines ===');
+{
+  const fs = await import('node:fs');
+  const coreSource = fs.readFileSync('src/core/index.ts', 'utf8');
+  check('loadProject creates the project under the requested id', /const newProj: ProjectModel = \{ \.\.\.createInitialProject\(\), id: projectId \}/.test(coreSource));
+  check('stored projects can be opened without creating anything', coreSource.includes('public async openStoredProject(') && coreSource.includes('if (!stored) return null;'));
+  check('the current project can adopt a concrete id', coreSource.includes('public adoptProjectId(') && coreSource.includes('id: projectId,'));
+  check('a fresh project can be created explicitly', coreSource.includes('public startFreshProject('));
+
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  check('App opens the stored canonical project', app.includes('coreEngine.openStoredProject(canonicalId)'));
+  check('App never invents a project behind the user\'s back', !app.includes('coreEngine.loadProject(canonicalId)'));
+  check('App creates a real project for an unknown UI project', app.includes('coreEngine.startFreshProject(canonicalId, label)'));
+  check('review queue is read from the canonical project', app.includes('coreEngine.listReviewQueue()'));
+  check('review decisions are written through the core', app.includes('coreEngine.decideOnReviewItem('));
+  check('memory rules are the learned preferences', app.includes('coreEngine.listLearnedRules()'));
+  check('rule toggle goes through the core', app.includes('coreEngine.setPreferenceEnabled('));
+  check('no hard-coded review rows left in App', !app.includes('rev_1') && !/accepted by you in 87%/.test(app));
+  check('no hard-coded memory rules left in App', !app.includes('rule_1') && !app.includes('occurences'));
+  check('stale duplicate multi-export toast removed', !app.includes('All versions generated successfully') && !app.includes('Všetky verzie boli úspešne vygenerované'));
 }
 
 console.log('---');

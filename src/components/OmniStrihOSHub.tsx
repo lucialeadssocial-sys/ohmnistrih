@@ -187,7 +187,16 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                         {item.riskLevel}
                       </span>
                       <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{item.category}</span>
-                      <span className="text-[10px] font-black text-indigo-400">Pattern Match: {item.patternMatch}%</span>
+                      {typeof item.patternMatch === "number" ? (
+                        <span className="text-[10px] font-black text-indigo-400">
+                          {isSk ? "Zhoda so vzorcom" : "Pattern match"}: {item.patternMatch}%
+                          {item.evidenceCount ? <span className="text-neutral-500 font-bold"> · {item.evidenceCount}x</span> : null}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                          {isSk ? "Bez naučeného vzorca" : "No learned pattern"}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -226,6 +235,13 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                     <h4 className="text-sm font-black text-white uppercase tracking-tight">
                       {isSk ? item.titleSk : item.titleEn}
                     </h4>
+                    {item.status === "PENDING" && item.executable === false && (
+                      <p className="text-[10px] text-amber-400/90 mt-1">
+                        {isSk
+                          ? "Manuálny krok: schválením sa rozhodnutie uloží a zapamätá, AI ho však nevykoná automaticky."
+                          : "Manual step: accepting records and remembers the decision, the AI will not apply it automatically."}
+                      </p>
+                    )}
                   </div>
 
                   {/* Why did you change this? */}
@@ -240,6 +256,19 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                   </div>
                 </motion.div>
               ))}
+
+              {reviewItems.length === 0 && (
+                <div className="p-6 rounded-2xl bg-neutral-900/60 border border-dashed border-neutral-800 text-center">
+                  <p className="text-sm font-bold text-neutral-300">
+                    {isSk ? "Front je prázdny — žiadne AI návrhy na kontrolu." : "Queue is empty — no AI proposals to review."}
+                  </p>
+                  <p className="text-xs text-neutral-500 mt-1">
+                    {isSk
+                      ? "Vygenerujte AI Director plán (Director Plan Center) v editore; jeho rozhodnutia sa objavia tu."
+                      : "Generate an AI Director plan in the editor; its decisions will appear here."}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -303,6 +332,19 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                   </button>
                 </div>
               ))}
+
+              {memoryRules.length === 0 && (
+                <div className="p-6 rounded-2xl bg-neutral-900/60 border border-dashed border-neutral-800 text-center">
+                  <p className="text-sm font-bold text-neutral-300">
+                    {isSk ? "Brain si zatiaľ nič nezapamätal." : "The Brain has not learned anything yet."}
+                  </p>
+                  <p className="text-xs text-neutral-500 mt-1">
+                    {isSk
+                      ? "Schváľte alebo zamietnite AI návrhy (tu alebo v Director Plan Center) — každé rozhodnutie sa zapíše ako pozorovanie."
+                      : "Accept or reject AI proposals (here or in the Director Plan Center); every decision is stored as an observation."}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -409,6 +451,12 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
             </div>
           </div>
 
+          <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/30 text-xs text-amber-200/90">
+            {isSk
+              ? "Zámky zón nie sú prepojené so strihom — AI ani editor ich zatiaľ nerešpektujú a žiadne zóny nie sú definované (detekcia tváre/loga nie je implementovaná). Panel zámerne nezobrazuje vymyslené zóny."
+              : "Zone locks are not connected to the edit — neither the AI nor the editor respects them yet and no zones are defined (face/logo detection is not implemented). The panel deliberately shows no invented zones."}
+          </div>
+
           <div className="flex flex-col gap-3">
             {lockZones.map(zone => (
               <div key={zone.id} className="p-5 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-between gap-4">
@@ -436,6 +484,14 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                 </button>
               </div>
             ))}
+
+            {lockZones.length === 0 && (
+              <div className="p-6 rounded-2xl bg-neutral-900/60 border border-dashed border-neutral-800 text-center">
+                <p className="text-sm font-bold text-neutral-300">
+                  {isSk ? "Žiadne zóny nie sú definované." : "No zones are defined."}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -449,7 +505,7 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                 {isSk ? "One Source → Entire Content Universe" : "Content Universe Graph"}
               </h3>
               <p className="text-xs text-neutral-400">
-                {isSk ? "Z jedného RAW projektu vytvoril systém celý balík multi-platformových výstupov." : "System generated an entire universe of multi-platform outputs from one RAW source."}
+                {isSk ? "Čo projekt skutočne obsahuje: master timeline a exportné formáty definované na projekte." : "What the project really contains: the master timeline and the export formats defined on it."}
               </p>
             </div>
           </div>
@@ -471,6 +527,14 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                 {item.duration && <p className="text-[10px] text-neutral-500 font-bold">Duration: {item.duration}</p>}
               </div>
             ))}
+
+            {contentUniverse.length === 0 && (
+              <div className="p-6 rounded-2xl bg-neutral-900/60 border border-dashed border-neutral-800 text-center md:col-span-2 lg:col-span-3">
+                <p className="text-sm font-bold text-neutral-300">
+                  {isSk ? "Projekt zatiaľ nemá žiadny obsah." : "The project has no content yet."}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -502,8 +566,9 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
 
                 <button
                   onClick={() => {
+                    // The App reports the real outcome (stored snapshot vs. display-only entry);
+                    // claiming success here used to contradict that message.
                     onRestoreVersion(ver.id);
-                    showToast(isSk ? "Verzia bola úspešne obnovená." : "Version successfully restored.");
                   }}
                   className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5"
                 >
@@ -512,6 +577,19 @@ export const OmniStrihOSHub: React.FC<OmniStrihOSHubProps> = ({
                 </button>
               </div>
             ))}
+
+            {timeMachine.length === 0 && (
+              <div className="p-6 rounded-2xl bg-neutral-900/60 border border-dashed border-neutral-800 text-center">
+                <p className="text-sm font-bold text-neutral-300">
+                  {isSk ? "Žiadna uložená verzia projektu." : "No stored project version yet."}
+                </p>
+                <p className="text-xs text-neutral-500 mt-1">
+                  {isSk
+                    ? "Snapshoty vznikajú pri aplikovaní AI plánu a manuálnych zmenách — potom sa objavia tu."
+                    : "Snapshots are created when an AI plan is applied and on manual edits — they will appear here."}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

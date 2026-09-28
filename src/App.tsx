@@ -609,91 +609,138 @@ function MainApp() {
     return DEFAULT_EDIT_DNA_PROFILES[0];
   });
 
-  const [memoryRules, setMemoryRules] = useState<EditingMemoryRule[]>([
-    {
-      id: "rule_1",
-      ruleSk: "Používateľ preferuje ponechať pauzy pred emocionálnymi vyhláseniami (0.8–1.2s)",
-      ruleEn: "User prefers to keep pauses before emotional statements (0.8-1.2s)",
-      occurrences: 14,
-      confidence: 0.94,
-      isActive: true
-    },
-    {
-      id: "rule_2",
-      ruleSk: "Pri hookoch používa 108% punch-in zoom",
-      ruleEn: "Uses 108% punch-in zoom for hooks",
-      occurrences: 22,
-      confidence: 0.98,
-      isActive: true
-    },
-    {
-      id: "rule_3",
-      ruleSk: "B-roll pridáva iba pri abstraktných pojmoch, nie pri každej vete",
-      ruleEn: "Adds B-roll only on abstract concepts, not every sentence",
-      occurrences: 18,
-      confidence: 0.91,
-      isActive: true
+  /**
+   * Smart Review Queue — read straight from the canonical project's AI Director plan.
+   *
+   * The previous version showed three hard-coded rows with invented pattern-match percentages.
+   * Now the queue is rebuilt from `coreEngine.listReviewQueue()` whenever the project changes, and
+   * an empty queue is shown as empty (see OmniStrihOSHub) instead of a placeholder.
+   */
+  const [reviewItems, setReviewItems] = useState<ReviewDecisionItem[]>(() => coreEngine.listReviewQueue());
+
+  useEffect(() => {
+    const syncReview = () => setReviewItems(coreEngine.listReviewQueue());
+    syncReview();
+    const unsubscribe = coreEngine.commandManager.subscribe(syncReview);
+    return unsubscribe;
+  }, []);
+
+  /**
+   * Accepting applies the real edit through the Command System when the action is executable and
+   * records one Brain observation; rejecting only records the decision. Both outcomes are written
+   * into the canonical project (plan decision status + learning), never into local UI state only.
+   */
+  const handleReviewItem = (id: string, status: "ACCEPTED" | "REJECTED") => {
+    const result = coreEngine.decideOnReviewItem(id, status);
+    if (!result.ok) {
+      showToast(isSk ? `Návrh sa nevykonal: ${result.reason}` : `Proposal not applied: ${result.reason}`);
+      return;
     }
-  ]);
+    const prefix = status === "ACCEPTED"
+      ? (isSk ? "✅ Návrh prijatý" : "✅ Proposal accepted")
+      : (isSk ? "🚫 Návrh zamietnutý" : "🚫 Proposal rejected");
+    showToast(`${prefix} — ${result.reason}`);
+  };
 
-  const [reviewItems, setReviewItems] = useState<ReviewDecisionItem[]>([
-    {
-      id: "rev_1",
-      titleSk: "Odstránená pauza 0.72s + dokončená veta",
-      titleEn: "Removed pause 0.72s + completed sentence",
-      category: "CUT",
-      confidence: 0.94,
-      riskLevel: "SAFE",
-      whySk: "Podobné rezy boli schválené v 87% predchádzajúcich projektov.",
-      whyEn: "Similar cuts were accepted by you in 87% of previous projects.",
-      patternMatch: 87,
-      status: "PENDING"
-    },
-    {
-      id: "rev_2",
-      titleSk: "Automatický punch-in zoom 1.15x na kľúčovom slove",
-      titleEn: "Automatic punch-in zoom 1.15x on keyword",
-      category: "ZOOM",
-      confidence: 0.89,
-      riskLevel: "MODERATE",
-      whySk: "Váš Edit DNA profil vyžaduje vysokú frekvenciu zoomu pri dôrazoch.",
-      whyEn: "Your Edit DNA profile demands high zoom frequency on emphasis.",
-      patternMatch: 92,
-      status: "PENDING"
-    },
-    {
-      id: "rev_3",
-      titleSk: "Výmena originálneho záberu za B-roll grafiku trhu",
-      titleEn: "Replacement of original footage with market B-roll",
-      category: "BROLL",
-      confidence: 0.78,
-      riskLevel: "CRITICAL",
-      whySk: "Záber obsahuje tvár a lock zónu. Vyžaduje explicitné schválenie.",
-      whyEn: "Footage contains face & lock zone. Explicit review required.",
-      patternMatch: 45,
-      status: "PENDING"
+  /**
+   * Editing Memory rules — the real observations stored by the Editing Brain on the canonical
+   * project. No rule is shown until something was actually observed.
+   */
+  const [memoryRules, setMemoryRules] = useState<EditingMemoryRule[]>(() => coreEngine.listLearnedRules());
+
+  useEffect(() => {
+    const syncRules = () => setMemoryRules(coreEngine.listLearnedRules());
+    syncRules();
+    const unsubscribe = coreEngine.commandManager.subscribe(syncRules);
+    return unsubscribe;
+  }, []);
+
+  /** Disabling a rule really changes behaviour: the Director ignores disabled preferences. */
+  const handleToggleRule = (id: string) => {
+    const current = memoryRules.find(r => r.id === id);
+    if (!current) return;
+    const applied = coreEngine.setPreferenceEnabled(id, !current.isActive);
+    if (!applied) {
+      showToast(isSk ? "Pravidlo sa v projekte nenašlo." : "Rule was not found in the project.");
+      return;
     }
-  ]);
+    showToast(
+      current.isActive
+        ? (isSk ? "Pravidlo vypnuté — Director ho už nebude používať." : "Rule disabled — the Director will no longer use it.")
+        : (isSk ? "Pravidlo aktívne — Director ho použije pri ďalšom pláne." : "Rule active — the Director will use it on the next plan.")
+    );
+  };
 
-  const [lockZones, setLockZones] = useState<LockZone[]>([
-    { id: "l_1", type: "FACE", labelSk: "Tvár rečníka (hlavná kamera)", labelEn: "Speaker face (main camera)", timeRange: "00:00 - 05:42", isLocked: true },
-    { id: "l_2", type: "SENTENCE", labelSk: "Záverečná výzva k odberu", labelEn: "Final CTA sentence", timeRange: "05:10 - 05:35", isLocked: true },
-    { id: "l_3", type: "BRAND", labelSk: "Logo watermark v pravom rohu", labelEn: "Logo watermark in bottom right", isLocked: true }
-  ]);
+  /**
+   * Lock zones.
+   *
+   * Empty on purpose: the three zones that used to be listed here were invented (a face, a CTA
+   * sentence and a logo that no detector ever found) and nothing in the editor respected them.
+   * The OS Hub states this openly instead of showing fake protection.
+   */
+  const [lockZones, setLockZones] = useState<LockZone[]>([]);
 
-  const [timeMachine, setTimeMachine] = useState<TimeMachineVersion[]>([
-    { id: "tm_3", timestamp: "14:12", actionSk: "AI Shadow Editor Cut Optimization", actionEn: "AI Shadow Editor Cut Optimization", author: "AI" },
-    { id: "tm_2", timestamp: "14:05", actionSk: "Manuálna úprava pauzy rečníka", actionEn: "Manual speaker pause adjustment", author: "USER" },
-    { id: "tm_1", timestamp: "13:50", actionSk: "Import RAW projektu a inicializácia", actionEn: "Import RAW project & initialization", author: "AI" }
-  ]);
+  /**
+   * UI action log of the OS Hub.
+   *
+   * Starts EMPTY on purpose: the three rows that used to be hard-coded here ("AI Shadow Editor Cut
+   * Optimization", "Manuálna úprava pauzy rečníka", "Import RAW projektu") were invented history.
+   * Real project snapshots from the Command System are merged in from `projectVersions` instead.
+   */
+  const [timeMachine, setTimeMachine] = useState<TimeMachineVersion[]>([]);
 
-  const [contentUniverse, setContentUniverse] = useState<ContentUniverseItem[]>([
-    { id: "cu_1", type: "LONG", titleSk: "Hlavné YouTube video (Master Story)", titleEn: "Main YouTube Video (Master Story)", status: "READY", duration: "05:42" },
-    { id: "cu_2", type: "SHORT", titleSk: "TikTok Viral Short #1 (Hook Focus)", titleEn: "TikTok Viral Short #1 (Hook Focus)", status: "READY", duration: "00:45" },
-    { id: "cu_3", type: "SHORT", titleSk: "Instagram Reel #2 (Secret Trick)", titleEn: "Instagram Reel #2 (Secret Trick)", status: "READY", duration: "00:30" },
-    { id: "cu_4", type: "QUOTE", titleSk: "Quote Clip pre LinkedIn", titleEn: "Quote Clip for LinkedIn", status: "READY", duration: "00:20" },
-    { id: "cu_5", type: "THUMBNAIL", titleSk: "3x AI Thumbnail Clickbait Concepts", titleEn: "3x AI Thumbnail Clickbait Concepts", status: "READY" }
-  ]);
+  /**
+   * Content Universe — derived from what the project really contains: the master timeline and the
+   * export formats defined on it. Nothing is listed as READY unless the timeline really has clips.
+   */
+  const buildContentUniverse = (): ContentUniverseItem[] => {
+    const project = coreEngine.getProject();
+    const clipCount = project.tracks.reduce((sum, t) => sum + t.clips.length, 0);
+    const timelineDuration = TimelineEngine.calculateProjectDuration(project);
+    const fmt = (seconds: number) =>
+      `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+
+    const items: ContentUniverseItem[] = [
+      {
+        id: "universe_master",
+        type: "LONG",
+        titleSk: `Master timeline — ${project.title}`,
+        titleEn: `Master timeline — ${project.title}`,
+        status: clipCount > 0 ? "READY" : "NEEDS_REVIEW",
+        duration: clipCount > 0 ? fmt(timelineDuration) : undefined,
+      },
+    ];
+
+    for (const preset of project.exportPresets || []) {
+      const type: ContentUniverseItem["type"] =
+        preset.presetType === "tiktok" || preset.presetType === "instagram_reels"
+          ? "SHORT"
+          : preset.presetType === "youtube"
+            ? "LONG"
+            : "PROMO";
+      items.push({
+        id: `universe_preset_${preset.id}`,
+        type,
+        titleSk: `${preset.name} (${preset.resolution.width}×${preset.resolution.height} @ ${preset.fps}fps)`,
+        titleEn: `${preset.name} (${preset.resolution.width}×${preset.resolution.height} @ ${preset.fps}fps)`,
+        // Defined format, not exported yet — per-preset exports are not tracked, so do not claim READY.
+        status: "NEEDS_REVIEW",
+        duration: clipCount > 0 ? fmt(timelineDuration) : undefined,
+      });
+    }
+
+    return items;
+  };
+
+  const [contentUniverse, setContentUniverse] = useState<ContentUniverseItem[]>(() => buildContentUniverse());
+
+  useEffect(() => {
+    const syncUniverse = () => setContentUniverse(buildContentUniverse());
+    syncUniverse();
+    const unsubscribe = coreEngine.commandManager.subscribe(syncUniverse);
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [audioProject, setAudioProject] = useState<AudioProject>({
     id: "audio-001",
@@ -1023,19 +1070,6 @@ function MainApp() {
     }, 4500);
   };
 
-  useEffect(() => {
-    if (isExportingMulti) {
-      const enabled = multiExportProject.configs.filter(c => c.isEnabled);
-      const allDone = enabled.length > 0 && enabled.every(c => c.status === "COMPLETED");
-      if (allDone) {
-        setIsExportingMulti(false);
-        setMultiExportProject(prev => ({ ...prev, isExporting: false }));
-        showToast(isSk ? "✅ Všetky verzie boli úspešne vygenerované!" : "✅ All versions generated successfully!");
-        playSynthesizedSFX("ding", 0.8);
-      }
-    }
-  }, [multiExportProject, isExportingMulti, isSk]);
-
   /**
    * Multi-platform export.
    *
@@ -1129,6 +1163,9 @@ function MainApp() {
 
     setIsExportingMulti(false);
     setMultiExportProject(prev => ({ ...prev, isExporting: false }));
+    if (produced > 0 && produced === enabledConfigs.length) {
+      playSynthesizedSFX("ding", 0.8);
+    }
     showToast(
       produced > 0
         ? (isSk ? `Vygenerovaných ${produced} z ${enabledConfigs.length} verzií.` : `Generated ${produced} of ${enabledConfigs.length} versions.`)
@@ -1557,8 +1594,13 @@ function MainApp() {
     let cancelled = false;
     void (async () => {
       try {
-        const project = await coreEngine.loadProject(canonicalId);
+        const stored = await coreEngine.openStoredProject(canonicalId);
         if (cancelled) return;
+
+        // No stored version for this UI project yet: adopt the linked id so the very first save
+        // lands under it. (loadProject used to create a project with a random id instead, which
+        // saved the work under an id nothing ever reopened.)
+        const project = stored || coreEngine.adoptProjectId(canonicalId, projects.find(p => p.id === activeProjectId)?.name);
         const clipCount = project.tracks.reduce((sum, t) => sum + t.clips.length, 0);
 
         // Proxy preview (opt-in via the media panel toggle) is applied on startup too.
@@ -1785,10 +1827,25 @@ function MainApp() {
       setProjects(prev => prev.map(p => (p.id === projId ? { ...p, canonicalId } : p)));
     }
 
+    const label = projName || uiProject?.name || canonicalId;
+
     try {
-      const loaded = await coreEngine.loadProject(canonicalId);
+      // Reads what is really stored — no project is created behind the user's back.
+      const stored = await coreEngine.openStoredProject(canonicalId);
+      if (!stored) {
+        // Explicit user action on an unknown project: create a real empty project under this id
+        // (previously loadProject invented one with a random id, so the link never became valid).
+        coreEngine.startFreshProject(canonicalId, label);
+        showToast(
+          isSk
+            ? `Pre „${label}" nie je uložená verzia — založený nový prázdny projekt (${canonicalId}).`
+            : `No stored version for "${label}" — created a new empty project (${canonicalId}).`
+        );
+        return { loaded: true, clipCount: 0 };
+      }
+
+      const loaded = stored;
       const clipCount = loaded.tracks.reduce((sum, t) => sum + t.clips.length, 0);
-      const label = projName || uiProject?.name || canonicalId;
 
       // If proxy preview is enabled and this project has a ready proxy, use it for playback.
       if (localStorage.getItem("omnistrih_use_proxy") === "true") {
@@ -4326,13 +4383,13 @@ function MainApp() {
                     {activeTab === "opus" && <OpusStudio virality={{ overallScore: 92, hookScore: 90, pacingScore: 88, retentionScore: 94, trendScore: 91, keyReasons: ["Strong hook", "Fast pacing"], suggestedHashtags: ["#viral", "#trending"], suggestedTitle: "Viral Video", suggestedDescription: "Amazing video" }} smartClips={[]} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />}
                     {activeTab === "canva" && <CanvaAudioSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} onApplyCategoryPreset={(cat) => setSettings((prev: any) => ({ ...prev, category: cat }))} language={language} />}
                     {activeTab === "thumbnail" && <AIThumbnailStudio project={thumbnailProject} rawAnalysis={rawAnalysis} isGenerating={isGeneratingThumbnails} onUpdateProject={setThumbnailProject} onGenerateConcepts={handleGenerateThumbnailConcepts} language={language} showToast={showToast} />}
-                    {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={(id) => setMemoryRules(prev => prev.map(r => r.id === id ? { ...r, isActive: !r.isActive } : r))} reviewItems={reviewItems} onReviewItem={(id, status) => setReviewItems(prev => prev.map(i => i.id === id ? { ...i, status } : i))} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={[
+                    {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={handleToggleRule} reviewItems={reviewItems} onReviewItem={handleReviewItem} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={[
                         ...projectVersions.map(v => ({
                           id: `ver_${v.id}`,
                           timestamp: new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                           actionSk: `Snapshot: ${v.label}`,
                           actionEn: `Snapshot: ${v.label}`,
-                          author: "USER" as const,
+                          author: "SYSTEM" as const,
                         })),
                         ...timeMachine,
                       ]} onRestoreVersion={handleRestoreVersion} contentUniverse={contentUniverse} language={language} showToast={showToast} />}

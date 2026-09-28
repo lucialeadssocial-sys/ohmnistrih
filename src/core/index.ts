@@ -63,7 +63,8 @@ export * from './ai';
 import { analysisEngine } from './ai/analysisEngine';
 import { directorEngine } from './ai/directorEngine';
 import { editingBrain } from './ai/editingBrain';
-import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
+import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, DirectorDecisionItem, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
+import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildLearnedRules, isActionExecutable } from './ai/reviewQueue';
 import type { EditingPreference } from './types/project';
 
 // Default initial project factory with canonical tracks
@@ -179,16 +180,60 @@ export class CoreEngine {
     return this.commandManager.getProject();
   }
 
+  /**
+   * Loads a project and makes it current. When nothing is stored under `projectId`, a new empty
+   * project is created **with that exact id** (and saved under it) — otherwise the caller's link
+   * would point at an id that never exists in storage.
+   */
   public async loadProject(projectId: string): Promise<ProjectModel> {
     const loaded = await idbManager.getProject(projectId);
     if (loaded) {
       this.commandManager.setProject(loaded);
       return loaded;
     }
-    const newProj = createInitialProject();
+    const newProj: ProjectModel = { ...createInitialProject(), id: projectId };
     await idbManager.saveProject(newProj);
     this.commandManager.setProject(newProj);
+    console.log(`[CoreEngine] Žiadny uložený projekt pre "${projectId}" — vytvorený nový prázdny projekt s týmto ID.`);
     return newProj;
+  }
+
+  /**
+   * Opens a STORED project without creating anything. Returns null when the id is unknown, so the
+   * UI can decide what to do instead of silently replacing the open timeline with an empty one.
+   */
+  public async openStoredProject(projectId: string): Promise<ProjectModel | null> {
+    const stored = await idbManager.getProject(projectId);
+    if (!stored) return null;
+    this.commandManager.setProject(stored);
+    return stored;
+  }
+
+  /**
+   * Renames the current in-memory project to a concrete id and saves it.
+   *
+   * Used when a UI project has no stored canonical project yet: adopting the id keeps the open
+   * timeline AND makes the first save land under the linked id, so the project is reopened next time.
+   */
+  public adoptProjectId(projectId: string, title?: string): ProjectModel {
+    const current = this.getProject();
+    const adopted: ProjectModel = {
+      ...current,
+      id: projectId,
+      title: title || current.title,
+      updatedAt: Date.now(),
+    };
+    this.commandManager.setProject(adopted);
+    void this.saveCurrentProject();
+    return adopted;
+  }
+
+  /** Creates a brand-new empty canonical project with a specific id (explicit user action). */
+  public startFreshProject(projectId: string, title?: string): ProjectModel {
+    const fresh: ProjectModel = { ...createInitialProject(title), id: projectId };
+    this.commandManager.setProject(fresh);
+    void this.saveCurrentProject();
+    return fresh;
   }
 
   public async saveCurrentProject(): Promise<void> {
@@ -713,18 +758,116 @@ export class CoreEngine {
 
   /** Maps a Director proposed action kind to an Editing Brain preference category. */
   private static preferenceCategoryForProposedAction(kind: DirectorProposedAction['kind']): EditingPreference['category'] | null {
-    switch (kind) {
-      case 'PUNCH_IN': return 'MOTION';
-      case 'TRIM_RANGE': return 'PACING';
-      case 'MULTICAM_SWITCH': return 'CUTTING';
-      case 'BROLL_INSERT': return 'BROLL';
-      case 'CAPTION_EMPHASIS': return 'CAPTIONS';
-      case 'AUDIO_DUCK': return 'AUDIO';
-      case 'COLOR_BALANCE': return 'COLOR';
-      case 'TRANSITION': return 'TRANSITIONS';
-      // MANUAL_ONLY is education only — nothing to learn about executed edits from it.
-      default: return null;
+    // Single source of truth: see core/ai/reviewQueue.ts (REVIEW_KIND_MAP).
+    return REVIEW_KIND_MAP[kind]?.preference ?? null;
+  }
+
+  // --- SMART REVIEW QUEUE (OS Hub) ---
+
+  /** Real review queue built from the project's AI Director plan. Empty when there is no plan. */
+  public listReviewQueue(): ReviewQueueItem[] {
+    return buildReviewQueue(this.getProject());
+  }
+
+  /** Learned Editing Brain rules of the canonical project (empty until something was observed). */
+  public listLearnedRules(): LearnedRule[] {
+    return buildLearnedRules(this.getProject());
+  }
+
+  /** Enables/disables one learned rule. A disabled rule is ignored by the Director. */
+  public setPreferenceEnabled(preferenceId: string, enabled: boolean): boolean {
+    const project = this.getProject();
+    const preferences = project.editingPreferences || [];
+    if (!preferences.some(p => p.id === preferenceId)) return false;
+
+    this.commandManager.setProject({
+      ...project,
+      editingPreferences: preferences.map(p => (p.id === preferenceId ? { ...p, enabled, updatedAt: Date.now() } : p)),
+      updatedAt: Date.now(),
+    });
+    void this.saveCurrentProject();
+    return true;
+  }
+
+  /** Stores the review outcome on the plan decision itself (the review trail). */
+  private setPlanDecisionStatus(decisionId: string, status: DirectorDecisionItem['status']): boolean {
+    const project = this.getProject();
+    const plan = project.directorPlan;
+    if (!plan) return false;
+
+    let found = false;
+    const decisions = plan.decisions.map(decision => {
+      if (decision.id !== decisionId) return decision;
+      found = true;
+      return { ...decision, status };
+    });
+    if (!found) return false;
+
+    this.commandManager.setProject({
+      ...project,
+      directorPlan: { ...plan, decisions },
+      updatedAt: Date.now(),
+    });
+    void this.saveCurrentProject();
+    return true;
+  }
+
+  /**
+   * Accept or reject one item of the Smart Review Queue.
+   *
+   * ACCEPT: when the proposed action is executable it is applied through the canonical Command
+   * System (undoable, with a version snapshot) — otherwise the decision is only recorded, and the
+   * caller is told that the change stays manual. REJECT: nothing is touched.
+   *
+   * Both outcomes are single observations of the Editing Brain, so the Director learns from the
+   * review queue exactly like it does from a batch apply.
+   */
+  public decideOnReviewItem(
+    decisionId: string,
+    status: 'ACCEPTED' | 'REJECTED'
+  ): { ok: boolean; applied: boolean; reason: string } {
+    const plan = this.getProject().directorPlan;
+    const decision = plan?.decisions.find(d => d.id === decisionId);
+    if (!plan || !decision) {
+      return { ok: false, applied: false, reason: 'Rozhodnutie sa v uloženom AI pláne nenašlo.' };
     }
+
+    const kind = decision.proposedAction?.kind;
+    let applied = false;
+    let reason = status === 'REJECTED' ? 'Zamietnuté — materiál zostal nezmenený.' : '';
+
+    if (status === 'ACCEPTED') {
+      if (!kind) {
+        return { ok: false, applied: false, reason: 'Rozhodnutie nemá štruktúrovanú akciu, nedá sa vykonať.' };
+      }
+      if (!isActionExecutable(kind)) {
+        reason = 'Odporúčanie nie je automaticky vykonateľné — uložené ako schválený manuálny krok.';
+      } else {
+        const result = directorEngine.safeBatchApply(this.commandManager, plan, [decisionId]);
+        if (result.success && result.appliedCount > 0) {
+          applied = true;
+          reason = 'Zmena bola aplikovaná do projektu (dá sa vrátiť cez Undo).';
+        } else {
+          const skipReason = result.skipped?.[0]?.reason || result.error || 'Neznámy dôvod.';
+          this.setPlanDecisionStatus(decisionId, decision.status);
+          return { ok: false, applied: false, reason: `Nepodarilo sa aplikovať: ${skipReason}` };
+        }
+      }
+    }
+
+    this.setPlanDecisionStatus(decisionId, status === 'ACCEPTED' ? 'accepted' : 'rejected');
+
+    // One real observation per reviewed item (never a fabricated pattern match).
+    const category = kind ? CoreEngine.preferenceCategoryForProposedAction(kind) : null;
+    if (category) {
+      this.observePreference(
+        status,
+        category,
+        `Review front: návrh ${kind} ${status === 'ACCEPTED' ? 'prijatý' : 'zamietnutý'}`
+      );
+    }
+
+    return { ok: true, applied, reason };
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

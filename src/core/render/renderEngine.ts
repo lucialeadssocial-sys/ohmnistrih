@@ -5,6 +5,7 @@
 
 import { ProjectModel, ClipModel } from '../types/project';
 import { TimelineEngine } from '../timeline/timelineEngine';
+import { computeClipTransitionState } from './transitionMath';
 
 export class RenderEngine {
   private static instance: RenderEngine | null = null;
@@ -95,17 +96,33 @@ export class RenderEngine {
         clip.rotation
       );
 
-      ctx.globalAlpha = opacity;
+      // Real transition state of this clip at this instant (fade / wipe / slide / zoom).
+      // Previously clip.transitions was stored and editable but never affected a rendered pixel.
+      const transitionState = computeClipTransitionState(clip, currentTime, width);
+
+      ctx.globalAlpha = Math.min(1, Math.max(0, opacity * transitionState.alpha));
+
+      // Wipe masks are applied in canvas space, before the clip transform.
+      if (transitionState.reveal) {
+        const visibleWidth = width * transitionState.reveal.progress;
+        ctx.beginPath();
+        if (transitionState.reveal.from === 'left') {
+          ctx.rect(0, 0, visibleWidth, height);
+        } else {
+          ctx.rect(width - visibleWidth, 0, visibleWidth, height);
+        }
+        ctx.clip();
+      }
 
       // Translate to Canvas Center + Offset
-      const centerX = width / 2 + positionX;
-      const centerY = height / 2 + positionY;
+      const centerX = width / 2 + positionX + transitionState.offsetX;
+      const centerY = height / 2 + positionY + transitionState.offsetY;
 
       ctx.translate(centerX, centerY);
       if (rotation !== 0) {
         ctx.rotate((rotation * Math.PI) / 180);
       }
-      ctx.scale(scale, scale);
+      ctx.scale(scale * transitionState.scaleMultiplier, scale * transitionState.scaleMultiplier);
 
       // Render Clip Content according to Type
       if (clip.type === 'video' || clip.type === 'b-roll' || clip.type === 'image') {

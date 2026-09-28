@@ -1046,13 +1046,23 @@ export interface ReviewDecisionItem {
   id: string;
   titleSk: string;
   titleEn: string;
-  category: "CUT" | "CAPTION" | "ZOOM" | "BROLL" | "AUDIO";
+  category: "CUT" | "CAPTION" | "ZOOM" | "BROLL" | "AUDIO" | "MULTICAM" | "TRANSITION" | "COLOR";
   confidence: number;
   riskLevel: "SAFE" | "MODERATE" | "CRITICAL";
   whySk: string;
   whyEn: string;
-  patternMatch: number; // e.g. 87%
+  /** Confidence of the learned preference for this category. Undefined = nothing learned yet. */
+  patternMatch?: number;
+  /** How many times this category was observed by the Editing Brain. */
+  evidenceCount?: number;
   status: "PENDING" | "ACCEPTED" | "REJECTED";
+  /** Director priority the risk level is derived from. */
+  priority?: "MUST_CONSIDER" | "RECOMMENDED" | "OPTIONAL";
+  /** Structured action kind of the plan decision. */
+  kind?: string;
+  /** True when accepting this item can really be applied by the Director executor. */
+  executable?: boolean;
+  timelineLocation?: { start: number; end?: number };
 }
 
 export interface LockZone {
@@ -1069,7 +1079,7 @@ export interface TimeMachineVersion {
   timestamp: string;
   actionSk: string;
   actionEn: string;
-  author: "AI" | "USER";
+  author: "AI" | "USER" | "SYSTEM";
 }
 
 export type EditDecisionType = 
