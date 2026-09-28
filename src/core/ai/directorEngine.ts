@@ -598,7 +598,17 @@ export class DirectorEngine {
     const decisions: DirectorDecisionItem[] = [];
 
     // Query Brain for preferences (real user-confirmed preferences only)
-    const pacingPrefs = editingBrain.getPreferences(project, 'PACING');
+    // Learned pacing preference (real observed decisions only — see EditingBrain.observeAction).
+    const pacingObservation = editingBrain.describeObservation(project, 'PACING', 2);
+    const pacingTrimPriority: DecisionPriority | null =
+      pacingObservation?.action === 'REJECTED'
+        ? 'OPTIONAL'
+        : pacingObservation?.action === 'ACCEPTED' && pacingObservation.confidence >= 0.6
+          ? 'MUST_CONSIDER'
+          : null;
+    const pacingNote = pacingObservation
+      ? ` Brain: ${pacingObservation.evidenceCount}× pozorované „${pacingObservation.action}" (dôvera ${pacingObservation.confidence}).`
+      : '';
 
     // Records which analysis inputs were unavailable so the plan can state it honestly.
     const unavailable: string[] = [];
@@ -614,12 +624,18 @@ export class DirectorEngine {
 
     pauseList.forEach((pause: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.PAUSE_TRIMMING;
+      // The learned preference can demote/promote the recommendation — with the evidence stated.
+      const basePriority: DecisionPriority = pause.duration > 2.0 ? 'MUST_CONSIDER' : 'RECOMMENDED';
+      const priority: DecisionPriority = pacingTrimPriority || basePriority;
+
       decisions.push({
         id: `dir_dec_pause_${idx}`,
         editDecisionId: `dec_pause_${idx}`,
-        priority: pause.duration > 2.0 ? 'MUST_CONSIDER' : 'RECOMMENDED',
+        priority,
         what: `Skrátenie dlhej pauzy v čase ${pause.start.toFixed(1)}s (${pause.duration.toFixed(1)}s -> 0.4s)`,
-        why: teach.why,
+        why: pacingNote && priority !== basePriority
+          ? `${teach.why}${pacingNote}`
+          : teach.why,
         whenToUse: teach.whenToUse,
         whenNotToUse: teach.whenNotToUse,
         howToManual: teach.manualWorkflowSteps || [],
@@ -1151,62 +1167,112 @@ export class DirectorEngine {
   }
 
   /**
-   * Compare My Edit (Respectful comparison between User's manual edits and AI Proposed DirectorPlan)
+   * Compare My Edit — a real comparison between the clips that are on the timeline and what the
+   * Director plan proposes. Every number below is measured from the project / plan itself; the
+   * prose only explains the measured difference.
    */
   public compareUserAndAiEdits(project: ProjectModel, plan: DirectorPlan): EditComparison[] {
     const comparisons: EditComparison[] = [];
-    const mainTrack = project.tracks.find(t => t.type === 'video');
-    const clips = mainTrack?.clips || [];
 
-    // 1. Pacing & Clip Count Comparison
-    const userClipCount = clips.length;
-    const aiProposedTrims = plan.decisions.filter(d => d.what.includes('Skrátenie')).length;
+    const actions = plan.decisions
+      .map(d => d.proposedAction)
+      .filter((a): a is DirectorProposedAction => !!a);
+    const countOf = (kind: DirectorProposedAction['kind']) => actions.filter(a => a.kind === kind).length;
+
+    // 1. Pacing: real clip count + real average shot length vs. real trim proposals.
+    const videoTrack = project.tracks.find(t => t.type === 'video');
+    const clips = videoTrack?.clips || [];
+    const totalVideoSeconds = clips.reduce((sum, c) => sum + (c.duration), 0);
+    const averageShot = clips.length ? totalVideoSeconds / clips.length : 0;
+    const trimProposals = plan.decisions.filter(d => d.proposedAction?.kind === 'TRIM_RANGE');
+    const proposedTrimSeconds = trimProposals.reduce(
+      (sum, d) => {
+        const params = (d.proposedAction as { parameters?: { targetDurationSeconds?: number } }).parameters;
+        const location = d.timelineLocation;
+        if (!location) return sum;
+        const current = (location.end ?? location.start) - location.start;
+        const target = params?.targetDurationSeconds ?? 0;
+        return sum + Math.max(0, current - target);
+      },
+      0
+    );
     comparisons.push({
       metric: 'Tempo a Počet Strihov',
-      userChoice: `${userClipCount} záberov na timeline`,
-      aiProposal: `Návrh na ${aiProposedTrims} skrátení pauz pre dynamickejšie tempo`,
-      explanation: 'Tvoj strih zachováva prirodzenejší naratívny priestor, zatiaľ čo AI navrhuje agresívnejšiu retenciu pre Short-form.',
-      learningTip: 'Vzdelávacie videá v SR fungujú lepšie s prirodzenejšími pauzami než pre-rýchlené US TikToky.'
+      userChoice: `${clips.length} záberov na timeline, priemerne ${averageShot.toFixed(1)}s na záber (${totalVideoSeconds.toFixed(1)}s videa)`,
+      aiProposal: trimProposals.length
+        ? `${trimProposals.length} skrátení pásiem by odobralo ${proposedTrimSeconds.toFixed(1)}s z celkovej dĺžky (odhad z návrhu, nie z aplikovaného strihu)`
+        : 'Plán neobsahuje žiadne skrátenie pásma',
+      explanation: trimProposals.length
+        ? `Rozdiel je ${proposedTrimSeconds.toFixed(1)}s (${totalVideoSeconds > 0 ? Math.round((proposedTrimSeconds / totalVideoSeconds) * 100) : 0}% z aktuálnej dĺžky videa). Kratšie zábery zvyšujú retenciu pri Short-form, dlhšie držia kontext.`
+        : 'Dĺžka strihu zodpovedá plánu — AI nenavrhuje žiadnu zmenu tempa.',
+      learningTip: 'Zmeraj si vlastné video: pri Short-form sa krátke zábery (2–4s) správajú lepšie, pri rozhovoroch nechaj záber dýchať.'
     });
 
-    // 2. B-Roll Coverage
-    const userBrollTrack = project.tracks.find(t => t.type === 'b-roll');
-    const userBrollCount = userBrollTrack?.clips.length || 0;
-    const aiBrollCount = plan.decisions.filter(d => d.what.includes('B-Roll')).length;
+    // 2. B-Roll: real clips on the b-roll track vs. real insert proposals.
+    const brollTrack = project.tracks.find(t => t.type === 'b-roll');
+    const brollClips = brollTrack?.clips || [];
+    const brollSeconds = brollClips.reduce((sum, c) => sum + (c.duration), 0);
+    const brollProposals = countOf('BROLL_INSERT');
     comparisons.push({
       metric: 'Pokrytie B-Rollom',
-      userChoice: `${userBrollCount} ilustračných záberov na V2`,
-      aiProposal: `Odporúčaných ${aiBrollCount} B-roll miest pre zakrytie dlhých monológov`,
-      explanation: 'B-roll pomáha udržať vizuálnu pozornosť pri abstraktných témach dlhších ako 5 sekúnd.',
-      learningTip: 'Vždy používaj B-roll, ktorý priamo súvisí s hovoreným slovom (Dual-Coding Principle).'
+      userChoice: `${brollClips.length} záberov na B-roll stope (${brollSeconds.toFixed(1)}s, ${totalVideoSeconds > 0 ? Math.round((brollSeconds / totalVideoSeconds) * 100) : 0}% dĺžky videa)`,
+      aiProposal: brollProposals ? `${brollProposals} miest navrhnutých na B-roll` : 'Plán nenavrhuje B-roll',
+      explanation: brollProposals
+        ? `AI pokrytie by sa zvýšilo z ${brollClips.length} na ${brollClips.length + brollProposals} záberov B-rollu.`
+        : `Tvoje pokrytie B-rollom (${brollClips.length} záberov) plán nerozporuje.`,
+      learningTip: 'B-roll pomáha udržať pozornosť pri abstraktných témach dlhších ako 5 sekúnd.'
     });
 
-    // 3. Audio & Ducking
-    const audioTrack = project.tracks.find(t => t.type === 'audio');
+    // 3. Audio: real audio clips + real volume settings vs. duck/audio proposals.
+    const audioClips = project.tracks.filter(t => t.type === 'audio').flatMap(t => t.clips);
+    const mutedAudio = audioClips.filter(c => c.volume <= 0).length;
+    const duckProposals = countOf('AUDIO_DUCK');
     comparisons.push({
       metric: 'Zvukový Mix a Ducking',
-      userChoice: `${audioTrack?.clips.length || 0} zvukových stôp`,
-      aiProposal: 'Automatické stíšenie hudby (Ducking -12dB) pri hlase',
-      explanation: 'Zrozumiteľnosť reči je najdôležitejšou kvalitatívnou metrikou akéhokoľvek videa.',
-      learningTip: 'Hlas by mal byť vždy na -14 LUFS a hudba v pozadí o 12-15dB nižšie.'
+      userChoice: `${audioClips.length} zvukových klipov${mutedAudio ? ` (${mutedAudio} stlmených)` : ''}${
+        audioClips.length ? `, hlasitosť ${Math.min(...audioClips.map(c => c.volume)).toFixed(0)}–${Math.max(...audioClips.map(c => c.volume)).toFixed(0)}%` : ''
+      }`,
+      aiProposal: duckProposals ? `${duckProposals} automatických ducking miest` : 'Plán neobsahuje ducking',
+      explanation: duckProposals
+        ? 'AI navrhuje automatické stíšenie hudby pri hlase; tvoje klipy majú nastavenú hlasitosť manuálne.'
+        : 'AI v tomto pláne ducking nenavrhuje — tvoj mix zostáva bez zásahu.',
+      learningTip: 'Hlas drž okolo -14 LUFS a hudbu o 12–15 dB nižšie.'
     });
 
-    // 4. Hook Zoom & Visual Dynamics
+    // 4. Hook / punch-in: real transform of the opening clip vs. real punch-in proposals.
+    const openingClip = [...clips].sort((a, b) => a.timelineStart - b.timelineStart)[0];
+    const openingScale = openingClip ? openingClip.scale : 0;
+    const punchInValue = actions
+      .filter(a => a.kind === 'PUNCH_IN')
+      .map(a => (a.parameters as { scale?: number } | undefined)?.scale)
+      .find(v => typeof v === 'number');
+    const punchInProposals = countOf('PUNCH_IN');
     comparisons.push({
       metric: 'Úvodná Dynamika & Hook Zoom',
-      userChoice: 'Štandardná veľkosť záberu (100% Scale)',
-      aiProposal: 'Punch-in Zoom (115% Scale) na prvých 3.0s',
-      explanation: 'Mierne zväčšenie úvodného záberu v prvých 3 sekundách zvyšuje zadržanie divákov o 24%.',
-      learningTip: 'Obe možnosti sú technicky platné; Punch-in zoom funguje lepšie pri súťažných algoritmoch TikToku, kým 100% je prirodzenejšie pre komunitné rozhovory.'
+      userChoice: openingClip ? `Scale prvého záberu: ${openingScale}%` : 'Na timeline nie je žiadny video záber',
+      aiProposal: punchInProposals
+        ? `${punchInProposals} punch-in návrh${punchInValue ? ` (scale ${punchInValue}%)` : ''}`
+        : 'Plán nenavrhuje punch-in',
+      explanation: openingClip
+        ? (punchInProposals ? 'AI navrhuje zmenu veľkosti úvodného záberu, tvoj strih používa vlastný scale.' : 'Tvoj úvodný scale plán nerozporuje.')
+        : 'Bez video záberu na timeline sa úvodná dynamika nedá porovnať.',
+      learningTip: 'Punch-in funguje lepšie pri súťažných algoritmoch, 100% scale je prirodzenejší pre rozhovory.'
     });
 
-    // 5. Captions & Keyword Accent
+    // 5. Captions: real caption clips (+ real per-segment styling) vs. real caption proposals.
+    const captionClips = project.tracks.filter(t => t.type === 'caption').flatMap(t => t.clips);
+    const styledCaptionClips = captionClips.filter(c => (c.textConfig?.color && c.textConfig.color.toLowerCase() !== '#ffffff') || (c.textConfig?.fontSize || 0) >= 56).length;
+    const captionProposals = countOf('CAPTION_EMPHASIS');
     comparisons.push({
       metric: 'Titulky a Zvýraznenie',
-      userChoice: 'Klasické jednofarebné titulky',
-      aiProposal: 'Dynamické kľúčové slová so žltým zvýraznením',
-      explanation: 'Farebné zvýraznenie kľúčových slov vedie oko diváka po obrazovke pri tichom sledovaní.',
-      learningTip: 'Zvýrazňuj maximálne 1 až 2 kľúčové slová vo vete pre zachovanie čistoty dizajnového layoutu.'
+      userChoice: captionClips.length
+        ? `${captionClips.length} titulkových klipov, ${styledCaptionClips} s vlastným zvýraznením`
+        : 'Žiadne titulky na caption stope',
+      aiProposal: captionProposals ? `${captionProposals} miest na zvýraznenie kľúčových slov` : 'Plán neobsahuje zvýraznenie titulkov',
+      explanation: captionClips.length
+        ? `Titulky existujú (${captionClips.length}); AI navrhuje ${captionProposals} dodatočných zvýraznení.`
+        : 'Bez titulkov nie je čo zvýrazňovať — najprv vygeneruj titulky.',
+      learningTip: 'Zvýrazňuj maximálne 1–2 kľúčové slová vo vete.'
     });
 
     return comparisons;

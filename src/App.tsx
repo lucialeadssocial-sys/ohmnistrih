@@ -78,6 +78,7 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { mediaEngine } from "./core/media/mediaEngine";
 import { opfsManager } from "./core/storage/opfs";
+import { extractWavFromVideoUrl } from "./utils/audioExtraction";
 import type { MediaAsset } from "./core/types/project";
 import { coreEngine, TimelineEngine, createCanonicalClip } from "./core";
 import { AddClipCommand } from "./core/command/commandSystem";
@@ -2397,84 +2398,121 @@ function MainApp() {
   const [transcriptionProgress, setTranscriptionProgress] = useState<number>(0);
   const [transcriptionStage, setTranscriptionStage] = useState<string>("");
 
+  /**
+   * Generates subtitles from the REAL audio of the current video.
+   *
+   * The audio is decoded in the browser, sent to /api/transcribe-speech and the resulting segments
+   * come from the model's transcription. When no audio/speech is available (or the server cannot
+   * transcribe), the user is told — no captions are invented from the video topic any more.
+   */
   const handleGenerateSubtitles = async () => {
     if (isTranscribing) return;
-    
+
     setIsTranscribing(true);
     setTranscriptionProgress(5);
-    setTranscriptionStage(isSk ? "🎙️ Inicializujem audio stopu z videa..." : "🎙️ Initializing audio track from video...");
-    
+    setTranscriptionStage(isSk ? "🎙️ Extrahujem zvukovú stopu z videa..." : "🎙️ Extracting the audio track from the video...");
+
     const timer1 = setTimeout(() => {
       setTranscriptionProgress(25);
-      setTranscriptionStage(isSk ? "🎙️ Extrahujem rečový signál..." : "🎙️ Extracting speech signal...");
+      setTranscriptionStage(isSk ? "🎙️ Prevzorkujem rečový signál..." : "🎙️ Resampling the speech signal...");
     }, 800);
 
     const timer2 = setTimeout(() => {
       setTranscriptionProgress(55);
-      setTranscriptionStage(isSk ? "🧠 Prepisujem reč pomocou Gemini AI..." : "🧠 Transcribing speech using Gemini AI...");
+      setTranscriptionStage(isSk ? "🧠 Prepisujem reč..." : "🧠 Transcribing speech...");
     }, 2000);
 
     try {
-      const response = await fetch("/api/transcribe-video", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          filename: customVideoName,
-          topic: videoTopic,
-          language: language,
-          duration: duration,
-          style: captionStyle
-        })
-      });
+      // 1. Real audio extraction (shared with the captions panel).
+      const audioResult = await extractWavFromVideoUrl(currentVideoUrl);
 
-      const data = await response.json();
+      if (!audioResult.hasAudio) {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+        setIsTranscribing(false);
+        setTranscriptionProgress(0);
+        setTranscriptionStage("");
+        setAiProvenance({
+          kind: "SYNTHETIC",
+          feature: "transcript",
+          source: "no-audio",
+          noteSk: "Zvuková stopa sa nedá získať — titulky sa nevygenerovali.",
+          noteEn: "The audio track could not be extracted — no captions were generated.",
+        });
+        showToast(
+          isSk
+            ? `⚠️ Titulky sa nevygenerovali: ${audioResult.error || "video nemá použiteľnú zvukovú stopu"}.`
+            : `⚠️ No captions were generated: ${audioResult.error || "the video has no usable audio track"}.`
+        );
+        return;
+      }
+
+      // 2. Real transcription on the server (audio is sent, not just a topic).
+      const response = await fetch("/api/transcribe-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioBase64: audioResult.base64,
+          mimeType: "audio/wav",
+          language,
+          videoDuration: duration || audioResult.duration,
+        }),
+      });
 
       clearTimeout(timer1);
       clearTimeout(timer2);
 
-      if (data.success && data.segments) {
-        const mediaAnalyzed = data.mediaAnalyzed !== false;
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.segments || data.segments.length === 0) {
+        setIsTranscribing(false);
+        setTranscriptionProgress(0);
+        setTranscriptionStage("");
         setAiProvenance({
-          kind: mediaAnalyzed ? "REAL" : "SYNTHETIC",
+          kind: "SYNTHETIC",
           feature: "transcript",
-          source: data.source || "unknown",
-          noteSk: mediaAnalyzed
-            ? "Prepis vznikol z reálneho audia."
-            : "SYNTETICKÝ NÁVRH: text je odhad z témy a dĺžky videa — žiadne audio nebolo prepísané.",
-          noteEn: mediaAnalyzed
-            ? "Transcript was produced from real audio."
-            : "SYNTHETIC DRAFT: text is inferred from topic and duration — no audio was transcribed."
+          source: data.code || "transcription-unavailable",
+          noteSk: data.message || "Prepis sa nevykonal — server nevrátil žiadny text.",
+          noteEn: data.message || "No transcription was produced — the server returned no text.",
+        });
+        showToast(
+          isSk
+            ? `⚠️ Titulky sa nevygenerovali: ${data.message || "prepis reči zlyhal alebo nenašiel hovorené slovo."}`
+            : `⚠️ No captions were generated: ${data.message || "speech transcription failed or found no speech."}`
+        );
+        return;
+      }
+
+      setAiProvenance({
+        kind: "REAL",
+        feature: "transcript",
+        source: data.source || "audio-transcription",
+        noteSk: "Prepis vznikol z reálneho audia videa.",
+        noteEn: "The transcript was produced from the video's real audio.",
+      });
+
+      setTranscriptionProgress(85);
+      setTranscriptionStage(isSk ? "⚡ Synchronizujem karaoke časovanie..." : "⚡ Syncing karaoke word timings...");
+
+      setTimeout(() => {
+        setTranscriptionProgress(100);
+        setTranscriptionStage(isSk ? "✨ Dokončené!" : "✨ Done!");
+
+        setCaptionProject({
+          ...captionProject,
+          segments: data.segments,
+          language: language,
         });
 
-        setTranscriptionProgress(85);
-        setTranscriptionStage(isSk ? "⚡ Synchronizujem kinetické karaoke časovanie..." : "⚡ Syncing kinetic karaoke word timings...");
-
-        setTimeout(() => {
-          setTranscriptionProgress(100);
-          setTranscriptionStage(isSk ? "✨ Dokončené!" : "✨ Done!");
-
-          setCaptionProject({
-            ...captionProject,
-            segments: data.segments,
-            language: language
-          });
-
-          setIsTranscribing(false);
-          setActiveTab("captions"); // Switch to captions editor
-          showToast(
-            data.mediaAnalyzed === false
-              ? (isSk
-                  ? "⚠️ Titulky vygenerované ako SYNTETICKÝ NÁVRH z témy (bez prepisu audia)."
-                  : "⚠️ Captions generated as a SYNTHETIC DRAFT from the topic (no audio was transcribed).")
-              : (isSk ? "✅ AI Titulky úspešne vygenerované!" : "✅ AI Captions successfully generated!")
-          );
-          playSynthesizedSFX("cash", 0.7);
-        }, 1200);
-      } else {
-        throw new Error(data.error || "Failed to generate segments");
-      }
+        setIsTranscribing(false);
+        setActiveTab("captions");
+        showToast(
+          isSk
+            ? `✅ Titulky vygenerované z reálnej reči (${data.segments.length} segmentov).`
+            : `✅ Captions generated from real speech (${data.segments.length} segments).`
+        );
+        playSynthesizedSFX("cash", 0.7);
+      }, 1200);
     } catch (err: any) {
       clearTimeout(timer1);
       clearTimeout(timer2);

@@ -24,6 +24,9 @@ import {
 
 import { coreEngine } from "../core";
 import { SetEQCommand, SetCompressionCommand } from "../core/command/commandSystem";
+import { TimelineEngine } from "../core/timeline/timelineEngine";
+import { renderProjectMixAt48k } from "../core/audio/mixRenderer";
+import { measureLoudness } from "../core/audio/loudness";
 
 interface ProfessionalAudioMasterSuiteProps {
   language: "sk" | "en";
@@ -63,16 +66,82 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
     dynamicRangeCompressor: true,
   });
 
-  // Simulated live loudness metering
-  const [metrics, setMetrics] = useState<RealtimeLoudnessMetrics>({
-    momentaryLUFS: -13.8,
-    shortTermLUFS: -14.1,
-    integratedLUFS: -14.0,
-    truePeakDbfs: -1.1,
-    clippingDetected: false,
-    rumbleDetected: false,
-    stereoBalance: 0.02,
-  });
+  /**
+   * Loudness meter — every value comes from a real measurement of the rendered project mix
+   * (ITU-R BS.1770-4). Until a measurement runs, the meter shows "nemerané" instead of numbers.
+   */
+  const [measurement, setMeasurement] = useState<RealtimeLoudnessMetrics | null>(null);
+  const [measuredMixInfo, setMeasuredMixInfo] = useState<string | null>(null);
+  const [isMeasuring, setIsMeasuring] = useState(false);
+  const [measureError, setMeasureError] = useState<string | null>(null);
+
+  // Pick up a target that is already stored in the canonical project.
+  useEffect(() => {
+    const stored = coreEngine.getAudioMastering();
+    if (stored && typeof stored.loudnessTargetLUFS === "number") {
+      setMasterConfig(prev => ({
+        ...prev,
+        loudnessTargetLUFS: stored.loudnessTargetLUFS as AudioMasteringConfig["loudnessTargetLUFS"],
+        truePeakLimiterDbfs: (stored.truePeakLimiterDbfs ?? prev.truePeakLimiterDbfs) as AudioMasteringConfig["truePeakLimiterDbfs"],
+      }));
+    }
+  }, []);
+
+  /**
+   * Renders the real project mix and measures it. Also stores the mastering targets in the
+   * canonical project so the export normalises to the measured loudness.
+   */
+  const handleMeasureMix = async () => {
+    setIsMeasuring(true);
+    setMeasureError(null);
+
+    try {
+      const project = coreEngine.getProject();
+      const duration = TimelineEngine.calculateProjectDuration(project);
+      if (!duration) {
+        setMeasurement(null);
+        setMeasuredMixInfo(null);
+        setMeasureError("Projekt nemá žiadny obsah na timeline — mix sa nedá zmerať.");
+        return;
+      }
+
+      const mix = await renderProjectMixAt48k(project, duration);
+      if (!mix) {
+        setMeasurement(null);
+        setMeasuredMixInfo(null);
+        setMeasureError(
+          "Mix sa nedá zmerať — v projekte nie je žiadne dekódovateľné audio (médiá nie sú lokálne v OPFS/URL)."
+        );
+        return;
+      }
+
+      const channels: Float32Array[] = [];
+      for (let c = 0; c < mix.buffer.numberOfChannels; c++) {
+        channels.push(mix.buffer.getChannelData(c));
+      }
+      const measured = measureLoudness(channels, mix.buffer.sampleRate);
+
+      setMeasurement({
+        integratedLUFS: measured.integratedLufs ?? -Infinity,
+        momentaryLUFS: measured.maxMomentaryLufs ?? -Infinity,
+        shortTermLUFS: measured.maxShortTermLufs ?? -Infinity,
+        truePeakDbfs: measured.truePeakDbfs,
+        clippingDetected: Number.isFinite(measured.truePeakDbfs) && measured.truePeakDbfs > masterConfig.truePeakLimiterDbfs,
+        rumbleDetected: false,
+        stereoBalance: 0,
+      });
+      setMeasuredMixInfo(
+        `Zmerané z reálneho mixu: ${mix.decodedClips} klipov, ${mix.undecodedClips.length} nedekódovateľných, ` +
+        `${measured.measuredBlocks}/${measured.totalBlocks} meracích blokov nad prahom, ${mix.sampleRate} Hz.`
+      );
+    } catch (e: any) {
+      setMeasurement(null);
+      setMeasuredMixInfo(null);
+      setMeasureError(`Meranie zlyhalo: ${e?.message || "neznáma chyba"}`);
+    } finally {
+      setIsMeasuring(false);
+    }
+  };
 
   /**
    * Writes the current suite settings into the canonical project so the values are real
@@ -183,8 +252,8 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
             </h2>
             <p className="text-xs text-neutral-400">
               {isSk
-                ? "Kompletný mastering: 80Hz Rumble filter, Parametrický EQ (De-Mud & Air Boost), Sidechain Ducking a -14 LUFS YouTube Limiter."
-                : "Comprehensive mastering: 80Hz rumble high-pass, 3-band parametric EQ, sidechain ducking, and -14 LUFS True-Peak limiter."}
+                ? "Parametrický EQ (De-Mud & Air Boost), kompresia a rumble filter sa zapisujú do klipov; cielová hlasitosť a true-peak limit sa merajú z reálneho mixu (ITU-R BS.1770-4)."
+                : "Parametric EQ (de-mud & air boost), compression and the rumble filter are written into the clips; target loudness and true peak are measured from the real mix (ITU-R BS.1770-4)."}
             </p>
           </div>
         </div>
@@ -202,11 +271,28 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
               };
               setMasterConfig(nextConfig);
               const applied = applyMixToCanonicalProject(nextEq, nextConfig);
+              // Store the targets in the canonical project so the export normalises to them.
+              const targetStored = coreEngine.setAudioMastering({
+                loudnessTargetLUFS: nextConfig.loudnessTargetLUFS,
+                truePeakLimiterDbfs: nextConfig.truePeakLimiterDbfs,
+                rumbleFilterActive: nextConfig.rumbleFilterActive,
+                noiseSuppressionStrength: nextConfig.noiseSuppressionStrength,
+                deEsserStrength: nextConfig.deEsserStrength,
+                voiceLevelDb: nextConfig.voiceLevelDb,
+                musicLevelDb: nextConfig.musicLevelDb,
+                sfxLevelDb: nextConfig.sfxLevelDb,
+                sidechainDuckingRatio: nextConfig.sidechainDuckingRatio,
+                duckingThresholdDb: nextConfig.duckingThresholdDb,
+                dynamicRangeCompressor: nextConfig.dynamicRangeCompressor,
+              });
+              // The mix changed, so any previous measurement is stale.
+              setMeasurement(null);
+              setMeasuredMixInfo(null);
               if (applied > 0) {
                 showToast(
                   isSk
-                    ? `EQ (rumble filter + 3 pásma) a kompresia zapísané na ${applied} klip(ov) v projekte — export ich aplikuje. Cieľová LUFS normalizácia nie je meraná.`
-                    : `EQ (rumble filter + 3 bands) and compression written to ${applied} clip(s) in the project — the export applies them. LUFS target normalization is not measured.`,
+                    ? `EQ (rumble filter + 3 pásma) a kompresia zapísané na ${applied} klip(ov). Cieľ ${nextConfig.loudnessTargetLUFS} LUFS / ${nextConfig.truePeakLimiterDbfs} dBTP je uložený${targetStored ? "" : " (nepodarilo sa)"} — export mix zmeria a znormalizuje. Spusti „Zmerať mix" pre aktuálne čísla.`
+                    : `EQ (rumble filter + 3 bands) and compression written to ${applied} clip(s). Target ${nextConfig.loudnessTargetLUFS} LUFS / ${nextConfig.truePeakLimiterDbfs} dBTP stored${targetStored ? "" : " (failed)"} — the export measures and normalises the mix. Run "Measure mix" for current numbers.`,
                   "success"
                 );
               } else {
@@ -233,12 +319,18 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
             <span>{isSk ? "Integrovaná Hlasitosť" : "Integrated LUFS"}</span>
             <span className="text-[10px] text-amber-400 font-mono">Cieľ: {masterConfig.loudnessTargetLUFS} LUFS</span>
           </div>
-          <div className="text-xl font-black font-mono text-emerald-400">
-            {metrics.integratedLUFS.toFixed(1)} <span className="text-xs font-normal text-neutral-400">LUFS</span>
+          <div className={`text-xl font-black font-mono ${measurement ? "text-emerald-400" : "text-neutral-500"}`}>
+            {measurement && Number.isFinite(measurement.integratedLUFS)
+              ? <>{measurement.integratedLUFS.toFixed(1)} <span className="text-xs font-normal text-neutral-400">LUFS</span></>
+              : <span className="text-sm">nemerané</span>}
           </div>
-          <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-500" style={{ width: "88%" }} />
-          </div>
+          <button
+            onClick={handleMeasureMix}
+            disabled={isMeasuring}
+            className="w-full mt-1 px-2 py-1 text-[10px] font-bold rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800 text-white transition-colors"
+          >
+            {isMeasuring ? "Meriam mix..." : "Zmerať mix (reálny LUFS)"}
+          </button>
         </div>
 
         <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800/80 space-y-1">
@@ -246,24 +338,43 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
             <span>True Peak (Max)</span>
             <span className="text-[10px] text-neutral-500 font-mono">Limit: {masterConfig.truePeakLimiterDbfs} dB</span>
           </div>
-          <div className="text-xl font-black font-mono text-neutral-200">
-            {metrics.truePeakDbfs.toFixed(1)} <span className="text-xs font-normal text-neutral-400">dBFS</span>
+          <div className={`text-xl font-black font-mono ${measurement && Number.isFinite(measurement.truePeakDbfs) ? "text-neutral-200" : "text-neutral-500"}`}>
+            {measurement && Number.isFinite(measurement.truePeakDbfs)
+              ? <>{measurement.truePeakDbfs.toFixed(2)} <span className="text-xs font-normal text-neutral-400">dBTP</span></>
+              : <span className="text-sm">nemerané</span>}
           </div>
-          <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-            <div className="h-full bg-cyan-500" style={{ width: "82%" }} />
-          </div>
+          <p className="text-[10px] text-neutral-500">
+            {measurement && Number.isFinite(measurement.truePeakDbfs)
+              ? (measurement.truePeakDbfs > masterConfig.truePeakLimiterDbfs
+                  ? "Prekročený limit — zníž gain alebo použi nižší cieľ."
+                  : "Pod limitom (4× oversampling).")
+              : "Spusti meranie mixu."}
+          </p>
         </div>
 
         <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800/80 space-y-1">
           <div className="flex items-center justify-between text-[11px] text-neutral-400">
             <span>Clipping Ochrana</span>
-            <span className="text-[10px] text-emerald-400 font-mono">AKTÍVNA</span>
+            <span className="text-[10px] text-neutral-500 font-mono">
+              {measurement && Number.isFinite(measurement.truePeakDbfs)
+                ? (measurement.truePeakDbfs > masterConfig.truePeakLimiterDbfs ? "PREKROČENÉ" : "OK")
+                : "nemerané"}
+            </span>
           </div>
-          <div className="text-sm font-bold font-mono text-emerald-400 flex items-center gap-1.5 pt-1">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            0 Over-Peaks (Čisté)
+          <div className={`text-sm font-bold font-mono flex items-center gap-1.5 pt-1 ${
+            measurement && Number.isFinite(measurement.truePeakDbfs) && measurement.truePeakDbfs <= masterConfig.truePeakLimiterDbfs
+              ? "text-emerald-400" : "text-amber-400"
+          }`}>
+            <CheckCircle2 className="w-4 h-4" />
+            {measurement && Number.isFinite(measurement.truePeakDbfs)
+              ? (measurement.truePeakDbfs > masterConfig.truePeakLimiterDbfs
+                  ? `Prekročený limit o ${(measurement.truePeakDbfs - masterConfig.truePeakLimiterDbfs).toFixed(2)} dB`
+                  : "True peak pod limitom")
+              : "Bez merania"}
           </div>
-          <p className="text-[10px] text-neutral-500">{isSk ? "Žiadne skreslenie zvuku" : "Zero digital distortion"}</p>
+          <p className="text-[10px] text-neutral-500">
+            {measuredMixInfo || (isSk ? "Hodnoty sa merajú z reálneho mixu, nie odhadom." : "Values are measured from the real mix, never estimated.")}
+          </p>
         </div>
 
         <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800/80 space-y-1">
@@ -280,6 +391,12 @@ export const ProfessionalAudioMasterSuite: React.FC<ProfessionalAudioMasterSuite
           <p className="text-[10px] text-neutral-500">{isSk ? "Orezaný hluk z vibrácií stola" : "Desk vibration rumble cut"}</p>
         </div>
       </div>
+
+      {measureError && (
+        <div className="px-3 py-2 rounded-xl bg-amber-950/40 border border-amber-900/60 text-[11px] text-amber-300">
+          ⚠️ {measureError}
+        </div>
+      )}
 
       {/* Main Controls: 3 Sections */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ProjectModel, ClipModel, TrackModel, MediaAsset, ProjectSettings, MarkerModel, Keyframe, TranscriptModel, CaptionStyleConfig, ColorCorrectionConfig, TransitionConfig, createCanonicalClip } from './types/project';
+import { ProjectModel, ClipModel, TrackModel, MediaAsset, ProjectSettings, MarkerModel, Keyframe, TranscriptModel, CaptionStyleConfig, ColorCorrectionConfig, TransitionConfig, ProjectAudioMastering, createCanonicalClip } from './types/project';
 import {
   CommandManager,
   AddClipCommand,
@@ -42,8 +42,7 @@ import {
   CreateProjectVersionCommand,
   RestoreProjectVersionCommand,
   SyncMulticamCommand,
-  SwitchMulticamAngleCommand
-} from './command/commandSystem';
+  SwitchMulticamAngleCommand, RollClipCommand} from './command/commandSystem';
 import { mediaEngine } from './media/mediaEngine';
 import { idbManager } from './storage/idb';
 import { renderEngine } from './render/renderEngine';
@@ -63,7 +62,9 @@ export * from './ai';
 
 import { analysisEngine } from './ai/analysisEngine';
 import { directorEngine } from './ai/directorEngine';
-import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, EditComparison } from './ai/analysisTypes';
+import { editingBrain } from './ai/editingBrain';
+import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
+import type { EditingPreference } from './types/project';
 
 // Default initial project factory with canonical tracks
 export function createInitialProject(title: string = 'Môj Nový Projekt'): ProjectModel {
@@ -371,6 +372,18 @@ export class CoreEngine {
     return success;
   }
 
+  /**
+   * Roll edit: moves the cut point between two adjacent clips by `deltaSeconds` (signed).
+   * Returns false when the roll is not possible (clips not adjacent / no source material).
+   */
+  public rollClip(clipId: string, edge: 'in' | 'out', deltaSeconds: number): boolean {
+    const success = this.commandManager.executeCommand(
+      new RollClipCommand(`Roll strih o ${deltaSeconds.toFixed(2)}s`, clipId, edge, deltaSeconds)
+    );
+    if (success) this.saveCurrentProject();
+    return success;
+  }
+
   public rippleTrimHead(clipId: string, playheadTime: number): boolean {
     const success = this.commandManager.executeCommand(
       new RippleTrimHeadCommand(`Ripple Trim Head k playheadu (${playheadTime.toFixed(2)}s)`, clipId, playheadTime)
@@ -479,8 +492,52 @@ export class CoreEngine {
     const success = this.commandManager.executeCommand(
       new UpdateEditDecisionStatusCommand(`Zmena stavu rozhodnutia: ${status}`, decisionId, status)
     );
+
+    if (success && (status === 'accepted' || status === 'rejected')) {
+      // Learn from the real user decision: this is what fills the Editing Brain.
+      const project = this.getProject();
+      const decision = (project.editDecisions || []).find(d => d.id === decisionId);
+      const category = decision ? CoreEngine.preferenceCategoryForDecisionType(decision.type) : null;
+      if (category) {
+        this.observePreference(
+          status === 'accepted' ? 'ACCEPTED' : 'REJECTED',
+          category,
+          `AI návrh (${decision?.type}) ${status === 'accepted' ? 'prijatý' : 'zamietnutý'}`
+        );
+      }
+    }
+
     if (success) this.saveCurrentProject();
     return success;
+  }
+
+  /** Maps a canonical edit decision type to an Editing Brain preference category. */
+  private static preferenceCategoryForDecisionType(type: string): EditingPreference['category'] | null {
+    switch (type) {
+      case 'cut': return 'CUTTING';
+      case 'b_roll': return 'BROLL';
+      case 'audio_duck': return 'AUDIO';
+      case 'transition': return 'TRANSITIONS';
+      case 'pacing': return 'PACING';
+      case 'color': return 'COLOR';
+      default: return null;
+    }
+  }
+
+  /**
+   * Writes an observation into the canonical project's Editing Brain preferences.
+   * Kept separate from the Command System on purpose: learned preferences are evidence about
+   * the user, not an editorial change, so they must not appear in undo/redo history.
+   */
+  private observePreference(
+    action: 'ACCEPTED' | 'MODIFIED' | 'REJECTED' | 'MANUAL',
+    category: EditingPreference['category'],
+    detail?: string
+  ): void {
+    const project = this.getProject();
+    const preferences = editingBrain.observeAction(project, action, category, 'PROJECT', detail);
+    this.commandManager.setProject({ ...project, editingPreferences: preferences });
+    this.saveCurrentProject();
   }
 
   public addReviewComment(comment: any): boolean {
@@ -545,6 +602,29 @@ export class CoreEngine {
     return success;
   }
 
+  /**
+   * Stores the project-level audio mastering targets (loudness target, true-peak ceiling).
+   * These are measurement targets, not editorial edits, so they are written without an undo entry.
+   */
+  public setAudioMastering(mastering: Partial<ProjectAudioMastering>): boolean {
+    if (!mastering || typeof mastering.loudnessTargetLUFS !== 'number') return false;
+    const project = this.getProject();
+    this.commandManager.setProject({
+      ...project,
+      audioMastering: {
+        ...(project.audioMastering || {}),
+        ...mastering,
+        updatedAt: Date.now(),
+      } as ProjectAudioMastering,
+    });
+    this.saveCurrentProject();
+    return true;
+  }
+
+  public getAudioMastering(): ProjectAudioMastering | undefined {
+    return this.getProject().audioMastering;
+  }
+
   public async runProjectAnalysis(
     types: AnalysisType[] = ['metadata', 'transcript', 'audio', 'silence', 'shots', 'scenes', 'content', 'editing'],
     assetId?: string,
@@ -595,10 +675,56 @@ export class CoreEngine {
 
   public safeBatchApplyDirectorPlan(plan: DirectorPlan, acceptedDecisionIds: string[]): { success: boolean; appliedCount: number; snapshotVersionId?: string; error?: string } {
     const result = directorEngine.safeBatchApply(this.commandManager, plan, acceptedDecisionIds);
-    if (result.success) {
+
+    if (result.success && result.appliedCount > 0) {
+      // Learn from what the user really did with this plan: accepted decisions are evidence of
+      // agreement, the decisions left out of the batch are evidence of rejection.
+      this.observePlanDecisions(plan, acceptedDecisionIds);
       this.saveCurrentProject();
     }
     return result;
+  }
+
+  private observePlanDecisions(plan: DirectorPlan, acceptedDecisionIds: string[]): void {
+    const accepted = new Set(acceptedDecisionIds);
+    const perCategory = new Map<EditingPreference['category'], { accepted: number; rejected: number }>();
+
+    for (const decision of plan.decisions) {
+      const kind = (decision.proposedAction as DirectorProposedAction | undefined)?.kind;
+      const category = kind ? CoreEngine.preferenceCategoryForProposedAction(kind) : null;
+      if (!category || !decision.proposedAction) continue;
+
+      const entry = perCategory.get(category) || { accepted: 0, rejected: 0 };
+      if (accepted.has(decision.id)) entry.accepted++;
+      else entry.rejected++;
+      perCategory.set(category, entry);
+    }
+
+    perCategory.forEach((counts, category) => {
+      // Net outcome per category is what the Director should learn from.
+      if (counts.accepted > 0 && counts.accepted >= counts.rejected) {
+        this.observePreference('ACCEPTED', category, `AI plán: ${counts.accepted}/${counts.accepted + counts.rejected} návrhov prijatých`);
+      }
+      if (counts.rejected > 0 && counts.rejected > counts.accepted) {
+        this.observePreference('REJECTED', category, `AI plán: ${counts.rejected}/${counts.accepted + counts.rejected} návrhov zamietnutých`);
+      }
+    });
+  }
+
+  /** Maps a Director proposed action kind to an Editing Brain preference category. */
+  private static preferenceCategoryForProposedAction(kind: DirectorProposedAction['kind']): EditingPreference['category'] | null {
+    switch (kind) {
+      case 'PUNCH_IN': return 'MOTION';
+      case 'TRIM_RANGE': return 'PACING';
+      case 'MULTICAM_SWITCH': return 'CUTTING';
+      case 'BROLL_INSERT': return 'BROLL';
+      case 'CAPTION_EMPHASIS': return 'CAPTIONS';
+      case 'AUDIO_DUCK': return 'AUDIO';
+      case 'COLOR_BALANCE': return 'COLOR';
+      case 'TRANSITION': return 'TRANSITIONS';
+      // MANUAL_ONLY is education only — nothing to learn about executed edits from it.
+      default: return null;
+    }
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

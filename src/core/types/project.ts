@@ -234,6 +234,25 @@ export interface MediaAsset {
 
 import { AnalysisResultCollection, DirectorPlan } from '../ai/analysisTypes';
 
+/**
+ * Project-level audio mastering targets. Written by the audio suite and applied by the offline
+ * export (measured loudness normalisation, ITU-R BS.1770-4).
+ */
+export interface ProjectAudioMastering {
+  loudnessTargetLUFS: number;
+  truePeakLimiterDbfs: number;
+  rumbleFilterActive?: boolean;
+  noiseSuppressionStrength?: number;
+  deEsserStrength?: number;
+  voiceLevelDb?: number;
+  musicLevelDb?: number;
+  sfxLevelDb?: number;
+  sidechainDuckingRatio?: number;
+  duckingThresholdDb?: number;
+  dynamicRangeCompressor?: boolean;
+  updatedAt?: number;
+}
+
 export interface ProjectSettings {
   aspectRatio: AspectRatio; width: number; height: number;
   fps: number; backgroundColor: string; sampleRate: number;
@@ -277,6 +296,7 @@ export interface ProjectModel {
   analysisResults?: AnalysisResultCollection;
   directorPlan?: DirectorPlan;
   editingPreferences?: EditingPreference[];
+  audioMastering?: ProjectAudioMastering;
   multicamGroups?: MulticamGroup[];
 }
 

@@ -545,10 +545,14 @@ app.post("/api/transcribe-speech", async (req, res) => {
 
     if (candidateKeys.length === 0) {
       telemetryStats.localRequestsToday++;
-      return res.json({
-        success: true,
+      // No provider available: say that instead of pretending the video contains no speech.
+      return res.status(503).json({
+        success: false,
         hasSpeech: false,
-        message: "V tomto videu sa nepodarilo nájsť hovorené slovo.",
+        code: "NO_TRANSCRIPTION_PROVIDER",
+        message: language === "sk"
+          ? "Prepis reči nie je dostupný: nie je nakonfigurovaný žiadny AI kľúč pre audio. Zvuk bol prijatý, ale nebol prepísaný."
+          : "Speech transcription is unavailable: no AI key for audio is configured. The audio was received but not transcribed.",
         segments: []
       });
     }
@@ -1019,10 +1023,27 @@ app.post("/api/transcribe-video", async (req, res) => {
       topic = "",
       language = "sk",
       duration = 15,
-      style = "mrbeast"
+      style = "mrbeast",
+      // The client must opt in explicitly to receive a topic-based draft without any audio.
+      allowSyntheticDraft = false
     } = req.body;
 
     telemetryStats.totalRequestsToday++;
+
+    // This endpoint never receives audio, so it cannot transcribe anything. Without an explicit
+    // opt-in it refuses instead of returning invented captions that look like a transcript.
+    if (!allowSyntheticDraft) {
+      return res.status(422).json({
+        success: false,
+        code: "NO_AUDIO_PROVIDED",
+        mediaAnalyzed: false,
+        synthetic: true,
+        segments: [],
+        message: language === "sk"
+          ? "Tento endpoint nedostal žiadne audio, preto nemôže prepísať reč. Pošlite zvukovú stopu na /api/transcribe-speech alebo explicitne požiadajte o syntetický návrh (allowSyntheticDraft: true)."
+          : "This endpoint received no audio, so it cannot transcribe speech. Send the audio track to /api/transcribe-speech or explicitly request a synthetic draft (allowSyntheticDraft: true)."
+      });
+    }
 
     const getTranscriptionFallback = (lang: string, dur: number, file: string, top: string) => {
       telemetryStats.localRequestsToday++;

@@ -1152,6 +1152,47 @@ export class RippleTrimTailCommand implements Command {
 /**
  * Command: Split Audio & Video (L/J cut split into linked independent tracks)
  */
+export class RollClipCommand implements Command {
+  public id = crypto.randomUUID();
+  public timestamp = Date.now();
+  private prevTrackClips: ClipModel[] = [];
+  private targetTrackId: string = '';
+
+  constructor(
+    public description: string,
+    private clipId: string,
+    private edge: 'in' | 'out',
+    private deltaSeconds: number
+  ) {}
+
+  execute(project: ProjectModel): ProjectModel {
+    const track = project.tracks.find(t => t.clips.some(c => c.id === this.clipId));
+    if (!track) return project;
+
+    const updatedTrack = TimelineEngine.rollClip(track, this.clipId, this.edge, this.deltaSeconds);
+    if (!updatedTrack) return project;
+
+    this.prevTrackClips = [...track.clips];
+    this.targetTrackId = track.id;
+
+    return {
+      ...project,
+      tracks: project.tracks.map(t => (t.id === track.id ? updatedTrack : t))
+    };
+  }
+
+  undo(project: ProjectModel): ProjectModel {
+    if (!this.targetTrackId || this.prevTrackClips.length === 0) return project;
+
+    return {
+      ...project,
+      tracks: project.tracks.map(t =>
+        t.id === this.targetTrackId ? { ...t, clips: [...this.prevTrackClips] } : t
+      )
+    };
+  }
+}
+
 export class SplitAudioVideoCommand implements Command {
   public id = crypto.randomUUID();
   public timestamp = Date.now();

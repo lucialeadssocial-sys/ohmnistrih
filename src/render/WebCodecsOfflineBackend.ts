@@ -4,6 +4,8 @@ import { RenderBackend } from "./RenderBackend";
 import { RenderEngineManager } from "../utils/renderEngineManager";
 import { coreEngine } from "../core/index";
 import { renderEngine } from "../core/render/renderEngine";
+import { renderProjectMix } from "../core/audio/mixRenderer";
+import { measureLoudness, normalizationGainDb, LoudnessMeasurement } from "../core/audio/loudness";
 import { TimelineEngine } from "../core/timeline/timelineEngine";
 import { 
   Output, 
@@ -22,6 +24,18 @@ export class WebCodecsOfflineBackend implements RenderBackend {
   private isCancelled = false;
   private videoEncoder: any = null;
   private audioEncoder: any = null;
+  /**
+   * Real loudness analysis of the rendered mix for the last export (measured, never estimated).
+   * Null values mean "not measured" — the caller must not present them as numbers.
+   */
+  public audioAnalysis: {
+    integratedLufs: number | null;
+    truePeakDbfs: number | null;
+    targetLufs: number | null;
+    appliedGainDb: number | null;
+    normalizationApplied: boolean;
+    error?: string;
+  } | null = null;
 
   async canRender(plan: RenderPlan): Promise<boolean> {
     const hasWebCodecs = typeof window !== "undefined" && "VideoEncoder" in window && "VideoDecoder" in window && "VideoFrame" in window;
@@ -102,8 +116,9 @@ export class WebCodecsOfflineBackend implements RenderBackend {
       }
     };
 
-    // Phase 5.5: Offline Audio Processing via OfflineAudioContext
+    // Phase 5.5: Offline Audio Processing — the exact same mix graph the loudness meter uses.
     let audioBuffer: AudioBuffer | null = null;
+    let mixReport: { decodedClips: number; undecodedClips: { clipId: string; reason: string }[] } | null = null;
     try {
       onProgress({
         status: "RENDERING_AUDIO",
@@ -116,140 +131,64 @@ export class WebCodecsOfflineBackend implements RenderBackend {
         backendUsed: "OFFLINE_WEBCODECS",
       });
 
-      const sampleRate = 44100;
-      const offlineCtx = new OfflineAudioContext(2, Math.ceil(sampleRate * plan.timelineDuration), sampleRate);
       const project = coreEngine.getProject();
+      const mix = await renderProjectMix(project, plan.timelineDuration, 44100);
 
-      // Decode and mix project audio clips
-      for (const track of project.tracks) {
-        if (track.muted) continue;
-        for (const clip of track.clips) {
-          if (clip.type === 'audio' || clip.type === 'video' || clip.type === 'b-roll') {
-            const asset = project.assets.find(a => a.id === clip.assetId);
-            const url = asset?.url || (renderEngine as any).mediaElements?.get(clip.assetId)?.src;
-            if (url) {
-              const buffer = await decodeAudioUrl(url, offlineCtx);
-              if (buffer) {
-                const sourceNode = offlineCtx.createBufferSource();
-                sourceNode.buffer = buffer;
+      if (mix) {
+        audioBuffer = mix.buffer;
+        mixReport = { decodedClips: mix.decodedClips, undecodedClips: mix.undecodedClips };
 
-                const gainNode = offlineCtx.createGain();
-                const volume = (clip.volume ?? 100) / 100;
-                gainNode.gain.setValueAtTime(volume, 0);
+        // Loudness normalisation to the project's target (real measurement of the rendered mix).
+        const mastering = (project as any).audioMastering as
+          | { loudnessTargetLUFS?: number; truePeakLimiterDbfs?: number }
+          | undefined;
+        const target = mastering?.loudnessTargetLUFS;
+        const ceiling = mastering?.truePeakLimiterDbfs ?? -1;
 
-                if (clip.fadeIn && clip.fadeIn > 0) {
-                  gainNode.gain.setValueAtTime(0, clip.timelineStart ?? 0);
-                  gainNode.gain.linearRampToValueAtTime(volume, (clip.timelineStart ?? 0) + clip.fadeIn);
-                }
-                if (clip.fadeOut && clip.fadeOut > 0) {
-                  gainNode.gain.setValueAtTime(volume, (clip.timelineStart ?? 0) + clip.duration - clip.fadeOut);
-                  gainNode.gain.linearRampToValueAtTime(0, (clip.timelineStart ?? 0) + clip.duration);
-                }
+        if (typeof target === 'number') {
+          const channels: Float32Array[] = [];
+          for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+            channels.push(audioBuffer.getChannelData(c));
+          }
+          const measured = measureLoudness(channels, audioBuffer.sampleRate);
+          const gainDb = normalizationGainDb(measured.integratedLufs, target, measured.truePeakDbfs, ceiling);
 
-                // Real audio processing from the canonical clip state: EQ (low-shelf /
-                // peaking / high-shelf) and dynamics compression, then the volume + fades.
-                const processed: AudioNode[] = [];
-                const eq = clip.audioEffects?.eq;
-                if (eq && eq.enabled && !eq.bypass) {
-                  const bands: { type: BiquadFilterType; freq: number; gain: number; q?: number }[] = [];
-                  if (eq.highPass?.enabled) {
-                    bands.push({ type: "highpass", freq: eq.highPass.freq, gain: 0 });
-                  }
-                  if (eq.lowShelf) bands.push({ type: "lowshelf", freq: eq.lowShelf.freq, gain: eq.lowShelf.gain });
-                  if (eq.mid) bands.push({ type: "peaking", freq: eq.mid.freq, gain: eq.mid.gain, q: eq.mid.q });
-                  if (eq.highShelf) bands.push({ type: "highshelf", freq: eq.highShelf.freq, gain: eq.highShelf.gain });
+          this.audioAnalysis = {
+            integratedLufs: measured.integratedLufs,
+            truePeakDbfs: measured.truePeakDbfs,
+            targetLufs: target,
+            appliedGainDb: gainDb,
+            normalizationApplied: gainDb !== null && Math.abs(gainDb) > 0.05,
+          };
 
-                  for (const band of bands) {
-                    const filter = offlineCtx.createBiquadFilter();
-                    filter.type = band.type;
-                    filter.frequency.setValueAtTime(band.freq, 0);
-                    filter.gain.setValueAtTime(band.gain, 0);
-                    if (band.type === "peaking" && typeof band.q === "number") {
-                      filter.Q.setValueAtTime(band.q, 0);
-                    }
-                    processed.push(filter);
-                  }
-                }
-
-                const comp = clip.audioEffects?.compression;
-                if (comp && comp.enabled && !comp.bypass) {
-                  const compressor = offlineCtx.createDynamicsCompressor();
-                  compressor.threshold.setValueAtTime(comp.threshold, 0);
-                  compressor.ratio.setValueAtTime(comp.ratio, 0);
-                  compressor.attack.setValueAtTime(comp.attack, 0);
-                  compressor.release.setValueAtTime(comp.release, 0);
-                  processed.push(compressor);
-
-                  if (comp.makeupGain) {
-                    const makeup = offlineCtx.createGain();
-                    makeup.gain.setValueAtTime(Math.pow(10, comp.makeupGain / 20), 0);
-                    processed.push(makeup);
-                  }
-                }
-
-                let tail: AudioNode = sourceNode;
-                for (const node of processed) {
-                  tail.connect(node);
-                  tail = node;
-                }
-                tail.connect(gainNode);
-                gainNode.connect(offlineCtx.destination);
-
-                const sourceStart = clip.sourceStart ?? 0;
-                sourceNode.start(clip.timelineStart ?? 0, sourceStart, clip.duration);
+          if (gainDb !== null && Math.abs(gainDb) > 0.05) {
+            const factor = Math.pow(10, gainDb / 20);
+            for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+              const data = audioBuffer.getChannelData(c);
+              for (let i = 0; i < data.length; i++) {
+                data[i] = Math.max(-1, Math.min(1, data[i] * factor));
               }
             }
+            console.log(`[OfflineExport] Loudness normalisation: ${gainDb.toFixed(2)} dB (${measured.integratedLufs} LUFS -> target ${target} LUFS)`);
+          } else {
+            console.log(`[OfflineExport] Loudness normalisation not needed (${measured.integratedLufs} LUFS, target ${target} LUFS)`);
           }
         }
+      } else {
+        // No decodable audio: export the video without an audio track instead of inventing a tone.
+        console.warn("[OfflineExport] No decodable project audio — exporting without an audio track.");
+        this.audioAnalysis = { integratedLufs: null, truePeakDbfs: null, targetLufs: null, appliedGainDb: null, normalizationApplied: false };
       }
-
-      // Mix synthetic background music track if active
-      const settingsAny = project.settings as any;
-      if (settingsAny?.bgMusicTrack && settingsAny.bgMusicTrack !== "none") {
-        const musicVolume = settingsAny.bgMusicVolume ?? 0.3;
-        const osc = offlineCtx.createOscillator();
-        const filter = offlineCtx.createBiquadFilter();
-        const gain = offlineCtx.createGain();
-        
-        osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(110, 0);
-        
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(300, 0);
-        
-        gain.gain.setValueAtTime(musicVolume * 0.05, 0);
-        
-        if (settingsAny.bgMusicTrack === "viral-phonk" || settingsAny.bgMusicTrack === "tech-ambient") {
-          osc.frequency.setValueAtTime(110, 0);
-          osc.frequency.setValueAtTime(165, 0.5);
-          osc.frequency.setValueAtTime(220, 1.0);
-          osc.frequency.setValueAtTime(110, 1.5);
-        }
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(offlineCtx.destination);
-        osc.start(0);
-        osc.stop(plan.timelineDuration);
-      }
-
-      audioBuffer = await offlineCtx.startRendering();
-    } catch (e) {
-      console.warn("OfflineAudioContext rendering error/fallback:", e);
-      // Fallback simple sine oscillator to guarantee audio track presence
-      try {
-        const sampleRate = 44100;
-        const offlineCtx = new OfflineAudioContext(2, Math.ceil(sampleRate * plan.timelineDuration), sampleRate);
-        const osc = offlineCtx.createOscillator();
-        const gain = offlineCtx.createGain();
-        osc.frequency.setValueAtTime(440, 0);
-        gain.gain.setValueAtTime(0.01, 0);
-        osc.connect(gain);
-        gain.connect(offlineCtx.destination);
-        osc.start(0);
-        osc.stop(plan.timelineDuration);
-        audioBuffer = await offlineCtx.startRendering();
-      } catch {}
+    } catch (e: any) {
+      console.warn("Offline audio rendering failed:", e);
+      this.audioAnalysis = {
+        integratedLufs: null,
+        truePeakDbfs: null,
+        targetLufs: null,
+        appliedGainDb: null,
+        normalizationApplied: false,
+        error: e?.message || String(e),
+      };
     }
 
     // Check WebCodecs VideoEncoder support strictly
@@ -498,6 +437,17 @@ export class WebCodecsOfflineBackend implements RenderBackend {
       blobUrl: url,
       createdAt: new Date().toISOString(),
       qcStatus: qc.passed ? "PASSED" : "FAILED",
+      // Real, measured loudness of the file that was just written (nulls mean "not measured").
+      audioLoudness: {
+        integratedLufs: this.audioAnalysis?.integratedLufs ?? null,
+        truePeakDbfs: this.audioAnalysis?.truePeakDbfs ?? null,
+        targetLufs: this.audioAnalysis?.targetLufs ?? null,
+        appliedGainDb: this.audioAnalysis?.appliedGainDb ?? null,
+        normalizationApplied: this.audioAnalysis?.normalizationApplied ?? false,
+        audioTrackIncluded: !!audioBuffer,
+        decodedClips: mixReport?.decodedClips ?? 0,
+        undecodedClips: mixReport?.undecodedClips.length ?? 0,
+      },
     };
   }
 

@@ -97,6 +97,15 @@ export interface ExportHistoryItem {
   createdAt: string;
   fileUrl?: string;
   fileSize?: string;
+  /** Measured loudness of the exported mix (null = not measured, never a placeholder number). */
+  audioLoudness?: {
+    integratedLufs: number | null;
+    truePeakDbfs: number | null;
+    targetLufs: number | null;
+    appliedGainDb: number | null;
+    normalizationApplied: boolean;
+    audioTrackIncluded: boolean;
+  };
   error?: {
     code: RenderErrorCode;
     messageSk: string;

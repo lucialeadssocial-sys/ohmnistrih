@@ -635,6 +635,57 @@ export class TimelineEngine {
   }
 
   /**
+   * Roll edit: moves the cut point between two adjacent clips on the same track.
+   *
+   * `clipId` + `edge` identify the cut:
+   *  - edge 'in'  → clipId is the RIGHT clip; the cut before its in point is rolled
+   *  - edge 'out' → clipId is the LEFT clip; the cut after its out point is rolled
+   *
+   * Positive `deltaSeconds` moves the cut later (left clip grows, right clip shrinks), negative
+   * moves it earlier. The total timeline length never changes because both clips are trimmed by
+   * the same amount. Returns null when the roll is not possible (not adjacent, no source material,
+   * minimum duration) — callers must report that instead of pretending the edit happened.
+   */
+  public static rollClip(
+    track: TrackModel,
+    clipId: string,
+    edge: 'in' | 'out',
+    deltaSeconds: number,
+    minDuration: number = 0.05
+  ): TrackModel | null {
+    const clips = [...track.clips].sort((a, b) => (a.timelineStart ?? a.start ?? 0) - (b.timelineStart ?? b.start ?? 0));
+    const targetIdx = clips.findIndex(c => c.id === clipId);
+    if (targetIdx === -1 || clips.length < 2) return null;
+
+    const rightIdx = edge === 'in' ? targetIdx : targetIdx + 1;
+    const leftIdx = rightIdx - 1;
+    if (leftIdx < 0 || rightIdx > clips.length - 1) return null;
+
+    const leftClip = clips[leftIdx];
+    const rightClip = clips[rightIdx];
+
+    // The two clips must really share the cut point on the same track.
+    const leftEnd = (leftClip.timelineStart ?? leftClip.start ?? 0) + leftClip.duration;
+    const rightStart = rightClip.timelineStart ?? rightClip.start ?? 0;
+    if (Math.abs(leftEnd - rightStart) > 0.001) return null;
+
+    // Roll by trimming both sides with the canonical trim math (signed delta moves the cut).
+    const trimmedLeft = TimelineEngine.trimClip(leftClip, 'right', deltaSeconds, minDuration);
+    if (!trimmedLeft) return null;
+
+    const trimmedRight = TimelineEngine.trimClip(rightClip, 'left', deltaSeconds, minDuration);
+    if (!trimmedRight) return null;
+
+    const updatedClips = clips.map((c, idx) => {
+      if (idx === leftIdx) return trimmedLeft;
+      if (idx === rightIdx) return trimmedRight;
+      return c;
+    });
+
+    return { ...track, clips: updatedClips };
+  }
+
+  /**
    * Ripple Trim Head (Q shortcut):
    * Trims the beginning of the clip to the playhead and ripples subsequent clips left.
    */

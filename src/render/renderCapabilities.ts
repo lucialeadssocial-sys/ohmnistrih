@@ -51,6 +51,20 @@ export interface RenderArtifact {
   blobUrl: string;
   createdAt: string;
   qcStatus: "PASSED" | "FAILED" | "NOT_RUN";
+  /**
+   * Measured loudness of the exported mix (ITU-R BS.1770-4). Null = not measured; a null value
+   * must never be rendered as a number in the UI.
+   */
+  audioLoudness?: {
+    integratedLufs: number | null;
+    truePeakDbfs: number | null;
+    targetLufs: number | null;
+    appliedGainDb: number | null;
+    normalizationApplied: boolean;
+    audioTrackIncluded: boolean;
+    decodedClips?: number;
+    undecodedClips?: number;
+  };
 }
 
 export async function detectRenderCapabilities(): Promise<RenderCapabilities> {

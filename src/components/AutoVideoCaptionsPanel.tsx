@@ -15,6 +15,7 @@ import {
   Edit3
 } from "lucide-react";
 import { CaptionProject, CaptionSegment, WordTiming } from "../types";
+import { extractWavFromVideoUrl } from "../utils/audioExtraction";
 
 interface AutoVideoCaptionsPanelProps {
   currentVideoUrl: string;
@@ -27,105 +28,9 @@ interface AutoVideoCaptionsPanelProps {
   showToast: (msg: string) => void;
 }
 
-// Audio Extraction Helper using Web Audio API
-export async function extractWavFromVideoUrl(videoUrl: string): Promise<{ base64: string; duration: number; rms: number; hasAudio: boolean }> {
-  try {
-    const response = await fetch(videoUrl);
-    const arrayBuffer = await response.arrayBuffer();
-
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    const audioCtx = new AudioCtx();
-
-    let decodedBuffer: AudioBuffer;
-    try {
-      decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-    } catch (e) {
-      console.warn("Could not decode audio data directly from arrayBuffer:", e);
-      return { base64: "", duration: 0, rms: 0, hasAudio: false };
-    }
-
-    const duration = decodedBuffer.duration;
-    const rawData = decodedBuffer.getChannelData(0);
-
-    // Calculate RMS (Root Mean Square) volume to verify if video contains actual sound
-    let sumSq = 0;
-    const step = Math.max(1, Math.floor(rawData.length / 10000));
-    let count = 0;
-    for (let i = 0; i < rawData.length; i += step) {
-      sumSq += rawData[i] * rawData[i];
-      count++;
-    }
-    const rms = Math.sqrt(sumSq / (count || 1));
-
-    if (rms < 0.0001 || rawData.length === 0) {
-      return { base64: "", duration, rms, hasAudio: false };
-    }
-
-    // Resample to 16kHz mono WAV
-    const targetRate = 16000;
-    const offlineCtx = new OfflineAudioContext(1, Math.ceil(duration * targetRate), targetRate);
-    const source = offlineCtx.createBufferSource();
-    source.buffer = decodedBuffer;
-    source.connect(offlineCtx.destination);
-    source.start(0);
-
-    const resampledBuffer = await offlineCtx.startRendering();
-    const pcmData = resampledBuffer.getChannelData(0);
-
-    // Create 16-bit PCM WAV
-    const wavBuffer = createWavHeaderAndPcm(pcmData, targetRate);
-
-    // Convert to Base64
-    let binary = "";
-    const bytes = new Uint8Array(wavBuffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 = btoa(binary);
-
-    return { base64, duration, rms, hasAudio: true };
-  } catch (err) {
-    console.error("Audio extraction failed:", err);
-    return { base64: "", duration: 0, rms: 0, hasAudio: false };
-  }
-}
-
-function createWavHeaderAndPcm(pcm: Float32Array, sampleRate: number): ArrayBuffer {
-  const buffer = new ArrayBuffer(44 + pcm.length * 2);
-  const view = new DataView(buffer);
-
-  writeString(view, 0, "RIFF");
-  view.setUint32(4, 36 + pcm.length * 2, true);
-  writeString(view, 8, "WAVE");
-
-  writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // Mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-
-  writeString(view, 36, "data");
-  view.setUint32(40, pcm.length * 2, true);
-
-  let offset = 44;
-  for (let i = 0; i < pcm.length; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    offset += 2;
-  }
-
-  return buffer;
-}
-
-function writeString(view: DataView, offset: number, string: string) {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
-}
+// Real audio extraction lives in the shared util so the header "Generate subtitles" flow uses
+// exactly the same (real) implementation.
+export { extractWavFromVideoUrl } from "../utils/audioExtraction";
 
 export const AutoVideoCaptionsPanel: React.FC<AutoVideoCaptionsPanelProps> = ({
   currentVideoUrl,
@@ -183,7 +88,12 @@ export const AutoVideoCaptionsPanel: React.FC<AutoVideoCaptionsPanelProps> = ({
       if (!data.success || !data.hasSpeech || !data.segments || data.segments.length === 0) {
         setIsAnalyzing(false);
         setNoSpeechDetected(true);
-        showToast(isSk ? "V tomto videu sa nepodarilo nájsť hovorené slovo." : "No spoken speech found in this video.");
+        // Distinguish "the model found no speech" from "transcription was not available at all".
+        showToast(
+          data.message
+            ? data.message
+            : (isSk ? "V tomto videu sa nepodarilo nájsť hovorené slovo." : "No spoken speech found in this video.")
+        );
         return;
       }
 

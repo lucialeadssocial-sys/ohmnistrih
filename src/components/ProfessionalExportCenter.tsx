@@ -257,6 +257,16 @@ export const ProfessionalExportCenter: React.FC<ProfessionalExportCenterProps> =
         createdAt: new Date().toLocaleTimeString(),
         fileUrl: artifact.blobUrl,
         fileSize: artifact.fileSize,
+        audioLoudness: artifact.audioLoudness
+          ? {
+              integratedLufs: artifact.audioLoudness.integratedLufs,
+              truePeakDbfs: artifact.audioLoudness.truePeakDbfs,
+              targetLufs: artifact.audioLoudness.targetLufs,
+              appliedGainDb: artifact.audioLoudness.appliedGainDb,
+              normalizationApplied: artifact.audioLoudness.normalizationApplied,
+              audioTrackIncluded: artifact.audioLoudness.audioTrackIncluded,
+            }
+          : undefined,
       };
 
       RenderEngineManager.addExportHistoryItem(projectId, historyItem);
@@ -484,6 +494,13 @@ export const ProfessionalExportCenter: React.FC<ProfessionalExportCenterProps> =
                         <span>Preset: {item.preset}</span>
                         <span>Res: {item.resolution}</span>
                         <span>EDL v{item.edlVersion}</span>
+                        <span>
+                          {item.audioLoudness
+                            ? (item.audioLoudness.audioTrackIncluded
+                                ? `Audio: ${item.audioLoudness.integratedLufs !== null ? `${item.audioLoudness.integratedLufs.toFixed(1)} LUFS` : "nemerané"} / ${item.audioLoudness.truePeakDbfs !== null ? `${item.audioLoudness.truePeakDbfs.toFixed(2)} dBTP` : "TP nemerané"}${item.audioLoudness.normalizationApplied ? ` (normalizované ${item.audioLoudness.appliedGainDb?.toFixed(2)} dB na ${item.audioLoudness.targetLufs} LUFS)` : ""}`
+                                : "Audio: bez zvukovej stopy (mix sa nedal dekódovať)")
+                            : "Audio: nemerané"}
+                        </span>
                       </div>
                     </div>
 
