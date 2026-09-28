@@ -4,6 +4,13 @@
  */
 
 import {
+  DIRECTOR_MODES,
+  DirectorMode,
+  DirectorQuality,
+  applyDirectorMode,
+  inferModeForPlatform,
+} from './directorModes';
+import {
   AnalysisResultCollection,
   DirectorDecisionItem,
   DirectorObjective,
@@ -591,9 +598,14 @@ export class DirectorEngine {
   public generateDirectorPlan(
     project: ProjectModel,
     targetPlatform: 'TikTok' | 'Instagram Reels' | 'YouTube Shorts' | 'YouTube Long-form' | 'UGC Ads' | 'General' = 'TikTok',
-    objectives: DirectorObjective[] = ['Retention', 'Education']
+    objectives: DirectorObjective[] = ['Retention', 'Education'],
+    options: { mode?: DirectorMode; quality?: DirectorQuality } = {}
   ): DirectorPlan {
     const analysis = project.analysisResults;
+    const requestedMode: DirectorMode = options.mode ?? inferModeForPlatform(targetPlatform);
+    const requestedQuality: DirectorQuality = options.quality ?? 'PRO_QUALITY';
+    const modeObjectives: DirectorObjective[] =
+      objectives && objectives.length > 0 ? objectives : DIRECTOR_MODES[requestedMode].defaultObjectives;
 
     const decisions: DirectorDecisionItem[] = [];
 
@@ -920,14 +932,14 @@ export class DirectorEngine {
       }
     };
 
-    return {
+    const draftPlan: DirectorPlan = {
       id: `plan_${crypto.randomUUID()}`,
       projectId: project.id,
       sequenceId: project.sequence?.id,
-      title: `Director Plan — ${targetPlatform} (${objectives.join(', ')})`,
+      title: `Director Plan — ${targetPlatform} (${modeObjectives.join(', ')})`,
       targetPlatform,
       targetFormat: targetPlatform === 'YouTube Long-form' ? '16:9' : '9:16',
-      objectives,
+      objectives: modeObjectives,
       audience: targetPlatform === 'YouTube Long-form' ? 'Long-form publikum' : 'Short-form publikum',
       contentSummary: analysis?.contentStructure?.hook?.text
         || `Plán odvodený z ${decisions.length} rozhodnutí; obsah nebol sémanticky klasifikovaný (chýba analysisResults.contentStructure).`,
@@ -944,6 +956,11 @@ export class DirectorEngine {
       analysisVersion: 2,
       directorVersion: 1
     };
+
+    // Professional modes are applied here: the generated decisions are the measured proposals, the
+    // mode decides which of them deserve a place in the plan — and reports every drop with a reason.
+    const { plan } = applyDirectorMode(draftPlan, project, requestedMode, requestedQuality);
+    return plan;
   }
 
   /**

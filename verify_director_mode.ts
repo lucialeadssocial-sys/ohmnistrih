@@ -1,0 +1,315 @@
+/**
+ * Verification for the professional Director modes + RAW → READY summary.
+ *
+ * What this file proves (and what it does NOT):
+ *  - Deterministic core-logic checks over real module code (mode filtering, honesty of numbers).
+ *  - Source guards that are STATIC (they read files, they do not run a browser).
+ *  - It does NOT claim browser rendering. Anything UI-shaped is labelled SOURCE GUARD.
+ *
+ * Run: npx tsx verify_director_mode.ts
+ */
+import { coreEngine, createInitialProject, AddClipCommand } from './src/core';
+import { DIRECTOR_MODES, QUALITY_RULES, applyDirectorMode, buildReadinessSummary, inferModeForPlatform, DirectorMode, DirectorQuality } from './src/core/ai/directorModes';
+import { DirectorDecisionItem, DirectorPlan } from './src/core/ai/analysisTypes';
+
+let pass = 0;
+let fail = 0;
+
+function check(label: string, condition: boolean, extra?: string) {
+  if (condition) {
+    pass++;
+    console.log(`  PASS  ${label}${extra ? ` — ${extra}` : ''}`);
+  } else {
+    fail++;
+    console.log(`  FAIL  ${label}${extra ? ` — ${extra}` : ''}`);
+  }
+}
+
+const CLIP = (id: string, trackId: string, start: number, duration: number) => ({
+  id,
+  trackId,
+  assetId: 'asset_fixture',
+  name: id,
+  type: 'video' as const,
+  timelineStart: start,
+  duration,
+  sourceStart: 0,
+  sourceEnd: duration,
+  speed: 1,
+  volume: 100,
+  scale: 100,
+  opacity: 100,
+  positionX: 0,
+  positionY: 0,
+  rotation: 0,
+  keyframes: [],
+});
+
+/** Minimal real decision shape — the fields the filter reads, nothing invented. */
+function decision(over: Partial<DirectorDecisionItem> & { id: string }): DirectorDecisionItem {
+  return {
+    id: over.id,
+    editDecisionId: over.editDecisionId ?? `edit_${over.id}`,
+    priority: over.priority ?? 'RECOMMENDED',
+    what: over.what ?? 'fixture decision',
+    why: over.why ?? 'fixture',
+    whenToUse: 'fixture',
+    whenNotToUse: 'fixture',
+    howToManual: [],
+    alternatives: [],
+    confidence: over.confidence ?? 0.9,
+    source: 'fixture',
+    category: over.category ?? 'heuristic',
+    proposedAction: over.proposedAction,
+    affectedClipId: over.affectedClipId,
+    timelineLocation: over.timelineLocation,
+    status: over.status ?? 'proposed',
+  } as DirectorDecisionItem;
+}
+
+function planWith(decisions: DirectorDecisionItem[]): DirectorPlan {
+  return {
+    id: 'plan_fixture',
+    projectId: 'proj_fixture',
+    title: 'fixture',
+    targetPlatform: 'TikTok',
+    targetFormat: '9:16',
+    objectives: ['Retention'],
+    audience: 'fixture',
+    contentSummary: 'fixture',
+    strategies: {},
+    decisions,
+    analysisReferences: [],
+    insightReferences: [],
+    knowledgeReferences: [],
+    confidence: 0.9,
+    unresolvedAmbiguities: [],
+    createdAt: 0,
+    analysisVersion: 2,
+    directorVersion: 1,
+  };
+}
+
+async function run() {
+  console.log('=== Director modes & RAW → READY verification (deterministic core checks) ===');
+
+  // ---------------------------------------------------------------- §1 configs
+  console.log('\n--- 1. Mode and quality rules are complete ---');
+  const modeIds: DirectorMode[] = ['SOCIAL', 'ADS', 'STORY', 'YOUTUBE', 'PODCAST', 'CORPORATE', 'CUSTOM'];
+  check('all seven modes are defined', modeIds.every(id => !!DIRECTOR_MODES[id]), modeIds.join(','));
+  check(
+    'every mode names its goal in both languages',
+    modeIds.every(id => DIRECTOR_MODES[id].goalSk.length > 10 && DIRECTOR_MODES[id].goalEn.length > 10)
+  );
+  check(
+    'every mode allows at least one intervention per minute',
+    modeIds.every(id => DIRECTOR_MODES[id].maxDecisionsPerMinute >= 1)
+  );
+  check(
+    'PRO QUALITY is stricter than STANDARD on confidence and density',
+    QUALITY_RULES.PRO_QUALITY.minConfidence > QUALITY_RULES.STANDARD.minConfidence &&
+      QUALITY_RULES.PRO_QUALITY.maxDecisionsPerMinute < QUALITY_RULES.STANDARD.maxDecisionsPerMinute,
+    `${QUALITY_RULES.PRO_QUALITY.minConfidence}/${QUALITY_RULES.PRO_QUALITY.maxDecisionsPerMinute} vs ${QUALITY_RULES.STANDARD.minConfidence}/${QUALITY_RULES.STANDARD.maxDecisionsPerMinute}`
+  );
+  check('PRO QUALITY explains itself in Slovak', QUALITY_RULES.PRO_QUALITY.noteSk.includes('menej'));
+  check('platform → mode inference: shorts are SOCIAL', inferModeForPlatform('TikTok') === 'SOCIAL' && inferModeForPlatform('YouTube Shorts') === 'SOCIAL');
+  check('platform → mode inference: ads are ADS', inferModeForPlatform('UGC Ads') === 'ADS');
+  check('platform → mode inference: long-form is YOUTUBE', inferModeForPlatform('YouTube Long-form') === 'YOUTUBE');
+
+  // ---------------------------------------------------------------- §2 filtering
+  console.log('\n--- 2. Mode filtering is explainable and loses nothing silently ---');
+  const project: any = createInitialProject('Director mode fixture');
+  project.tracks.find((t: any) => t.type === 'video').clips.push(CLIP('c1', 'track_video', 0, 120));
+
+  const fixtureDecisions = [
+    decision({ id: 'd_hook', priority: 'MUST_CONSIDER', confidence: 0.9, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.15 } }, timelineLocation: { start: 4, end: 6 } }),
+    decision({ id: 'd_mid', priority: 'RECOMMENDED', confidence: 0.75, proposedAction: { kind: 'CAPTION_EMPHASIS' }, timelineLocation: { start: 30 } }),
+    decision({ id: 'd_cut', priority: 'RECOMMENDED', confidence: 0.85, proposedAction: { kind: 'TRIM_RANGE' }, timelineLocation: { start: 60, end: 65 } }),
+    decision({ id: 'd_broll', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'BROLL_INSERT' }, timelineLocation: { start: 45 } }),
+    decision({ id: 'd_color', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'COLOR_BALANCE' }, affectedClipId: 'c1' }),
+    decision({ id: 'd_unanchored', priority: 'OPTIONAL', confidence: 0.95, proposedAction: { kind: 'TRANSITION' } }),
+    decision({ id: 'd_spacing_a', priority: 'MUST_CONSIDER', confidence: 0.95, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.1 } }, timelineLocation: { start: 80 } }),
+    decision({ id: 'd_spacing_b', priority: 'MUST_CONSIDER', confidence: 0.95, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.1 } }, timelineLocation: { start: 82 } }),
+  ];
+
+  const socialPro = applyDirectorMode(planWith(fixtureDecisions), project, 'SOCIAL', 'PRO_QUALITY');
+  const customStd = applyDirectorMode(planWith(fixtureDecisions), project, 'CUSTOM', 'STANDARD');
+
+  check('PRO QUALITY keeps fewer interventions than STANDARD', socialPro.plan.decisions.length < customStd.plan.decisions.length, `${socialPro.plan.decisions.length} vs ${customStd.plan.decisions.length}`);
+  check(
+    'no decision disappears without a record',
+    socialPro.plan.decisions.length + socialPro.dropped.length === fixtureDecisions.length,
+    `${socialPro.plan.decisions.length} kept + ${socialPro.dropped.length} dropped`
+  );
+  check(
+    'a kept decision is never also reported as dropped',
+    socialPro.plan.decisions.every(d => !socialPro.dropped.some(x => x.id === d.id))
+  );
+
+  const keptMid = socialPro.plan.decisions.find(d => d.id === 'd_mid');
+  const droppedMid = socialPro.dropped.find(d => d.id === 'd_mid');
+  check('PRO QUALITY drops a 75% decision', !keptMid && !!droppedMid);
+  check('the drop reason names the confidence floor in Slovak', !!droppedMid?.reasonSk.includes('istota') && !!droppedMid?.reasonSk.includes('80'), droppedMid?.reasonSk);
+  check('the drop reason exists in English too', !!droppedMid?.reasonEn.includes('confidence'));
+
+  check('STANDARD keeps the 75% decision that PRO drops', customStd.plan.decisions.some(d => d.id === 'd_mid'));
+  check('the unanchored decision is dropped with a reason', socialPro.dropped.some(d => d.id === 'd_unanchored' && d.reasonSk.includes('nie je ukotvené')));
+  check('spacing kills the second punch-in 2s after the first', socialPro.plan.decisions.filter(d => d.id.startsWith('d_spacing')).length === 1, String(socialPro.plan.decisions.filter(d => d.id.startsWith('d_spacing')).length));
+  check('spacing drop explains the rule', socialPro.dropped.some(d => d.id === 'd_spacing_b' && d.reasonSk.includes('PUNCH_IN')));
+
+  const keptOrder = socialPro.plan.decisions.map(d => d.id);
+  check('preferred kind wins the ordering tie (B-roll before colour)', keptOrder.indexOf('d_broll') < keptOrder.indexOf('d_color'), keptOrder.join(' → '));
+  const lastMust = keptOrder.map((id, i) => ({ id, i })).filter(x => x.id === 'd_hook' || x.id === 'd_spacing_a').map(x => x.i);
+  const firstRecommended = keptOrder.findIndex(id => id === 'd_cut' || id === 'd_broll' || id === 'd_color');
+  check(
+    'higher priority is ordered first',
+    Math.max(...lastMust) < firstRecommended,
+    keptOrder.join(' → ')
+  );
+  const executable = (d: DirectorDecisionItem) => !!d.proposedAction && d.proposedAction.kind !== 'MANUAL_ONLY';
+  check('every kept intervention respects the PRO confidence floor', socialPro.plan.decisions.filter(executable).every(d => d.confidence >= QUALITY_RULES.PRO_QUALITY.minConfidence));
+
+  // Guidance is the teaching layer — it must survive every mode.
+  const guidanceFixture = [
+    decision({ id: 'g_manual', priority: 'OPTIONAL', confidence: 0.4, proposedAction: { kind: 'MANUAL_ONLY', parameters: { reason: 'urob ručne' } } }),
+    decision({ id: 'g_teach', priority: 'OPTIONAL', confidence: 0.2 }),
+  ];
+  const guidanceKept = applyDirectorMode(planWith(guidanceFixture), project, 'SOCIAL', 'PRO_QUALITY').plan.decisions;
+  check('manual-only guidance survives PRO QUALITY', guidanceKept.some(d => d.id === 'g_manual'));
+  check('pure explanation items survive PRO QUALITY', guidanceKept.some(d => d.id === 'g_teach'));
+  check('guidance is not counted against the intervention budget', guidanceKept.length === 2, `${guidanceKept.length} kept`);
+  check('the plan records which mode + quality produced it', socialPro.plan.mode === 'SOCIAL' && socialPro.plan.quality === 'PRO_QUALITY');
+  check('mode notes state the numeric rules applied', (socialPro.plan.modeNotesSk || []).some(n => n.includes('80') && n.includes('min')), (socialPro.plan.modeNotesSk || []).join(' | '));
+  check('mode notes are bilingual', (socialPro.plan.modeNotesEn || []).length === (socialPro.plan.modeNotesSk || []).length);
+
+  // Budget per minute: 10 decisions inside the first minute.
+  const manyDecisions = Array.from({ length: 10 }, (_, i) =>
+    decision({ id: `b${i}`, priority: 'MUST_CONSIDER', confidence: 0.95, proposedAction: { kind: 'CAPTION_EMPHASIS' }, timelineLocation: { start: 1 + i * 5 } })
+  );
+  const budgeted = applyDirectorMode(planWith(manyDecisions), project, 'SOCIAL', 'PRO_QUALITY');
+  check(
+    'the per-minute budget is enforced (PRO allows 2/min here)',
+    budgeted.plan.decisions.length <= QUALITY_RULES.PRO_QUALITY.maxDecisionsPerMinute,
+    `${budgeted.plan.decisions.length} kept of 10`
+  );
+  check('the budget drop quotes the limit', budgeted.dropped.some(d => d.reasonSk.includes('limit')));
+
+  // ---------------------------------------------------------------- §3 readiness
+  console.log('\n--- 3. RAW → READY counts are measured, the time figure is a labelled estimate ---');
+  const readinessProject: any = {
+    ...createInitialProject('Readiness fixture'),
+    analysisResults: undefined,
+    transcript: undefined,
+  };
+  const videoTrack = readinessProject.tracks.find((t: any) => t.type === 'video');
+  videoTrack.clips.push(CLIP('r1', videoTrack.id, 0, 60), CLIP('r2', videoTrack.id, 60, 60), CLIP('r3', videoTrack.id, 120, 30));
+
+  const readinessPlan = planWith([
+    decision({ id: 't1', priority: 'MUST_CONSIDER', confidence: 0.9, proposedAction: { kind: 'TRIM_RANGE' }, timelineLocation: { start: 10, end: 15 } }),
+    decision({ id: 't2', priority: 'RECOMMENDED', confidence: 0.85, proposedAction: { kind: 'TRIM_RANGE' }, timelineLocation: { start: 40, end: 43 } }),
+    decision({ id: 'p1', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 1.2 } }, timelineLocation: { start: 50 } }),
+    decision({ id: 'b1', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'BROLL_INSERT' }, timelineLocation: { start: 70 } }),
+    decision({ id: 'c1', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'CAPTION_EMPHASIS' }, timelineLocation: { start: 90 } }),
+  ]);
+
+  const summary = buildReadinessSummary(readinessProject, readinessPlan);
+  check('duration is the measured end of the last clip', summary.durationSeconds === 150, `${summary.durationSeconds}`);
+  check('clip count is the real number of clips', summary.clipCount === 3, `${summary.clipCount}`);
+  check('trimmed seconds are summed from the plan ranges', summary.trimmedSeconds === 8, `${summary.trimmedSeconds}`);
+  check('intervention counters come from the plan kinds', summary.punchIns === 1 && summary.broll === 1 && summary.captions === 1 && summary.trims === 2, `${summary.punchIns}/${summary.broll}/${summary.captions}/${summary.trims}`);
+  check('unmeasured analysis is reported as such', summary.analysisMeasured === false);
+  check('no shorts are proposed without measured hooks', summary.hooksMeasured === 0 && summary.shortsProposals === 0);
+  const expectedEstimate = Math.round(((5 * 30 + 8 * 4 + 3 * 5) / 60) * 10) / 10;
+  check('the saved-time figure follows the stated formula', summary.estimatedManualMinutes === expectedEstimate, `${summary.estimatedManualMinutes} vs ${expectedEstimate}`);
+  check('the estimate is labelled as an estimate, not a measurement', summary.estimateBasisSk.includes('Nie je to meranie') && summary.estimateBasisEn.includes('not a measured'));
+
+  // ---------------------------------------------------------------- §4 engine wiring
+  console.log('\n--- 4. The engine applies the mode (integration) ---');
+  const measured: any = {
+    ...createInitialProject('Director engine fixture'),
+    analysisResults: {
+      projectId: 'engine_fixture',
+      timestamp: Date.now(),
+      hooks: [
+        { id: 'h1', start: 2, end: 5, type: 'question', reason: 'measured', confidence: 0.92 },
+        { id: 'h2', start: 30, end: 33, type: 'promise', reason: 'measured', confidence: 0.71 },
+      ],
+      pauses: [
+        { id: 'p1', start: 10, end: 13, duration: 3, type: 'long_pause', confidence: 0.9 },
+        { id: 'p2', start: 18, end: 19.2, duration: 1.2, type: 'long_pause', confidence: 0.7 },
+      ],
+      ctas: [{ id: 'c1', start: 40, end: 43, type: 'subscribe', text: 'Odoberte kanál', confidence: 0.8 }],
+    },
+    transcript: { id: 'tr1', segments: [{ id: 's1', start: 2, end: 5, text: 'Ako ušetriť čas pri strihu?' }], words: [] },
+  };
+  const measuredVideo = measured.tracks.find((t: any) => t.type === 'video');
+  measuredVideo.clips.push(CLIP('m1', measuredVideo.id, 0, 90));
+
+  coreEngine.commandManager.setProject(measured);
+  const socialPlan = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'SOCIAL', 'PRO_QUALITY');
+  check('the engine returns a plan tagged with the requested mode', socialPlan.mode === 'SOCIAL' && socialPlan.quality === 'PRO_QUALITY');
+  check('the engine plan is built from measured pauses', socialPlan.decisions.length > 0, `${socialPlan.decisions.length} decisions`);
+  check('every engine decision clears the PRO floor quoted in the notes', socialPlan.decisions.every(d => d.confidence >= QUALITY_RULES.PRO_QUALITY.minConfidence));
+  check('the engine reports what the mode dropped', (socialPlan.droppedDecisions || []).length + socialPlan.decisions.length > 0);
+  check(
+    'the engine never fabricates decisions without analysis',
+    (() => {
+      coreEngine.commandManager.setProject({ ...createInitialProject('No analysis'), analysisResults: undefined, transcript: undefined } as any);
+      const bare = coreEngine.generateDirectorPlan('TikTok', ['Retention'], 'SOCIAL', 'PRO_QUALITY');
+      return bare.decisions.length === 0 && bare.unresolvedAmbiguities.some(a => a.includes('analysisResults'));
+    })()
+  );
+
+  // ---------------------------------------------------------------- §5 source guards
+  console.log('\n--- 5. Source guards (static file reading, not browser rendering) ---');
+  const fs = await import('node:fs');
+  const center = fs.readFileSync('src/components/DirectorPlanCenter.tsx', 'utf8');
+  const engine = fs.readFileSync('src/core/ai/directorEngine.ts', 'utf8');
+  const modes = fs.readFileSync('src/core/ai/directorModes.ts', 'utf8');
+
+  check('the Director Center reads the stored plan during render', center.includes('const plan: DirectorPlan | undefined = project.directorPlan;'));
+  check('the Director Center no longer generates a plan during render', !center.includes('project.directorPlan ||\n    coreEngine.generateDirectorPlan'));
+  const generateCalls = center.match(/coreEngine\.generateDirectorPlan\(/g) || [];
+  check('exactly one place creates a plan (the explicit button)', generateCalls.length === 1, `${generateCalls.length} call site(s)`);
+  check('that call site passes the chosen mode and quality', /coreEngine\.generateDirectorPlan\(targetPlatform, selectedObjectives, mode, quality\)/.test(center));
+  check('the UI offers every professional mode', center.includes('DIRECTOR_MODES') && center.includes('PRO QUALITY'));
+  check('the UI renders the RAW → READY summary', center.includes('RAW → READY') && center.includes('getReadinessSummary'));
+  check('the UI shows the dropped decisions with reasons', center.includes('droppedDecisions') && center.includes('reasonSk'));
+  check('the engine delegates filtering to the mode module', engine.includes('applyDirectorMode(draftPlan, project, requestedMode, requestedQuality)'));
+  check('the mode module contains no randomness', !modes.includes('Math.random'));
+
+  // ---------------------------------------------------------------- §6 apply-all path
+  console.log('\n--- 6. „Použiť všetko" really changes the canonical project ---');
+  const applyProject: any = { ...createInitialProject('Apply fixture'), analysisResults: undefined, transcript: undefined };
+  const applyVideo = applyProject.tracks.find((t: any) => t.type === 'video');
+  applyVideo.clips.push(CLIP('a1', applyVideo.id, 0, 30));
+  coreEngine.commandManager.setProject(applyProject);
+
+  const applyPlan = planWith([
+    decision({ id: 'a_punch', priority: 'MUST_CONSIDER', confidence: 0.9, proposedAction: { kind: 'PUNCH_IN', parameters: { scale: 118 } }, affectedClipId: 'a1', timelineLocation: { start: 1, end: 3 } }),
+    decision({ id: 'a_manual', priority: 'RECOMMENDED', confidence: 0.9, proposedAction: { kind: 'MANUAL_ONLY', parameters: { reason: 'ručná práca' } } }),
+  ]);
+  const beforeScale = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'a1')?.scale;
+  const applyResult = coreEngine.safeBatchApplyDirectorPlan(applyPlan, ['a_punch', 'a_manual']);
+  const afterScale = coreEngine.getProject().tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === 'a1')?.scale;
+
+  check('apply-all reports success with the real number of applied edits', applyResult.success === true && applyResult.appliedCount === 1, JSON.stringify({ applied: applyResult.appliedCount, skipped: applyResult.skippedCount }));
+  check('the punch-in really changed the canonical clip', beforeScale === 100 && afterScale === 118, `${beforeScale} → ${afterScale}`);
+  check('the manual-only decision is reported as skipped, not as applied', applyResult.skippedCount === 1);
+  check('the skip reason is written for the user', (applyResult.skipped[0]?.reason || '').length > 5, applyResult.skipped[0]?.reason);
+  check('the apply is undoable through a snapshot', !!applyResult.snapshotVersionId);
+
+  const centerAfter = fs.readFileSync('src/components/DirectorPlanCenter.tsx', 'utf8');
+  check('the UI offers „Použiť všetko"', centerAfter.includes('Použiť všetko'));
+  check('the UI reports how many proposals stay manual', centerAfter.includes('skippedCount'));
+  const coreSource = fs.readFileSync('src/core/index.ts', 'utf8');
+  check('the core returns the skip information to the caller', /skippedCount: number; skipped: \{ id: string; reason: string \}\[\]/.test(coreSource));
+
+  console.log(`\n=== ${fail === 0 ? 'ALL DIRECTOR MODE CHECKS PASSED' : 'DIRECTOR MODE CHECKS FAILED'} — ${pass} passed, ${fail} failed ===`);
+  if (fail > 0) process.exitCode = 1;
+}
+
+run().catch(err => {
+  console.error('verify_director_mode crashed:', err);
+  process.exitCode = 1;
+});

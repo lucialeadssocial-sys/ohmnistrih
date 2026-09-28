@@ -290,6 +290,14 @@ export interface DirectorPlan {
   createdAt: number;
   analysisVersion: number;
   directorVersion: number;
+
+  /** Professional mode + quality level the plan was filtered with (see ai/directorModes.ts). */
+  mode?: 'SOCIAL' | 'ADS' | 'STORY' | 'YOUTUBE' | 'PODCAST' | 'CORPORATE' | 'CUSTOM';
+  quality?: 'STANDARD' | 'PRO_QUALITY';
+  modeNotesSk?: string[];
+  modeNotesEn?: string[];
+  /** Decisions that the mode/quality rules removed, each with the rule that removed it. */
+  droppedDecisions?: { id: string; kind: string; priority: DecisionPriority; reasonSk: string; reasonEn: string }[];
 }
 
 export interface TeachMeExplanation {

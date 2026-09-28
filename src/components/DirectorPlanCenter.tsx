@@ -8,6 +8,7 @@ import {
   DecisionPriority
 } from '../core/ai/analysisTypes';
 import { getTeachMeExplanation } from '../core/ai/knowledgeBase';
+import { DIRECTOR_MODES, DirectorMode, DirectorQuality, QUALITY_RULES } from '../core/ai/directorModes';
 import { playheadStore } from '../core/playback/playheadStore';
 import {
   Clapperboard,
@@ -49,16 +50,51 @@ export const DirectorPlanCenter: React.FC = () => {
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [seekFeedback, setSeekFeedback] = useState<string | null>(null);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
+  const [mode, setMode] = useState<DirectorMode>('SOCIAL');
+  const [quality, setQuality] = useState<DirectorQuality>('PRO_QUALITY');
+  const [showDropped, setShowDropped] = useState(false);
 
-  const plan: DirectorPlan =
-    project.directorPlan ||
-    coreEngine.generateDirectorPlan(targetPlatform, selectedObjectives);
+  /**
+   * The stored plan is READ; it is never generated during render (that used to write into the
+   * canonical project from the render pass). The button below is the only place that creates one.
+   */
+  const plan: DirectorPlan | undefined = project.directorPlan;
+  const decisions = plan?.decisions ?? [];
 
-  const comparisons: EditComparison[] = coreEngine.compareUserAndAiEdits(plan);
+  const comparisons: EditComparison[] = plan ? coreEngine.compareUserAndAiEdits(plan) : [];
+  const summary = plan ? coreEngine.getReadinessSummary(plan) : null;
 
   const handleGeneratePlan = () => {
-    const newPlan = coreEngine.generateDirectorPlan(targetPlatform, selectedObjectives);
+    const newPlan = coreEngine.generateDirectorPlan(targetPlatform, selectedObjectives, mode, quality);
     setAcceptedIds(newPlan.decisions.map(d => d.id));
+  };
+
+  /**
+   * „Použiť všetko" — applies every decision of the current plan in one undoable batch.
+   * Decisions that cannot be executed automatically are reported back, not silently swallowed.
+   */
+  const handleApplyAll = () => {
+    if (!plan) return;
+    const allIds = plan.decisions.map(d => d.id);
+    setApplyStatus('Použitie všetkého: aplikujem plán a vytváram zálohu...');
+    const result = coreEngine.safeBatchApplyDirectorPlan(plan, allIds);
+    if (result.success) {
+      setAcceptedIds(allIds);
+      setApplyStatus(
+        `Použité všetko: ${result.appliedCount} zásahov v projekte` +
+          (result.skippedCount > 0 ? `, ${result.skippedCount} návrhov zostáva na ručnú prácu (dôvody nižšie v pláne).` : '.')
+      );
+    } else {
+      setApplyStatus(`Chyba pri aplikovaní: ${result.error || 'Neznáma chyba'}`);
+    }
+    setTimeout(() => setApplyStatus(null), 7000);
+  };
+
+  /** Changing the mode also loads that mode's default objectives (visible in the chips). */
+  const handleModeChange = (nextMode: DirectorMode) => {
+    setMode(nextMode);
+    const defaults = DIRECTOR_MODES[nextMode].defaultObjectives;
+    if (defaults.length > 0) setSelectedObjectives(defaults);
   };
 
   const toggleAccept = (id: string) => {
@@ -93,6 +129,11 @@ export const DirectorPlanCenter: React.FC = () => {
   };
 
   const handleBatchApply = () => {
+    if (!plan) {
+      setApplyStatus('Najprv vygeneruj Director Plan — potom sa dajú rozhodnutia aplikovať.');
+      setTimeout(() => setApplyStatus(null), 5000);
+      return;
+    }
     setApplyStatus('Aplikujem vybrané rozhodnutia a vytváram zálohu...');
     const result = coreEngine.safeBatchApplyDirectorPlan(plan, acceptedIds);
     if (result.success) {
@@ -103,7 +144,7 @@ export const DirectorPlanCenter: React.FC = () => {
     setTimeout(() => setApplyStatus(null), 5000);
   };
 
-  const filteredDecisions = plan.decisions.filter(d => {
+  const filteredDecisions = decisions.filter(d => {
     if (priorityFilter === 'ALL') return true;
     return d.priority === priorityFilter;
   });
@@ -133,7 +174,7 @@ export const DirectorPlanCenter: React.FC = () => {
               activeTab === 'PLAN' ? 'bg-amber-500 text-black' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
             }`}
           >
-            AI Plán & Rozhodnutia ({plan.decisions.length})
+            AI Plán & Rozhodnutia ({decisions.length})
           </button>
           <button
             onClick={() => setActiveTab('COMPARE')}
@@ -173,9 +214,43 @@ export const DirectorPlanCenter: React.FC = () => {
           </div>
 
           <div>
-            <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Ciele Editu</span>
+            <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Režim Directora</span>
+            <select
+              value={mode}
+              onChange={e => handleModeChange(e.target.value as DirectorMode)}
+              className="bg-neutral-900 border border-neutral-700 text-xs font-semibold text-white px-3 py-1.5 rounded-lg focus:ring-amber-500"
+            >
+              {(Object.values(DIRECTOR_MODES) as typeof DIRECTOR_MODES[DirectorMode][]).map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.labelSk}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Kvalita</span>
             <div className="flex gap-2">
-              {(['Retention', 'Education', 'Conversion'] as DirectorObjective[]).map(obj => (
+              {(['PRO_QUALITY', 'STANDARD'] as DirectorQuality[]).map(q => (
+                <button
+                  key={q}
+                  onClick={() => setQuality(q)}
+                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-md border transition ${
+                    quality === q
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-neutral-900 text-neutral-500 border-neutral-800'
+                  }`}
+                >
+                  {q === 'PRO_QUALITY' ? 'PRO QUALITY' : 'Štandard'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Ciele Editu</span>
+            <div className="flex gap-2 flex-wrap">
+              {(['Retention', 'Education', 'Conversion', 'Storytelling', 'UGC', 'Long-form', 'Short-form'] as DirectorObjective[]).map(obj => (
                 <button
                   key={obj}
                   onClick={() => {
@@ -206,6 +281,116 @@ export const DirectorPlanCenter: React.FC = () => {
         </button>
       </div>
 
+      {/* Mode rules — what is currently applied, in words */}
+      <div className="bg-neutral-950 p-3.5 rounded-xl border border-neutral-800 text-[11px] text-neutral-400 space-y-1">
+        <div className="flex items-center gap-2 text-neutral-300">
+          <Sliders className="w-3.5 h-3.5 text-amber-400" />
+          <span className="font-bold uppercase tracking-wide">
+            {DIRECTOR_MODES[mode].labelSk} · {quality === 'PRO_QUALITY' ? 'PRO QUALITY' : 'Štandard'}
+          </span>
+        </div>
+        <p>{DIRECTOR_MODES[mode].goalSk}</p>
+        <p className="text-neutral-500">{QUALITY_RULES[quality].noteSk}</p>
+        {plan?.modeNotesSk && plan.modeNotesSk.length > 0 && (
+          <p className="text-neutral-500">
+            V pláne uložené pravidlá: {plan.modeNotesSk[plan.modeNotesSk.length - 1]}
+          </p>
+        )}
+      </div>
+
+      {/* RAW → READY summary — measured counts; the time figure is a labelled estimate */}
+      {summary && (
+        <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <ListOrdered className="w-4 h-4 text-amber-400" /> RAW → READY
+            </h4>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+              summary.analysisMeasured
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+            }`}>
+              {summary.analysisMeasured ? 'Analýza: meraná' : 'Analýza: NEMERANÁ'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {[
+              { label: 'Dĺžka materiálu', value: `${summary.durationSeconds}s` },
+              { label: 'Klipy', value: `${summary.clipCount}` },
+              { label: 'Nájdené úpravy', value: `${summary.decisions}` },
+              { label: 'Vynechať', value: `${summary.trims} (${summary.trimmedSeconds}s)` },
+              { label: 'Punch-in', value: `${summary.punchIns}` },
+              { label: 'Titulky', value: `${summary.captions}` },
+              { label: 'B-roll', value: `${summary.broll}` },
+              { label: 'Audio ducking', value: `${summary.audio}` },
+              { label: 'Hooky (merané)', value: `${summary.hooksMeasured}` },
+              { label: 'Návrhy Shorts', value: `${summary.shortsProposals}` },
+              { label: 'Prechody', value: `${summary.transitions}` }
+            ].map(item => (
+              <div key={item.label} className="bg-neutral-900/60 border border-neutral-800 rounded-lg px-2.5 py-2">
+                <span className="block text-[10px] text-neutral-500 uppercase font-bold">{item.label}</span>
+                <span className="text-sm font-bold text-white font-mono">{item.value}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-neutral-500">
+            {summary.estimateBasisSk} Odhad ušetreného času: <span className="text-neutral-300 font-mono">{summary.estimatedManualMinutes} min</span>
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <button
+              onClick={handleApplyAll}
+              disabled={summary.decisions === 0}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg flex items-center gap-2 transition ${
+                summary.decisions > 0
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/10'
+                  : 'bg-neutral-800 text-neutral-600 cursor-not-allowed'
+              }`}
+            >
+              <Zap className="w-4 h-4" /> Použiť všetko ({summary.decisions})
+            </button>
+            <span className="text-[10px] text-neutral-500">
+              alebo schváľ jednotlivé návrhy nižšie — nič sa neurobí potichu
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Dropped decisions — nothing disappears silently */}
+      {plan && (plan.droppedDecisions?.length ?? 0) > 0 && (
+        <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-2">
+          <button
+            onClick={() => setShowDropped(!showDropped)}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <span className="text-xs font-bold text-amber-300 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              Režim vynechal {plan.droppedDecisions?.length} návrhov — pozri dôvody
+            </span>
+            <span className="text-[10px] text-neutral-500">{showDropped ? 'Skryť' : 'Zobraziť'}</span>
+          </button>
+          {showDropped && (
+            <ul className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              {plan.droppedDecisions?.map(d => (
+                <li key={d.id} className="text-[11px] text-neutral-400 bg-neutral-900/60 border border-neutral-800 rounded-lg px-2.5 py-2">
+                  <span className="font-mono text-neutral-500">{d.kind}</span> · {d.reasonSk}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Empty state — the plan is only created when the user asks for it */}
+      {!plan && (
+        <div className="bg-neutral-950 p-6 rounded-xl border border-dashed border-neutral-700 text-center space-y-2">
+          <Clapperboard className="w-6 h-6 text-neutral-500 mx-auto" />
+          <p className="text-sm text-neutral-300 font-semibold">Zatiaľ nie je vytvorený žiadny Director Plan.</p>
+          <p className="text-[11px] text-neutral-500">
+            Nič sa nevytvára potichu — klikni na „Prepočítať Director Plan" a návrhy sa zobrazia na schválenie.
+          </p>
+        </div>
+      )}
+
       {applyStatus && (
         <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs font-semibold text-amber-300 flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 shrink-0" />
@@ -214,7 +399,7 @@ export const DirectorPlanCenter: React.FC = () => {
       )}
 
       {/* Main Tab Views */}
-      {activeTab === 'PLAN' && (
+      {activeTab === 'PLAN' && plan && (
         <div className="space-y-4">
           {/* Priority Filters */}
           <div className="flex items-center justify-between bg-neutral-950 px-4 py-2.5 rounded-xl border border-neutral-800">
@@ -386,7 +571,7 @@ export const DirectorPlanCenter: React.FC = () => {
       {/* Strategies Overview Tab */}
       {activeTab === 'STRATEGIES' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {Object.entries(plan.strategies).map(([key, strat]) => {
+          {Object.entries(plan?.strategies ?? {}).map(([key, strat]) => {
             if (!strat) return null;
             return (
               <div key={key} className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 space-y-2">

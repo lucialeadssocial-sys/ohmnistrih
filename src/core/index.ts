@@ -65,6 +65,7 @@ import { directorEngine } from './ai/directorEngine';
 import { editingBrain } from './ai/editingBrain';
 import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, DirectorDecisionItem, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
 import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildLearnedRules, isActionExecutable } from './ai/reviewQueue';
+import { DirectorMode, DirectorQuality, ReadinessSummary, buildReadinessSummary, DIRECTOR_MODES } from './ai/directorModes';
 import type { EditingPreference } from './types/project';
 
 // Default initial project factory with canonical tracks
@@ -702,10 +703,12 @@ export class CoreEngine {
 
   public generateDirectorPlan(
     targetPlatform: 'TikTok' | 'Instagram Reels' | 'YouTube Shorts' | 'YouTube Long-form' | 'UGC Ads' | 'General' = 'TikTok',
-    objectives: any[] = ['Retention', 'Education']
+    objectives: any[] = ['Retention', 'Education'],
+    mode?: DirectorMode,
+    quality?: DirectorQuality
   ): DirectorPlan {
     const currentProj = this.getProject();
-    const plan = directorEngine.generateDirectorPlan(currentProj, targetPlatform, objectives);
+    const plan = directorEngine.generateDirectorPlan(currentProj, targetPlatform, objectives, { mode, quality });
     
     // Store generated plan on project
     const updatedProject: ProjectModel = {
@@ -718,7 +721,10 @@ export class CoreEngine {
     return plan;
   }
 
-  public safeBatchApplyDirectorPlan(plan: DirectorPlan, acceptedDecisionIds: string[]): { success: boolean; appliedCount: number; snapshotVersionId?: string; error?: string } {
+  public safeBatchApplyDirectorPlan(
+    plan: DirectorPlan,
+    acceptedDecisionIds: string[]
+  ): { success: boolean; appliedCount: number; skippedCount: number; skipped: { id: string; reason: string }[]; snapshotVersionId?: string; error?: string } {
     const result = directorEngine.safeBatchApply(this.commandManager, plan, acceptedDecisionIds);
 
     if (result.success && result.appliedCount > 0) {
@@ -868,6 +874,15 @@ export class CoreEngine {
     }
 
     return { ok: true, applied, reason };
+  }
+
+  /**
+   * RAW → READY summary of the current plan: measured counts from the project/plan plus one
+   * clearly-labelled time estimate (the formula travels with the number).
+   */
+  public getReadinessSummary(plan?: DirectorPlan): ReadinessSummary {
+    const project = this.getProject();
+    return buildReadinessSummary(project, plan || project.directorPlan);
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

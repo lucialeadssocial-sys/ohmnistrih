@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit",
     "verify:academy": "tsx verify_academy.mjs",
     "verify:director": "tsx verify_director_fixes.ts",
+    "verify:director-mode": "tsx verify_director_mode.ts",
     "verify:app": "tsx smoke.mjs",
     "verify:boundary": "tsx verify_errorboundary.mjs",
     "verify:multicam": "tsx verify_2s.ts",
