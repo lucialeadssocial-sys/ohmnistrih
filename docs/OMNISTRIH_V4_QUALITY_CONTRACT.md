@@ -58,8 +58,21 @@ a trendy. A popritom sa chcem učiť."*
 
 ## 5. Virálny obsah a trendy
 
-Zatiaľ čiastočne: plán pozná princípy (hook, tempo, front-loading, SFX masking),
-ale **nemá živú znalosť trendov**. To je samostatná fáza:
+**Stav: Trend Radar v1 je hotový** (krok 3 → prepínač „🔥 Trend Radar"):
+
+- **Kontrola virality** — deterministická (0 tokenov), hodnotí hotový plán pre zvolenú
+  platformu: hook do 3 s, prvá sekunda, titulky, tempo (strihy/min), framing, zvukový
+  akcent, dĺžka, podiel vystrihnutého materiálu, uzáver, samostatný klip. Každý nález má
+  **detail, opravu aj dôvod** — nikdy len číslo.
+- **Knižnica**: 12 princípov, 12 hook vzorcov, 10 formátov, 8 červených vlajok pre
+  5 platforiem a 10 oblastí (klientov). Pri každej položke je mechanizmus, riziko a
+  **kedy to nepoužiť**.
+- **Poctivosť**: knižnica má dátum overenia (28. 9. 2026). Princípy platia roky, formáty
+  sa menia — nástroj to hovorí priamo. Žiadne „garantované zhliadnutia“; testy to
+  kontrolujú (ochrana proti marketingovému klamstvu).
+- Testy: `bun test tests/trendLibrary.test.ts` (12 testov, 203 kontrol).
+
+Ešte chýba:
 
 - **Trend Radar**: knižnica formátov a hook vzorcov podľa platformy a niche
   (TikTok / Reels / Shorts / reklama), s vysvetlením, prečo formát funguje.

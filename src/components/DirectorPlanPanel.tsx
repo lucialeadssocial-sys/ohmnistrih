@@ -23,6 +23,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { TrendRadar } from "./TrendRadar";
 
 /**
  * DirectorPlanPanel — „RAW → READY" jadro OmniStrihu (Fáza F1)
@@ -145,6 +146,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [openWhyId, setOpenWhyId] = useState<string | null>(null);
   const [applyReport, setApplyReport] = useState<DirectorApplyReport | null>(null);
+  const [view, setView] = useState<"plan" | "trendy">("plan");
   const [learningMode, setLearningMode] = useState(true);
 
   const plan = result?.plan ?? [];
@@ -295,6 +297,38 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
         )}
       </div>
 
+      {/* Prepínač: plán / trend radar */}
+      <div className="flex gap-1.5">
+        {([
+          { id: "plan" as const, labelSk: "🎬 Plán strihu" },
+          { id: "trendy" as const, labelSk: "🔥 Trend Radar" },
+        ]).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setView(t.id)}
+            className={`px-4 py-2 rounded-xl border text-[11px] font-black uppercase tracking-wider transition-colors ${
+              view === t.id
+                ? "border-rose-500/60 bg-rose-500/10 text-white"
+                : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+            }`}
+          >
+            {t.labelSk}
+          </button>
+        ))}
+      </div>
+
+      {view === "trendy" && (
+        <TrendRadar
+          language={language}
+          plan={plan}
+          durationSec={typeof rawDurationSeconds === "number" ? rawDurationSeconds : durationMin * 60}
+          onSeek={onSeek}
+        />
+      )}
+
+      {view === "plan" && (
+      <>
       {/* Nastavenia */}
       <div className="space-y-3">
         <div>
@@ -705,6 +739,8 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
               : "Pick a mode, optionally paste a transcript, and run RAW → READY."}
           </p>
         </div>
+      )}
+      </>
       )}
     </div>
   );
