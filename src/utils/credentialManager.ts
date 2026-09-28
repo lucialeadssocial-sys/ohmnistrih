@@ -22,35 +22,26 @@ class AICredentialManagerClass {
   private secretsStore: Map<string, string> = new Map(); // Server-like in-memory secret store for testing/local
   private isInitialized = false;
 
+  // Stav spojenia s backendom – aby UI vedelo rozlíšiť "nemám kľúče"
+  // od "server nebeží" (predtým sa obe tvári­li rovnako – prázdny zoznam).
+  private backendStatus: "unknown" | "ok" | "offline" = "unknown";
+  private backendError: string | null = null;
+
   constructor() {
-    this.seedDefaultSystemCredential();
+    // Zámerne sa NEseeduje žiadny credential.
+    // V staršej verzii tu vznikala falošná položka „Systémový Google Gemini Kľúč“
+    // s vymysleným kľúčom (AIzaSyDefaultSystemEnvKeySecret0000). V UI sa tvárila
+    // ako funkčný Gemini kľúč, ale každý test aj AI volanie museli zlyhať.
+    // Reálne kľúče sa načítajú z backendu cez initFromBackend(); ak prostredie
+    // definuje GEMINI_API_KEY, backend pridá skutočný systémový kľúč.
   }
 
-  private seedDefaultSystemCredential() {
-    // If not already present, create default system credential
-    if (this.credentials.length === 0) {
-      const defaultCred: AIProviderCredential = {
-        id: "system-key-default",
-        name: "Systémový Google Gemini Kľúč",
-        keyMasked: "AIzaSyD...Sys0",
-        provider: "gemini",
-        providerLabel: "Google Gemini (Systémový kľúč)",
-        enabled: true,
-        priority: "LOW",
-        preferred: false,
-        capabilities: ["VIDEO_ANALYSIS", "TEXT_REASONING", "STRUCTURED_OUTPUT", "IMAGE", "AUDIO"],
-        model: "gemini-3.8-flash",
-        projectId: "gcp-project-system",
-        quotaScope: "PROJECT",
-        status: "READY",
-        isDefaultSystemKey: true,
-        addedAt: new Date().toISOString(),
-        requestCount: 0,
-        errorCount: 0,
-      };
-      this.credentials.push(defaultCred);
-      this.secretsStore.set("system-key-default", "AIzaSyDefaultSystemEnvKeySecret0000");
-    }
+  public getBackendStatus(): "unknown" | "ok" | "offline" {
+    return this.backendStatus;
+  }
+
+  public getBackendError(): string | null {
+    return this.backendError;
   }
 
   public maskSecret(secret: string): string {
@@ -67,14 +58,25 @@ class AICredentialManagerClass {
     }
     try {
       const res = await fetch("/api/keys");
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.keys)) {
-          this.credentials = json.keys.map((k: any) => this.normalizeBackendKey(k));
-        }
+      if (!res.ok) {
+        this.backendStatus = "offline";
+        this.backendError = `Server odpovedal HTTP ${res.status}.`;
+        return;
       }
-    } catch {
-      // Backend not running or offline; keep in-memory credentials
+      const json = await res.json();
+      if (json.success && Array.isArray(json.keys)) {
+        this.credentials = json.keys.map((k: any) => this.normalizeBackendKey(k));
+        this.backendStatus = "ok";
+        this.backendError = null;
+      } else {
+        this.backendStatus = "offline";
+        this.backendError = "Server vrátil neočakávanú odpoveď.";
+      }
+    } catch (err: any) {
+      // Backend nebeží (napr. po reštarte prostredia) – už žiadny falošný kľúč,
+      // len jasná informácia pre UI.
+      this.backendStatus = "offline";
+      this.backendError = err?.message || "Server neodpovedá.";
     } finally {
       this.isInitialized = true;
     }
@@ -426,7 +428,6 @@ class AICredentialManagerClass {
   public resetAllForTesting(): void {
     this.credentials = [];
     this.secretsStore.clear();
-    this.seedDefaultSystemCredential();
   }
 }
 
