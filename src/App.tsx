@@ -131,6 +131,7 @@ import {
   VideoTransition,
   NaturalVoiceClip,
 } from "./types";
+import type { DirectorPlanItem, DirectorApplyReport } from "./components/DirectorPlanPanel";
 import { SimpleSmartToolInterface, SmartCategory } from "./components/SimpleSmartToolInterface";
 import { aiOrchestrator } from "./services/aiOrchestrator";
 import { DEFAULT_EDIT_DNA_PROFILES } from "./utils/editorBrainDefaults";
@@ -1779,6 +1780,261 @@ function MainApp() {
     playSynthesizedSFX("camera-shutter", 0.7);
   };
 
+  // ============================================================
+  // DIRECTOR PLAN → TIMELINE (Fáza F1.5)
+  // Schválené zásahy z Director Planu sa premietnu do existujúcich
+  // mechanizmov strihacieho jadra. Nič sa nerobí potichu — vraciame
+  // report, čo sa kam zapísalo a čo sa (zatiaľ) nedá aplikovať.
+  // ============================================================
+  const handleApplyDirectorPlan = (accepted: DirectorPlanItem[]): DirectorApplyReport => {
+    const report: DirectorApplyReport = { applied: [], skipped: [] };
+
+    if (!accepted || accepted.length === 0) {
+      showToast(isSk ? "⚠️ Nie je vybraný žiadny zásah na aplikovanie." : "⚠️ No edits selected.");
+      return report;
+    }
+
+    const add = (label: string, count: number) => {
+      if (count <= 0) return;
+      const found = report.applied.find((a) => a.label === label);
+      if (found) found.count += count;
+      else report.applied.push({ label, count });
+    };
+
+    // 1) CUT / KEEP → markery v jump-sequence (ovplyvní AI Jump-Cut Editor aj timeline)
+    const cutItems = accepted.filter((i) => i.type === "CUT" || i.type === "KEEP");
+    if (cutItems.length > 0) {
+      const newMarkers: AICutMarker[] = cutItems.map((i, idx) => ({
+        id: `dp-${i.id || idx}`,
+        start: i.start,
+        end: typeof i.end === "number" && i.end > i.start ? i.end : i.start + 1.5,
+        type: i.type === "CUT" ? "REMOVE" : "KEEP",
+        reasonSk: i.reason,
+        reasonEn: i.reason,
+        category: "pause",
+        pauseType: i.type === "CUT" ? "DEAD_AIR" : "NATURAL_PAUSE",
+        contextRisk: i.confidence < 0.6,
+      }));
+
+      setJumpSequence((prev) => {
+        const kept = (prev?.markers ?? []).filter((m) => !String(m.id).startsWith("dp-"));
+        const merged = [...kept, ...newMarkers];
+        const totalCuts = merged.filter((m) => m.type === "REMOVE").length;
+        const original = prev?.originalDuration || (typeof duration === "number" ? duration : 0);
+        return {
+          id: prev?.id || "director-plan",
+          mode: prev?.mode || "BALANCED",
+          cutDensity: prev?.cutDensity ?? 55,
+          markers: merged,
+          originalDuration: original,
+          editedDuration: Math.max(0, original - totalCuts * 1.2),
+          stats: {
+            removedPauses: totalCuts,
+            removedFillers: prev?.stats?.removedFillers ?? 0,
+            removedRepetitions: prev?.stats?.removedRepetitions ?? 0,
+            removedStutters: prev?.stats?.removedStutters ?? 0,
+            totalCuts,
+          },
+          isApplied: true,
+        };
+      });
+      add(isSk ? "Strihy (CUT/KEEP)" : "Cuts (CUT/KEEP)", cutItems.length);
+    }
+
+    // 2) ZOOM → punch-in cue + návrat späť
+    const zoomItems = accepted.filter((i) => i.type === "ZOOM");
+    if (zoomItems.length > 0) {
+      setZoomCues((prev) => {
+        const kept = prev.filter((c) => !String(c.id).startsWith("dp-"));
+        const cues: ZoomCue[] = [];
+        zoomItems.forEach((i, idx) => {
+          const end = typeof i.end === "number" && i.end > i.start ? i.end : i.start + 3;
+          cues.push({
+            id: `dp-zin-${i.id || idx}`,
+            timestamp: i.start,
+            scale: Math.min(1.35, 1.18 + i.confidence * 0.12),
+            duration: 0.3,
+          });
+          cues.push({ id: `dp-zout-${i.id || idx}`, timestamp: end, scale: 1.0, duration: 0.3 });
+        });
+        return [...kept, ...cues].sort((a, b) => a.timestamp - b.timestamp);
+      });
+      add(isSk ? "Punch-in zoom" : "Zoom punch-ins", zoomItems.length);
+    }
+
+    // 3) SFX → zvukové cue (typ sa odvodí z textu zásahu)
+    const sfxItems = accepted.filter((i) => i.type === "SFX");
+    if (sfxItems.length > 0) {
+      setSfxCues((prev) => {
+        const kept = prev.filter((c) => !String(c.id).startsWith("dp-"));
+        const cues: SFXCue[] = sfxItems.map((i, idx) => {
+          const t = `${i.label} ${i.reason}`.toLowerCase();
+          const type: SFXCue["type"] = t.includes("whoosh")
+            ? "whoosh"
+            : t.includes("boom")
+              ? "boom"
+              : t.includes("cash")
+                ? "cash"
+                : t.includes("ding")
+                  ? "ding"
+                  : t.includes("glitch")
+                    ? "glitch"
+                    : "pop";
+          return { id: `dp-sfx-${i.id || idx}`, timestamp: i.start, type, label: i.label };
+        });
+        return [...kept, ...cues].sort((a, b) => a.timestamp - b.timestamp);
+      });
+      add("SFX", sfxItems.length);
+    }
+
+    // 4) BROLL → B-roll overlay nad videom
+    const brollItems = accepted.filter((i) => i.type === "BROLL");
+    if (brollItems.length > 0) {
+      setBRollOverlays((prev) => {
+        const kept = prev.filter((b) => !String(b.id).startsWith("dp-"));
+        const overlays: BRollOverlay[] = brollItems.map((i, idx) => ({
+          id: `dp-broll-${i.id || idx}`,
+          type: "custom-badge",
+          start: i.start,
+          end: typeof i.end === "number" && i.end > i.start ? i.end : i.start + 3,
+          title: i.label,
+          subtitle: i.reason.length > 60 ? `${i.reason.slice(0, 57)}…` : i.reason,
+          position: "top-right",
+          rotation: -2,
+        }));
+        return [...kept, ...overlays];
+      });
+      add("B-roll", brollItems.length);
+    }
+
+    // 5) CAPTION → segment titulkov (vstup pre Smart Caption Editor)
+    const captionItems = accepted.filter((i) => i.type === "CAPTION");
+    if (captionItems.length > 0) {
+      setCaptionProject((prev) => ({
+        ...prev,
+        segments: [
+          ...prev.segments.filter((s) => !String(s.id).startsWith("dp-")),
+          ...captionItems.map((i, idx) => ({
+            id: `dp-cap-${i.id || idx}`,
+            start: i.start,
+            end: typeof i.end === "number" && i.end > i.start ? i.end : i.start + 2.5,
+            text: i.label,
+            words: [],
+            confidence: i.confidence,
+          })),
+        ].sort((a, b) => a.start - b.start),
+      }));
+      add(isSk ? "Titulky" : "Captions", captionItems.length);
+    }
+
+    // 6) HOOK → hook text + 808 boom + jemný punch-in (kompozitný zásah)
+    const hookItems = accepted.filter((i) => i.type === "HOOK");
+    if (hookItems.length > 0) {
+      const hook = hookItems.slice().sort((a, b) => a.start - b.start)[0];
+      setSettings((prev) => ({
+        ...prev,
+        viralHookEnabled: true,
+        viralHookText: hook.label,
+      }));
+      setSfxCues((prev) =>
+        [
+          ...prev.filter((c) => c.id !== "dp-hook-sfx"),
+          { id: "dp-hook-sfx", timestamp: hook.start, type: "boom" as const, label: "Hook 808 Boom" },
+        ].sort((a, b) => a.timestamp - b.timestamp),
+      );
+      setZoomCues((prev) =>
+        [
+          ...prev.filter((c) => c.id !== "dp-hook-zoom"),
+          { id: "dp-hook-zoom", timestamp: hook.start, scale: 1.2, duration: 0.25 },
+        ].sort((a, b) => a.timestamp - b.timestamp),
+      );
+      add(isSk ? "Hook (text + boom + zoom)" : "Hook (text + boom + zoom)", 1);
+    }
+
+    // 7) HIGHLIGHT → samostatný highlight klip
+    const highlightItems = accepted.filter((i) => i.type === "HIGHLIGHT");
+    if (highlightItems.length > 0) {
+      setSmartClips((prev) => {
+        const kept = prev.filter((c) => !String(c.id).startsWith("dp-"));
+        const clips: SmartClipHighlight[] = highlightItems.map((i, idx) => ({
+          id: `dp-hl-${i.id || idx}`,
+          title: i.label,
+          start: i.start,
+          end: typeof i.end === "number" && i.end > i.start ? i.end : i.start + 8,
+          viralityScore: Math.round(Math.max(0, Math.min(1, i.confidence)) * 100),
+          badge: isSk ? "AI TIP" : "AI PICK",
+        }));
+        return [...kept, ...clips];
+      });
+      add(isSk ? "Highlight klipy" : "Highlight clips", highlightItems.length);
+    }
+
+    // 8) CROP → formát rámu 9:16
+    const cropItems = accepted.filter((i) => i.type === "CROP");
+    if (cropItems.length > 0) {
+      setSettings((prev) => ({ ...prev, aspectRatio: "9:16" }));
+      add(isSk ? "Formát 9:16" : "9:16 frame", 1);
+    }
+
+    // 9) SPEED → rýchlostná krivka (celý klip; per-segment príde vo F2)
+    const speedItems = accepted.filter((i) => i.type === "SPEED");
+    if (speedItems.length > 0) {
+      setSettings((prev) => ({ ...prev, speedRampPreset: "fast-ramp" }));
+      add(isSk ? "Zrýchlenie (speed ramp)" : "Speed ramp", speedItems.length);
+      report.skipped.push({
+        label: isSk ? "Presné rozsahy zrýchlenia" : "Exact speed ranges",
+        reason: isSk
+          ? "Zrýchlenie sa teraz aplikuje ako krivka na celý klip. Strih presne v rozsahu (napr. 450–470 s) príde vo F2."
+          : "Speed is applied as a clip-wide curve; per-range speed arrives in F2.",
+      });
+    }
+
+    // 10) MUSIC → hudba na pozadí (odhad žánru z textu zásahu)
+    const musicItems = accepted.filter((i) => i.type === "MUSIC");
+    if (musicItems.length > 0) {
+      const text = musicItems.map((i) => `${i.label} ${i.reason}`).join(" ").toLowerCase();
+      const guessed: VideoProjectSettings["bgMusicTrack"] = text.includes("lofi")
+        ? "lofi-chill"
+        : text.includes("phonk")
+          ? "viral-phonk"
+          : text.includes("synth") || text.includes("tech")
+            ? "tech-ambient"
+            : text.includes("corporate") || text.includes("brand")
+              ? "corporate-inspire"
+              : "demo-ambient";
+
+      if (settings.bgMusicTrack === "none") {
+        setSettings((prev) => ({ ...prev, bgMusicTrack: guessed }));
+        add(isSk ? "Hudba na pozadí" : "Background music", 1);
+      } else {
+        report.skipped.push({
+          label: isSk ? "Hudba na pozadí" : "Background music",
+          reason: isSk
+            ? `Hudba už je nastavená (${settings.bgMusicTrack}) — AI návrh som neprepísal, aby som ti nezmenil zvuk pod rukami.`
+            : `Music already set (${settings.bgMusicTrack}); AI suggestion was not forced.`,
+        });
+      }
+    }
+
+    // Skoč na prvý aplikovaný zásah + povedz, čo sa stalo
+    const firstApplied = accepted.slice().sort((a, b) => a.start - b.start)[0];
+    if (firstApplied) handleSeek(Math.max(0, firstApplied.start));
+
+    const total = report.applied.reduce((sum, a) => sum + a.count, 0);
+    if (total > 0) {
+      showToast(
+        isSk
+          ? `🎬 Director Plan aplikovaný: ${total} zásahov → ${report.applied.map((a) => `${a.label} (${a.count})`).join(", ")}`
+          : `🎬 Director Plan applied: ${total} edits`,
+      );
+      playSynthesizedSFX("ding", 0.6);
+    } else {
+      showToast(isSk ? "⚠️ Žiadny zásah sa nedal aplikovať." : "⚠️ Nothing could be applied.");
+    }
+
+    return report;
+  };
+
   const handleRunMagicSplit = () => {
     setIsGeneratingCaptions(true);
     showToast(isSk ? "🪄 AI prepočítava Magic Split..." : "🪄 AI is recalculating Magic Split...");
@@ -3407,6 +3663,8 @@ function MainApp() {
                         jumpSequence={jumpSequence}
                         onGenerateCuts={(mode, density) => handleGenerateCuts(mode, density)}
                         onApplyCuts={(ids) => handleApplyCuts(ids)}
+                        onApplyDirectorPlan={handleApplyDirectorPlan}
+                        onOpenTimeline={() => setActiveTab("pro_timeline")}
                         isGeneratingCuts={isGeneratingCuts}
                         brollProject={brollProject}
                         onUpdateBrollProject={setBrollProject}
