@@ -1963,7 +1963,14 @@ process.on("unhandledRejection", (reason, promise) => {
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        // Povolenie ľubovoľného hostiteľa pre dev/preview prostredia (sandbox,
+        // kontajner, reverzná proxy, náhľad v inom origin). Vite 6+ inak blokuje
+        // požiadavky s cudzím Host headerom (HTTP 403 "Blocked request").
+        // Týka sa VÝHRADNE dev režimu – v produkcii sa Vite vôbec nespúšťa.
+        allowedHosts: true,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
