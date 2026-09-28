@@ -122,6 +122,11 @@ check('all seven professional modes are selectable', expectedModes.every(m => mo
 check('PRO QUALITY is offered and preselected', !!findByText('PRO QUALITY'));
 const qualityButtons = [...document.querySelectorAll('button')].filter(b => /PRO QUALITY|Štandard/.test(b.textContent || ''));
 check('the active quality is marked', qualityButtons.some(b => (b.className || '').includes('emerald')), `${qualityButtons.length} quality buttons`);
+const contractText = (document.querySelector('#omnistrih-quality-contract')?.textContent || '').trim();
+check('the quality contract shows its real thresholds', contractText.includes('80 %') && contractText.includes('2 zásahov/min'), contractText);
+check('the contract explains what PRO QUALITY means for the cut', contractText.includes('menej, ale silnejších zásahov'), contractText);
+const modeGoalText = (document.querySelector('#omnistrih-mode-goal')?.textContent || '').trim();
+check('the selected mode states its goal', modeGoalText.length > 20, modeGoalText);
 
 // ---------- 3. Generate the plan by clicking the real button ----------
 const clicked = await click(findByText('Prepočítať Director Plan'), 'the generate button is present');

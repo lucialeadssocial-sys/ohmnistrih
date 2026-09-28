@@ -4347,6 +4347,7 @@ function MainApp() {
                         onRunQualityCheck={handleRunQualityCheck}
                         onOpenQualityCheck={() => setActiveTab("qc_analytics")}
                         onOpenExport={() => setIsExportOpen(true)}
+                        onOpenImport={() => setIsImportModalOpen(true)}
                         showToast={showToast}
                       />
                     )}

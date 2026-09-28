@@ -26,6 +26,9 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { playSynthesizedSFX } from "../utils/audioSynth";
 import type { QualityCheckReport } from "../core/ai/qualityCheck";
+import { useCoreProject } from "../core";
+import { buildSmartClips } from "../core/ai/highlightModel";
+import type { SmartClipHighlight } from "../types";
 
 // Import all sub-editors to mount them inside the wizard steps
 import { RawAIAnalyzer } from "./RawAIAnalyzer";
@@ -156,6 +159,8 @@ interface RawToReadyPipelineProps {
   onOpenQualityCheck?: () => void;
   /** Opens the real export dialog (Step FINAL). */
   onOpenExport?: () => void;
+  /** Opens the real import dialog (Step 1) — no simulated import. */
+  onOpenImport?: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -240,23 +245,32 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   onRunQualityCheck,
   onOpenQualityCheck,
   onOpenExport,
+  onOpenImport,
   showToast
 }) => {
   const isSk = language === "sk";
   const [currentStep, setCurrentStep] = useState<number>(1);
 
-  // Demofiles state for Step 1: Import
-  const [importedVideo, setImportedVideo] = useState<{
-    name: string;
-    size: string;
-    duration: string;
-    aspectRatio: string;
-  } | null>({
-    name: "OMNISTRIH_RAW_4K.mp4",
-    size: "4.2 GB",
-    duration: "45:12",
-    aspectRatio: "16:9"
-  });
+  // Step 1 shows the real media of the canonical project — there is no pre-filled demo file.
+  const { project } = useCoreProject();
+  const projectMedia = (project.assets ?? []).filter(asset => asset.type === "video" || asset.type === "image");
+  const formatBytes = (bytes: number) =>
+    bytes <= 0
+      ? isSk ? "veľkosť neznáma" : "size unknown"
+      : bytes >= 1024 ** 3
+        ? `${(bytes / 1024 ** 3).toFixed(2)} GB`
+        : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const formatDuration = (seconds: number) => {
+    if (!(seconds > 0)) return isSk ? "dĺžka neznáma" : "duration unknown";
+    const minutes = Math.floor(seconds / 60);
+    const rest = Math.round(seconds % 60);
+    return `${minutes}:${String(rest).padStart(2, "0")}`;
+  };
+  const formatAspect = (width: number, height: number) =>
+    width > 0 && height > 0 ? `${width}×${height}` : isSk ? "rozlíšenie neznáme" : "resolution unknown";
+
+  // Best moments come from the measured hooks of this project (empty when none were measured).
+  const measuredSmartClips: SmartClipHighlight[] = buildSmartClips(project, 5);
 
   // 13-Step Definitions (QC inserted before multi-format + final export)
   const steps = [
@@ -396,7 +410,14 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
 
   const handleImportFile = () => {
     playSynthesizedSFX("click", 0.6);
-    showToast(isSk ? "RAW video úspešne naimportované do OmniStrihu!" : "RAW video successfully imported into OmniStrih!");
+    if (onOpenImport) {
+      onOpenImport();
+      return;
+    }
+    // No import dialog is wired — say so instead of claiming a successful import.
+    showToast(isSk
+      ? "Import okno nie je dostupné — otvorte Import v hlavnom menu."
+      : "The import dialog is not available — open Import from the main menu.");
   };
 
   const currentStepData = steps[currentStep - 1];
@@ -521,7 +542,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               {/* STEP 1: IMPORT */}
               {currentStep === 1 && (
                 <div className="space-y-6">
-                  <div className="border-2 border-dashed border-neutral-800 hover:border-rose-500/50 rounded-2xl p-8 text-center bg-neutral-950/40 transition-colors cursor-pointer group" onClick={handleImportFile}>
+                  <div className="border-2 border-dashed border-neutral-800 hover:border-rose-500/50 rounded-2xl p-8 text-center bg-neutral-950/40 transition-colors cursor-pointer group" onClick={handleImportFile} id="omnistrih-pipeline-import-zone">
                     <div className="h-12 w-12 rounded-xl bg-neutral-900 flex items-center justify-center text-neutral-400 group-hover:text-rose-400 mx-auto border border-neutral-800 transition-colors">
                       <FileVideo className="h-6 w-6" />
                     </div>
@@ -531,31 +552,50 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                         ? "Podporujeme MP4, MOV, MKV v rozlíšení až do 4K. Ideálne sú statické hovoriace videá."
                         : "Supports MP4, MOV, MKV up to 4K. Talkhead style videos work best."}
                     </p>
-                    <button className="mt-4 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-xl border border-neutral-700 uppercase tracking-wider">
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleImportFile();
+                      }}
+                      className="mt-4 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-xl border border-neutral-700 uppercase tracking-wider"
+                    >
                       {isSk ? "Vybrať Súbor" : "Browse Files"}
                     </button>
                   </div>
 
-                  {/* Active imported metadata */}
-                  {importedVideo && (
-                    <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 flex items-center justify-between gap-4 flex-wrap text-xs">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded bg-neutral-900 text-emerald-400">
-                          <CheckCircle2 className="h-4 w-4" />
+                  {/* Real media of the canonical project */}
+                  {projectMedia.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 text-xs text-neutral-400" id="omnistrih-pipeline-media-empty">
+                      {isSk
+                        ? "V projekte zatiaľ nie je žiadne video ani obrázok. Import otvoríte kliknutím na plochu vyššie."
+                        : "The project has no video or image yet. Click the area above to open the import."}
+                    </div>
+                  ) : (
+                    <div className="space-y-2" id="omnistrih-pipeline-media-list">
+                      {projectMedia.map(asset => (
+                        <div key={asset.id} className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 flex items-center justify-between gap-4 flex-wrap text-xs">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded bg-neutral-900 text-emerald-400">
+                              <CheckCircle2 className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="font-bold text-white font-mono">{asset.name}</p>
+                              <p className="text-[10px] text-neutral-500">
+                                {isSk ? "Veľkosť súboru: " : "File size: "}{formatBytes(asset.size)}
+                                {asset.opfsPath ? (isSk ? " · uložené v OPFS" : " · stored in OPFS") : (isSk ? " · bez uloženej cesty" : " · no stored path")}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 text-neutral-400 text-[11px] font-mono">
+                            <div>
+                              <span className="text-neutral-500">DUR:</span> {formatDuration(asset.duration)}
+                            </div>
+                            <div>
+                              <span className="text-neutral-500">FORMAT:</span> {formatAspect(asset.width, asset.height)}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-bold text-white font-mono">{importedVideo.name}</p>
-                          <p className="text-[10px] text-neutral-500">{isSk ? "Veľkosť súboru: " : "File size: "}{importedVideo.size}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-neutral-400 text-[11px] font-mono">
-                        <div>
-                          <span className="text-neutral-500">DUR:</span> {importedVideo.duration}
-                        </div>
-                        <div>
-                          <span className="text-neutral-500">FORMAT:</span> {importedVideo.aspectRatio}
-                        </div>
-                      </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -599,7 +639,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                   </div>
                   <OpusStudio
                     virality={settings.virality}
-                    smartClips={[]}
+                    smartClips={measuredSmartClips}
                     onSelectClip={(start) => {
                       onSeek(start);
                     }}

@@ -257,6 +257,9 @@ export const DirectorPlanCenter: React.FC = () => {
                 </option>
               ))}
             </select>
+            <p className="text-[10px] text-neutral-500 mt-1 max-w-[240px]" id="omnistrih-mode-goal">
+              {DIRECTOR_MODES[mode].goalSk}
+            </p>
           </div>
 
           <div>
@@ -276,6 +279,9 @@ export const DirectorPlanCenter: React.FC = () => {
                 </button>
               ))}
             </div>
+            <p className="text-[10px] text-neutral-500 mt-1 max-w-[240px]" id="omnistrih-quality-contract">
+              {`Min. istota ${Math.round(QUALITY_RULES[quality].minConfidence * 100)} % · max ${QUALITY_RULES[quality].maxDecisionsPerMinute} zásahov/min — ${QUALITY_RULES[quality].noteSk}`}
+            </p>
           </div>
 
           <div>
