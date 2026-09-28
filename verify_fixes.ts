@@ -591,6 +591,35 @@ console.log('=== 17. Highlights, retention and virality come from measurements =
   check('Opus tab gets measured virality instead of a hardcoded sheet', !app.includes('overallScore: 92, hookScore: 90') && app.includes('virality={virality}'));
 }
 
+
+console.log('=== 18. Local fallback never fabricates a measurement (source guard) ===');
+{
+  const fs = await import('node:fs');
+  const orchestrator = fs.readFileSync('src/services/aiOrchestrator.ts', 'utf8');
+
+  check('local generators are named as synthetic', orchestrator.includes('syntheticDemoWaveform') && orchestrator.includes('syntheticSilenceCuts') && orchestrator.includes('syntheticSceneCutPoints'));
+  check('old misleading generator names are gone', !orchestrator.includes('computeWaveform(') && !orchestrator.includes('detectSilenceCuts(') && !orchestrator.includes('generateSceneCutPoints('));
+  check('local task payloads are marked synthetic', orchestrator.includes('LOCAL_SYNTHETIC_NOTICE') && orchestrator.includes('synthetic: true'));
+  check('local fallback no longer invents a hook score', !orchestrator.includes('hookScore: 88') && orchestrator.includes('hookScore: null'));
+  check('local fallback no longer invents B-roll suggestions', orchestrator.includes('suggestedBroll: []'));
+  check('silence demo map is deterministic (no Math.random)', !orchestrator.includes('Math.random() * 2.0') && orchestrator.includes('Deterministic pseudo-random sequence'));
+
+  const localEngine = await import('./src/services/aiOrchestrator');
+  const engine: any = localEngine.LocalProcessingEngine;
+  const wf = engine.syntheticDemoWaveform(10, 12);
+  check('synthetic waveform is deterministic', JSON.stringify(wf) === JSON.stringify(engine.syntheticDemoWaveform(10, 12)), `${wf.length} points`);
+  const cuts = engine.syntheticSilenceCuts(20, 0.6);
+  check('synthetic silence map is deterministic', JSON.stringify(cuts) === JSON.stringify(engine.syntheticSilenceCuts(20, 0.6)), `${cuts.length} entries`);
+  check('the real transcript keyword extractor still works on real text', engine.extractKeyCaptions('AI strih videa je rýchlejší než manuálny strih').includes('strih'));
+
+  const studio = fs.readFileSync('src/components/AIOrchestratorStudio.tsx', 'utf8');
+  check('studio labels the fallback result as synthetic', studio.includes('syntetické demo dáta') && studio.includes('synthetic demo data'));
+  check('studio no longer claims a completed measurement on fallback', !studio.includes('Task completed via LOCAL FALLBACK (Provider was rate limited)'));
+
+  const router = fs.readFileSync('src/utils/aiRouter.ts', 'utf8');
+  check('routing decisions do not fabricate results', !router.includes('hookScore') && !router.includes('Math.random'));
+}
+
 console.log('---');
 console.log(failures === 0 ? 'ALL FIX CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

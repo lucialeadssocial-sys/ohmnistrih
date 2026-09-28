@@ -87,10 +87,12 @@ export const AIOrchestratorStudio: React.FC<AIOrchestratorStudioProps> = ({
       });
 
       if (res.job.status === "FALLBACK_LOCAL") {
+        // The local fallback has no real DSP: its payloads are marked synthetic, so say so instead
+        // of reporting a completed measurement.
         showToast(
           isSk
-            ? `Úloha úspešne dokončená cez LOKÁLNY FALLBACK (Poskytovateľ bol limitovaný)`
-            : `Task completed via LOCAL FALLBACK (Provider was rate limited)`,
+            ? `Úloha obslúžená LOKÁLNYM FALLBACKOM (poskytovateľ bol limitovaný) — výsledok je označený ako syntetické demo dáta, nie meranie média.`
+            : `Task served by the LOCAL FALLBACK (provider was rate limited) — the result is marked synthetic demo data, not a media measurement.`,
           "warning"
         );
       } else {
@@ -404,7 +406,7 @@ export const AIOrchestratorStudio: React.FC<AIOrchestratorStudioProps> = ({
               <p className="text-neutral-400 leading-relaxed">
                 {isSk
                   ? "Ak ktorýkoľvek poskytovateľ (Gemini, Claude, OpenAI) vráti Rate Limit 429 alebo vyčerpá kvótu, OmniStrih nepadne. Úlohy sa automaticky prepoja na záložného poskytovateľa alebo na lokálny WASM engine. Prehrávanie, strih na časovej osi, generovanie vĺn a render videa pokračujú 100% autonómne."
-                  : "If any AI provider encounters a 429 rate limit or quota exhaustion, OmniStrih does not halt. Tasks automatically reroute to backup providers or the local WASM engine. Playback, timeline cuts, waveforms, and video export continue 100% autonomously."}
+                  : "If any AI provider hits a 429 rate limit or quota exhaustion, OmniStrih does not halt: tasks reroute to backup providers. Tasks without a real local implementation return labelled synthetic demo data (never a fake measurement), and playback, manual editing and export keep working offline."}
               </p>
             </div>
           </div>
@@ -447,6 +449,11 @@ export const AIOrchestratorStudio: React.FC<AIOrchestratorStudioProps> = ({
                     </div>
                   ))}
                 </div>
+                <p className="text-[10px] text-amber-400/90 leading-relaxed pt-1">
+                  {isSk
+                    ? "Poznámka: lokálny fallback pre waveform / silence / scene úlohy nemeria médium — vracia označené syntetické demo dáta. Reálne merania robí media-engine (Web Audio dekódovanie) a analýza projektu."
+                    : "Note: the local fallback for waveform / silence / scene tasks does not measure the media — it returns labelled synthetic demo data. Real measurements come from the media engine (Web Audio decoding) and the project analysis."}
+                </p>
               </div>
 
               {/* AI Category */}

@@ -126,13 +126,25 @@ export const INITIAL_PROVIDERS: ProviderQuotaState[] = [
 // ============================================================================
 // 4. LOCAL PROCESSING ENGINE (Deterministic offline heuristics)
 // ============================================================================
+/**
+ * Local fallback processing.
+ *
+ * IMPORTANT (honesty): the waveform / silence / scene-cut helpers below do NOT measure the user's
+ * media — they build a deterministic *demo* shape so the offline fallback simulator has something
+ * to display. Their results always carry `synthetic: true` and a notice (see executeLocalTask), and
+ * no caller may treat them as measurements. `extractKeyCaptions` is the only real one: it works on
+ * an actual transcript.
+ */
+const LOCAL_SYNTHETIC_NOTICE =
+  "Lokálny fallback: syntetické demo dáta (žiadne meranie média). / Local fallback: synthetic demo data (no media measurement).";
+
 export const LocalProcessingEngine = {
-  // Waveform peak computation (100% local)
-  computeWaveform(duration: number, samples: number = 60): number[] {
+  /** Synthetic demo waveform (not a measurement) for the fallback simulator. */
+  syntheticDemoWaveform(duration: number, samples: number = 60): number[] {
     const points: number[] = [];
     for (let i = 0; i < samples; i++) {
       const t = i / samples;
-      // Synthesize realistic speech energy waveform with periodic silence gaps
+      // Deterministic demo shape with periodic "gaps" — deliberately NOT derived from audio.
       const base = Math.sin(t * Math.PI * 8) * 0.4 + 0.5;
       const noise = (Math.sin(i * 13.7) + 1) * 0.25;
       const isPause = (i % 9 === 0 || i % 14 === 0);
@@ -141,24 +153,29 @@ export const LocalProcessingEngine = {
     return points;
   },
 
-  // Silence cut detection using acoustic energy heuristics (100% local)
-  detectSilenceCuts(duration: number, pauseTolerance: number = 0.6) {
+  /**
+   * Synthetic demo silence map (not a measurement). Real silence detection needs the decoded audio
+   * (see core/audio/mixRenderer and the project analysis engine).
+   */
+  syntheticSilenceCuts(duration: number, pauseTolerance: number = 0.6) {
     const cuts: { start: number; end: number; duration: number; type: "SILENCE" | "SPEECH" }[] = [];
-    const interval = Math.max(2.5, pauseTolerance * 4);
     let currentTime = 0;
+    let seed = 1;
+
+    // Deterministic pseudo-random sequence (no Math.random): the same input always yields the same
+    // demo map, so a simulator run is reproducible.
+    const next = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
 
     while (currentTime < duration) {
-      const speechDuration = Math.min(duration - currentTime, 2.5 + Math.random() * 2.0);
-      cuts.push({
-        start: currentTime,
-        end: currentTime + speechDuration,
-        duration: speechDuration,
-        type: "SPEECH",
-      });
+      const speechDuration = Math.min(duration - currentTime, 2.5 + next() * 2.0);
+      cuts.push({ start: currentTime, end: currentTime + speechDuration, duration: speechDuration, type: "SPEECH" });
       currentTime += speechDuration;
 
       if (currentTime < duration) {
-        const silenceDuration = Math.max(0.35, pauseTolerance * (0.8 + Math.random() * 0.5));
+        const silenceDuration = Math.max(0.35, pauseTolerance * (0.8 + next() * 0.5));
         cuts.push({
           start: currentTime,
           end: Math.min(duration, currentTime + silenceDuration),
@@ -171,19 +188,19 @@ export const LocalProcessingEngine = {
     return cuts;
   },
 
-  // Rule-based scene cut generator (100% local)
-  generateSceneCutPoints(duration: number, pacing: "FAST" | "BALANCED" | "CINEMATIC") {
+  /** Synthetic demo scene cuts (not a measurement) based on a pacing preset. */
+  syntheticSceneCutPoints(duration: number, pacing: "FAST" | "BALANCED" | "CINEMATIC") {
     const interval = pacing === "FAST" ? 2.5 : pacing === "BALANCED" ? 4.5 : 7.0;
     const points: number[] = [];
     let cur = interval;
     while (cur < duration) {
       points.push(Number(cur.toFixed(2)));
-      cur += interval + (Math.random() * 1.5 - 0.75);
+      cur += interval;
     }
     return points;
   },
 
-  // Deterministic Keyword Highlighting (100% local)
+  /** Real: keyword extraction from an actual transcript. */
   extractKeyCaptions(transcript: string): string[] {
     const commonStopWords = new Set(["a", "i", "the", "and", "or", "in", "on", "to", "je", "sa", "na", "v", "že", "ako", "to", "ale", "pre", "sme"]);
     const words = transcript.split(/\s+/).map(w => w.replace(/[^a-zA-Z0-9áäčďéíĺľňóôŕšťúýžÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽ]/g, ""));
@@ -191,7 +208,6 @@ export const LocalProcessingEngine = {
   }
 };
 
-// ============================================================================
 // 5. CACHE MANAGER IMPLEMENTATION
 // ============================================================================
 class AICacheManager {
@@ -607,39 +623,60 @@ export class AIOrchestratorService {
 
     switch (taskType) {
       case "WAVEFORM":
-        return LocalProcessingEngine.computeWaveform(payload?.duration || 10, payload?.samples || 60);
+        return {
+          synthetic: true,
+          mediaAnalyzed: false,
+          notice: LOCAL_SYNTHETIC_NOTICE,
+          waveform: LocalProcessingEngine.syntheticDemoWaveform(payload?.duration || 10, payload?.samples || 60),
+        };
 
       case "SILENCE_DETECTION":
       case "SILENCE_DETECTION_HEURISTIC":
       case "AUTO_JUMP_CUTS":
-        return LocalProcessingEngine.detectSilenceCuts(payload?.duration || 15, payload?.pauseTolerance || 0.6);
+        return {
+          synthetic: true,
+          mediaAnalyzed: false,
+          notice: LOCAL_SYNTHETIC_NOTICE,
+          cuts: LocalProcessingEngine.syntheticSilenceCuts(payload?.duration || 15, payload?.pauseTolerance || 0.6),
+        };
 
       case "STORY_STRUCTURE":
       case "SCENE_CUTS":
         return {
-          scenes: LocalProcessingEngine.generateSceneCutPoints(payload?.duration || 20, payload?.pacing || "BALANCED"),
-          strategy: "Local Acoustic Density & Narrative Rhythm Heuristic",
+          synthetic: true,
+          mediaAnalyzed: false,
+          notice: LOCAL_SYNTHETIC_NOTICE,
+          scenes: LocalProcessingEngine.syntheticSceneCutPoints(payload?.duration || 20, payload?.pacing || "BALANCED"),
+          strategy: "Synthetic demo scene map (not a measurement)",
         };
 
       case "HOOK_ANALYSIS":
+        // No local hook measurement exists — never invent a score.
         return {
-          hookScore: 88,
-          verdict: "Local Rule Engine: High initial dynamic pacing identified in opening 3.0 seconds.",
-          recommendations: ["Punch zoom applied at 0.0s", "High-contrast caption overlay enabled"],
+          synthetic: true,
+          mediaAnalyzed: false,
+          notice: LOCAL_SYNTHETIC_NOTICE,
+          hookScore: null,
+          verdict: "Lokálny fallback nevie zmerať hook — spustite reálnu analýzu média (AI provider alebo analýza projektu).",
+          recommendations: [],
         };
 
       case "BROLL_REASONING":
+        // Without footage analysis there is nothing real to suggest.
         return {
-          suggestedBroll: [
-            { timestamp: 2.5, keyword: "visual_impact", style: "CONTEXTUAL", duration: 2.0 },
-            { timestamp: 6.8, keyword: "dynamic_growth", style: "DYNAMIC", duration: 1.8 },
-          ],
+          synthetic: true,
+          mediaAnalyzed: false,
+          notice: LOCAL_SYNTHETIC_NOTICE,
+          suggestedBroll: [],
+          verdict: "Lokálny fallback nedokáže vybrať B-roll bez analýzy zdrojových médií.",
         };
 
       default:
         return {
-          success: true,
-          source: "Local Heuristic Processing Engine",
+          synthetic: true,
+          mediaAnalyzed: false,
+          success: false,
+          notice: `Pre úlohu "${taskType}" neexistuje lokálna implementácia. / No local implementation for "${taskType}".`,
           timestamp: Date.now(),
         };
     }
