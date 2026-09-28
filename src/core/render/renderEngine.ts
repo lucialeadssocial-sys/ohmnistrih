@@ -4,6 +4,7 @@
  */
 
 import { ProjectModel, ClipModel } from '../types/project';
+import { computeReframeTransform, ReframeMode } from './reframe';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { computeClipTransitionState } from './transitionMath';
 
@@ -23,6 +24,9 @@ export class RenderEngine {
   /**
    * Registers a media DOM element source for canvas drawing.
    */
+  /** Reframe mode of the frame currently being rendered (set by renderFrame). */
+  private activeReframe: ReframeMode = 'FIT';
+
   public registerMediaElement(assetId: string, element: HTMLVideoElement | HTMLImageElement): void {
     this.mediaElements.set(assetId, element);
   }
@@ -34,8 +38,12 @@ export class RenderEngine {
   public renderFrame(
     project: ProjectModel,
     currentTime: number,
-    canvas: HTMLCanvasElement
+    canvas: HTMLCanvasElement,
+    options?: { reframe?: ReframeMode }
   ): void {
+    // COVER fills the output frame (used by the social/vertical exports); FIT keeps the legacy
+    // native-size drawing. Nothing here tracks a face — see core/render/reframe.ts.
+    this.activeReframe = options?.reframe ?? 'FIT';
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -154,6 +162,12 @@ export class RenderEngine {
     } else if (media instanceof HTMLImageElement) {
       mediaWidth = media.naturalWidth || canvasWidth;
       mediaHeight = media.naturalHeight || canvasHeight;
+    }
+
+    // Fill the output frame when the export asks for it (uniform scale, aspect ratio preserved).
+    const reframe = computeReframeTransform(mediaWidth, mediaHeight, canvasWidth, canvasHeight, this.activeReframe);
+    if (reframe.scale !== 1) {
+      ctx.scale(reframe.scale, reframe.scale);
     }
 
     // Apply Filters if defined

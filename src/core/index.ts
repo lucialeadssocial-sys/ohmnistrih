@@ -62,11 +62,11 @@ export * from './ai';
 
 import { analysisEngine } from './ai/analysisEngine';
 import { directorEngine } from './ai/directorEngine';
+import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
 import { editingBrain } from './ai/editingBrain';
 import { AnalysisType, AnalysisResultCollection, EditingInsight, DirectorPlan, DirectorDecisionItem, EditComparison, DirectorProposedAction } from './ai/analysisTypes';
 import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildLearnedRules, isActionExecutable } from './ai/reviewQueue';
 import { DirectorMode, DirectorQuality, ReadinessSummary, buildReadinessSummary, DIRECTOR_MODES } from './ai/directorModes';
-import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
 import { QualityCheckReport, runQualityCheck } from './ai/qualityCheck';
 import type { EditingPreference } from './types/project';
 

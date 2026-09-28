@@ -1,5 +1,6 @@
 import { EditDecisionList } from "../types";
 import { EditDNAProfile } from "./editDNA";
+import type { ReframeMode } from "../core/render/reframe";
 
 export type ExportPresetId = "SOCIAL_VERTICAL" | "SOCIAL_SQUARE" | "SOCIAL_PORTRAIT" | "YOUTUBE_LANDSCAPE" | "YOUTUBE_4K" | "CUSTOM";
 
@@ -63,6 +64,11 @@ export interface RenderPlan {
   createdAt: string;
   edlSnapshot: EditDecisionList;
   dnaSnapshot: EditDNAProfile;
+  /**
+   * How media clips fill the output frame. Social presets use COVER (no black bars on a 9:16
+   * deliverable); everything else keeps FIT (native size, the legacy behaviour).
+   */
+  reframe?: ReframeMode;
 }
 
 export interface QCGateResult {

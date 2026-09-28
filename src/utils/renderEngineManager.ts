@@ -127,6 +127,8 @@ export class RenderEngineManager {
       audioChannels: 2,
       presetId,
       sourceRange: sourceRange ? { start: windowStart, end: windowEnd } : undefined,
+      // Social deliverables must fill the frame (COVER); other presets keep the legacy FIT drawing.
+      reframe: presetId.startsWith('SOCIAL_') ? 'COVER' : 'FIT',
       createdAt: new Date().toISOString(),
       edlSnapshot: JSON.parse(JSON.stringify(edl)),
       dnaSnapshot: JSON.parse(JSON.stringify(dna)),
