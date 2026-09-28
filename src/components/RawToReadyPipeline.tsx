@@ -20,7 +20,8 @@ import {
   Heart,
   TrendingUp,
   Download,
-  AlertCircle
+  AlertCircle,
+  Wand2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { playSynthesizedSFX } from "../utils/audioSynth";
@@ -46,6 +47,7 @@ import { ContentPackMachine } from "./ContentPackMachine";
 import { ViralPresets } from "./ViralPresets";
 import { SmartAIInsight } from "./SmartAIInsight";
 import { OpusStudio } from "./OpusStudio";
+import { DirectorPlanPanel, DirectorPlanItem } from "./DirectorPlanPanel";
 
 interface RawToReadyPipelineProps {
   // Global States from App.tsx
@@ -268,89 +270,98 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
     },
     {
       id: 3,
-      labelSk: "3. TOP MOMENTY",
-      labelEn: "3. BEST MOMENTS",
+      labelSk: "3. DIRECTOR PLAN",
+      labelEn: "3. DIRECTOR PLAN",
+      descSk: "AI navrhne strih — ty schváliš jednotlivé zásahy",
+      descEn: "AI proposes the edit — you approve each decision",
+      icon: Wand2,
+      color: "border-rose-500 text-rose-400"
+    },
+    {
+      id: 4,
+      labelSk: "4. TOP MOMENTY",
+      labelEn: "4. BEST MOMENTS",
       descSk: "Objavte vysoko virálne momenty a najsilnejšie háčiky",
       descEn: "Find viral hooks & highest interest retention parts",
       icon: Flame,
       color: "border-rose-500 text-rose-400"
     },
     {
-      id: 4,
-      labelSk: "4. BUILD STORY",
-      labelEn: "4. BUILD STORY",
+      id: 5,
+      labelSk: "5. BUILD STORY",
+      labelEn: "5. BUILD STORY",
       descSk: "Zostavte plán rozprávania a štruktúru príbehu",
       descEn: "Synthesize structured story scripts and chapters",
       icon: FileText,
       color: "border-emerald-500 text-emerald-400"
     },
     {
-      id: 5,
-      labelSk: "5. AUTO CUT",
-      labelEn: "5. AUTO CUT",
+      id: 6,
+      labelSk: "6. AUTO CUT",
+      labelEn: "6. AUTO CUT",
       descSk: "Odstráňte tiché pauzy a prebytočné slová okamžite",
       descEn: "Instantly slice out pauses, fillers & mistakes",
       icon: Scissors,
       color: "border-amber-500 text-amber-400"
     },
     {
-      id: 6,
-      labelSk: "6. TITULKY",
-      labelEn: "6. CAPTIONS",
+      id: 7,
+      labelSk: "7. TITULKY",
+      labelEn: "7. CAPTIONS",
       descSk: "Vygenerujte dizajnové bilingválne titulky s emodži",
       descEn: "Generate styled multilingual subtitle tracks",
       icon: Type,
       color: "border-indigo-500 text-indigo-400"
     },
     {
-      id: 7,
-      labelSk: "7. B-ROLL",
-      labelEn: "7. B-ROLL",
+      id: 8,
+      labelSk: "8. B-ROLL",
+      labelEn: "8. B-ROLL",
       descSk: "Doplňte vizuálne prekryvy a sekundárne zábery",
       descEn: "Overlay cinematic B-Roll footage suggestions",
       icon: Film,
       color: "border-violet-500 text-violet-400"
     },
     {
-      id: 8,
-      labelSk: "8. ZVUK & AUDIO",
-      labelEn: "8. AUDIO ENGINE",
+      id: 9,
+      labelSk: "9. ZVUK & AUDIO",
+      labelEn: "9. AUDIO ENGINE",
       descSk: "Upravte zvuk, odstráňte šum a zosynchronizujte beaty",
       descEn: "Enhance voices, gate noise & snap to background audio beats",
       icon: Music,
       color: "border-pink-500 text-pink-400"
     },
     {
-      id: 9,
-      labelSk: "9. VISUAL DYNAMICS",
-      labelEn: "9. VISUAL DYNAMICS",
+      id: 10,
+      labelSk: "10. VISUAL DYNAMICS",
+      labelEn: "10. VISUAL DYNAMICS",
       descSk: "Aktivujte sledovanie tváre, priblíženia a gumovanie",
       descEn: "Enable smart face tracking, automated zooms & eraser",
       icon: Tv,
       color: "border-cyan-500 text-cyan-400"
     },
     {
-      id: 10,
-      labelSk: "10. DIAGNOSTIKA",
-      labelEn: "10. REVIEW",
+      id: 11,
+      labelSk: "11. DIAGNOSTIKA",
+      labelEn: "11. REVIEW",
       descSk: "Simulujte retenciu divákov a vytvorte A/B verzie",
       descEn: "Test audience retention drop-offs & create A/B variations",
       icon: Heart,
       color: "border-teal-500 text-teal-400"
     },
     {
-      id: 11,
-      labelSk: "11. MULTI-FORMAT",
-      labelEn: "11. MULTI-FORMAT",
+      id: 12,
+      labelSk: "12. MULTI-FORMAT",
+      labelEn: "12. MULTI-FORMAT",
       descSk: "Preformátujte video pre TikTok, YouTube a IG",
       descEn: "Crop and optimize canvas safe margins across platforms",
       icon: TrendingUp,
       color: "border-orange-500 text-orange-400"
     },
     {
-      id: 12,
-      labelSk: "12. EXPORT",
-      labelEn: "12. EXPORT",
+      id: 13,
+      labelSk: "13. EXPORT",
+      labelEn: "13. EXPORT",
       descSk: "Vyexportujte finálny balíček s popisom a hashtágmi",
       descEn: "Bundle and download complete ready-to-post socials package",
       icon: Download,
@@ -360,7 +371,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
 
   // Helper to trigger navigation
   const handleNextStep = () => {
-    if (currentStep < 12) {
+    if (currentStep < 13) {
       setCurrentStep(prev => prev + 1);
       playSynthesizedSFX("click", 0.5);
     }
@@ -456,7 +467,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-1 rounded-lg bg-neutral-900 text-rose-400 font-mono text-[10px] font-black uppercase border border-rose-500/20">
-                {isSk ? `KROK ${currentStep} z 12` : `STEP ${currentStep} OF 12`}
+                {isSk ? `KROK ${currentStep} z 13` : `STEP ${currentStep} OF 13`}
               </span>
               <h2 className="text-base font-black text-white uppercase tracking-tight">
                 {isSk ? currentStepData.labelSk : currentStepData.labelEn}
@@ -563,7 +574,25 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 3: FIND BEST MOMENTS */}
+              {/* STEP 3: DIRECTOR PLAN (RAW -> READY) */}
               {currentStep === 3 && (
+                <div className="space-y-4">
+                  <DirectorPlanPanel
+                    language={language}
+                    rawDurationSeconds={typeof duration === "number" ? duration : null}
+                    onSeek={onSeek}
+                    onApplyPlan={(accepted: DirectorPlanItem[]) => {
+                      showToast(
+                        isSk
+                          ? `✅ Director Plan: pripravených ${accepted.length} zásahov na aplikovanie.`
+                          : `✅ Director Plan: ${accepted.length} edits ready to apply.`
+                      );
+                    }}
+                  />
+                </div>
+              )}
+
+              {currentStep === 4 && (
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <ViralPresets 
@@ -598,7 +627,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 4: BUILD STORY */}
-              {currentStep === 4 && (
+              {currentStep === 5 && (
                 <AIStoryBuilder
                   rawAnalysis={rawAnalysis}
                   storyPlan={storyPlan}
@@ -611,7 +640,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 5: AUTO CUT */}
-              {currentStep === 5 && (
+              {currentStep === 6 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <AIJumpCutEditor
                     rawAnalysis={rawAnalysis}
@@ -639,7 +668,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 6: CAPTIONS */}
-              {currentStep === 6 && (
+              {currentStep === 7 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <SmartCaptionEditor
                     project={captionProject}
@@ -671,7 +700,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 7: B-ROLL */}
-              {currentStep === 7 && (
+              {currentStep === 8 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <AIBrollEngine
                     project={brollProject}
@@ -706,7 +735,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 8: AUDIO */}
-              {currentStep === 8 && (
+              {currentStep === 9 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <AIAudioStudio
                     project={audioProject}
@@ -731,7 +760,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 9: VISUAL DYNAMICS */}
-              {currentStep === 9 && (
+              {currentStep === 10 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <VisualAttentionStudio
                     project={visualAttentionProject}
@@ -753,7 +782,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 10: REVIEW */}
-              {currentStep === 10 && (
+              {currentStep === 11 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <RetentionSimulator
                     project={retentionProject}
@@ -774,7 +803,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 11: MULTI-FORMAT */}
-              {currentStep === 11 && (
+              {currentStep === 12 && (
                 <MultiPlatformExport
                   project={multiExportProject}
                   onUpdateProject={onUpdateMultiExportProject}
@@ -785,7 +814,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
               )}
 
               {/* STEP 12: EXPORT */}
-              {currentStep === 12 && (
+              {currentStep === 13 && (
                 <div className="space-y-6">
                   <div className="p-6 rounded-2xl bg-neutral-950 border border-neutral-800 flex flex-col md:flex-row items-center justify-between gap-6">
                     <div>

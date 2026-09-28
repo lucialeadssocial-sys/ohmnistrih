@@ -646,6 +646,398 @@ app.post("/api/keys/test", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DIRECTOR ENGINE — „RAW → READY" Edit Plan
+//
+// Princíp celého OmniStrihu: AI IBA ROZHODUJE, nič nerenderuje a nič neaplikuje.
+// Výstupom je Edit Plan (zoznam zásahov s odôvodnením), ktorý ide používateľovi
+// na schválenie. Vykonanie robí až media engine (Mediabunny) na strane klienta.
+//
+// Ak nie je dostupný žiadny kľúč (alebo Gemini zlyhá), vráti sa deterministický
+// lokálny plán — aplikácia tak zostane použiteľná aj úplne bez API (0 tokenov).
+// ─────────────────────────────────────────────────────────────────────────────
+
+type DirectorActionType =
+  | "CUT" | "KEEP" | "SPEED" | "ZOOM" | "CROP"
+  | "CAPTION" | "HOOK" | "HIGHLIGHT" | "BROLL" | "SFX" | "MUSIC";
+
+interface DirectorPlanItem {
+  id: string;
+  type: DirectorActionType;
+  start: number;
+  end?: number;
+  label: string;
+  reason: string;
+  lesson?: string;
+  confidence: number;
+  status: "proposed";
+}
+
+const DIRECTOR_MODES: Record<string, { labelSk: string; goalSk: string; minutesSavedPerRawMinute: number }> = {
+  SOCIAL: {
+    labelSk: "Retention Short (Reels / TikTok / Shorts)",
+    goalSk: "udržať pozornosť: silný hook, svižné tempo, dynamické titulky, punch-iny",
+    minutesSavedPerRawMinute: 4.2,
+  },
+  ADS: {
+    labelSk: "UGC / Reklama (performance)",
+    goalSk: "konverzia: hook → problém → riešenie → dôkaz → CTA, viac variantov hooku",
+    minutesSavedPerRawMinute: 3.8,
+  },
+  PODCAST: {
+    labelSk: "Podcast / Talking head",
+    goalSk: "čistý prirodzený strih bez fillerov a zakopnutí, zachovať rytmus reči",
+    minutesSavedPerRawMinute: 3.5,
+  },
+  YOUTUBE: {
+    labelSk: "YouTube / Long-form",
+    goalSk: "dlhodobá kontinuita, kapitoly, story struktúra, žiadne agresívne skoky",
+    minutesSavedPerRawMinute: 3.9,
+  },
+  CORPORATE: {
+    labelSk: "Firemné / Brand video",
+    goalSk: "čistý profesionálny dojem, konzistentný vizuál, dôveryhodnosť",
+    minutesSavedPerRawMinute: 3.2,
+  },
+  CUSTOM: {
+    labelSk: "Vlastný štýl",
+    goalSk: "rešpektovať poznámky používateľa",
+    minutesSavedPerRawMinute: 3.5,
+  },
+};
+
+const DIRECTOR_ACTION_TYPES: DirectorActionType[] = [
+  "CUT", "KEEP", "SPEED", "ZOOM", "CROP", "CAPTION", "HOOK", "HIGHLIGHT", "BROLL", "SFX", "MUSIC",
+];
+
+/** Skráti a očistí text; ochrana proti obrovským odpovediam. */
+function clampText(value: any, max: number): string {
+  return String(value ?? "").trim().slice(0, max);
+}
+
+/** Zvaliduje jeden zásah z AI odpovede na bezpečný tvar. */
+function normalizeDirectorItem(raw: any, index: number): DirectorPlanItem | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const rawType = clampText(raw.type, 20).toUpperCase();
+  const type = (DIRECTOR_ACTION_TYPES as string[]).includes(rawType)
+    ? (rawType as DirectorActionType)
+    : null;
+  if (!type) return null;
+
+  const startNum = Number(raw.start);
+  if (!Number.isFinite(startNum) || startNum < 0) return null;
+
+  const endNum = Number(raw.end);
+  const confidenceNum = Number(raw.confidence);
+  const label = clampText(raw.label, 120) || `Zásah ${index + 1}`;
+
+  return {
+    id: clampText(raw.id, 60) || `dir-${index + 1}-${Math.random().toString(36).slice(2, 7)}`,
+    type,
+    start: Math.round(startNum * 100) / 100,
+    end: Number.isFinite(endNum) && endNum > startNum ? Math.round(endNum * 100) / 100 : undefined,
+    label,
+    reason: clampText(raw.reason, 400) || "Bez uvedeného dôvodu.",
+    lesson: clampText(raw.lesson, 400) || undefined,
+    confidence: Number.isFinite(confidenceNum)
+      ? Math.min(1, Math.max(0, confidenceNum))
+      : 0.6,
+    status: "proposed",
+  };
+}
+
+/**
+ * Deterministický lokálny plán — použije sa, keď nie je kľúč alebo Gemini zlyhá.
+ * Nie je to „fake AI“: je to poctivý offline režim, ktorý dá použiteľnú kostru
+ * strihu a používateľ vidí, že beží bez API (source: "local-fallback").
+ */
+function buildLocalDirectorPlan(
+  mode: string,
+  durationSec: number,
+  language: string,
+): { plan: DirectorPlanItem[]; summary: string } {
+  const sk = language === "sk";
+  const plan: DirectorPlanItem[] = [];
+  const push = (
+    type: DirectorActionType,
+    start: number,
+    end: number | undefined,
+    label: string,
+    reason: string,
+    lesson: string,
+    confidence = 0.55,
+  ) => {
+    plan.push({
+      id: `local-${plan.length + 1}`,
+      type,
+      start: Math.round(start * 100) / 100,
+      end: end !== undefined ? Math.round(end * 100) / 100 : undefined,
+      label,
+      reason,
+      lesson,
+      confidence,
+      status: "proposed",
+    });
+  };
+
+  const total = Math.max(durationSec, 10);
+  const step = Math.max(total / 8, 2);
+
+  // 1) Hook na úvod
+  push(
+    "HOOK",
+    0,
+    Math.min(3, total * 0.1),
+    sk ? "Hook v prvých 3 sekundách" : "Hook in first 3 seconds",
+    sk
+      ? "Prvé sekundy rozhodujú, či divák zostane. Najsilnejšia veta patrí na začiatok."
+      : "The first seconds decide retention — the strongest line belongs at the start.",
+    sk ? "Technika: front-loading (najsilnejšia veta prv)." : "Technique: front-loading.",
+    0.7,
+  );
+
+  // 2) Pauzy a tempo
+  for (let i = 1; i <= 4; i++) {
+    const at = step * i;
+    if (at + 1.2 > total) break;
+    const long = i % 2 === 0;
+    push(
+      long ? "SPEED" : "CUT",
+      at,
+      at + (long ? 2.4 : 1.2),
+      long
+        ? sk ? "Zrýchliť hluchú pasáž (1,5×)" : "Speed up dead air (1.5×)"
+        : sk ? "Vystrihnúť zbytočnú pauzu" : "Cut unnecessary pause",
+      long
+        ? sk
+          ? "Pasáž nesie málo informácie — zrýchlenie udrží tempo bez pocitu vynechania."
+          : "Low-information passage — speeding up keeps pace without losing meaning."
+        : sk
+          ? "Pauza nič nepridáva, len spomaľuje tempo."
+          : "The pause adds nothing but drag.",
+      long
+        ? sk ? "Technika: speed ramp namiesto strihu." : "Technique: speed ramp instead of a cut."
+        : sk ? "Technika: tight cut / removing dead air." : "Technique: tight cut.",
+    );
+  }
+
+  // 3) Punch-in na dôležitú myšlienku
+  if (total > 12) {
+    push(
+      "ZOOM",
+      Math.min(step * 2.5, total - 3),
+      undefined,
+      sk ? "Punch-in 115 % na kľúčovú myšlienku" : "Punch-in 115% on key idea",
+      sk
+        ? "Zmena framingu zvýrazní pointu bez pridávania efektu."
+        : "A framing change emphasises the point without adding an effect.",
+      sk ? "Menej je viac: framing + timing často stačí." : "Less is more: framing + timing.",
+      0.6,
+    );
+  }
+
+  // 4) Titulky
+  push(
+    "CAPTION",
+    0,
+    total,
+    sk ? "Titulky s dôrazom na kľúčové slová" : "Captions with keyword emphasis",
+    sk
+      ? "Väčšina divákov sleduje bez zvuku; titulky držia pozornosť."
+      : "Most viewers watch muted — captions hold attention.",
+    sk ? "Technika: keyword emphasis (nie všetko rovnako)." : "Technique: keyword emphasis.",
+    0.65,
+  );
+
+  // 5) Hudba
+  push(
+    "MUSIC",
+    0,
+    total,
+    sk ? "Podkresová hudba s duckingom (−24 dB)" : "Background music with ducking (−24 dB)",
+    sk
+      ? "Hudba drží rytmus, ale nesmie prekrývať hlas."
+      : "Music holds rhythm but must never cover the voice.",
+    sk ? "Technika: sidechain/ducking pod rečou." : "Technique: sidechain ducking.",
+    0.6,
+  );
+
+  // 6) Zvukový akcent
+  push(
+    "SFX",
+    Math.min(step, total * 0.2),
+    undefined,
+    sk ? "Jemný whoosh pri prechode" : "Subtle whoosh on transition",
+    sk
+      ? "Zvukový akcent prekryje strih, aby nebol počuť skok."
+      : "A sound accent masks the cut so it isn't audible.",
+    sk ? "Technika: SFX masking cut." : "Technique: SFX masking the cut.",
+    0.55,
+  );
+
+  const summary = sk
+    ? `Offline plán pre režim ${DIRECTOR_MODES[mode]?.labelSk || mode}. Vytvorený lokálnym algoritmom bez API (0 tokenov) — je to kostra na doladenie, nie finálny strih.`
+    : `Offline plan for mode ${mode}, generated locally without any API (0 tokens).`;
+
+  // Rovnaké pravidlo ako pri AI pláne: zoradené podľa času.
+  plan.sort((a, b) => a.start - b.start);
+
+  return { plan, summary };
+}
+
+app.post("/api/director/plan", async (req, res) => {
+  try {
+    const {
+      mode = "SOCIAL",
+      language = "sk",
+      duration = 30,
+      transcript = "",
+      notes = "",
+      qualityMode = "PORTFOLIO", // PORTFOLIO = menej, ale kvalitnejších zásahov
+      useZeroTokenMode = false,
+    } = req.body || {};
+
+    const modeKey = String(mode).toUpperCase();
+    const safeMode = DIRECTOR_MODES[modeKey] ? modeKey : "CUSTOM";
+    const modeInfo = DIRECTOR_MODES[safeMode];
+    const durationSec = Number.isFinite(Number(duration)) ? Math.max(5, Number(duration)) : 30;
+    const sk = language === "sk";
+
+    telemetryStats.totalRequestsToday++;
+
+    // Koľko času by človeku zabralo spraviť to ručne (odhad, nie meranie).
+    const estimateFrom = (actionCount: number) =>
+      Math.round((durationSec / 60) * modeInfo.minutesSavedPerRawMinute + actionCount * 0.4);
+
+    const buildResponse = (
+      plan: DirectorPlanItem[],
+      source: "gemini" | "local-fallback",
+      extra: Record<string, any> = {},
+    ) =>
+      res.json({
+        success: true,
+        source,
+        mode: safeMode,
+        modeLabel: modeInfo.labelSk,
+        qualityMode,
+        plan,
+        summary: extra.summary,
+        estimatedTimeSavedMinutes: estimateFrom(plan.length),
+        rawDurationSeconds: durationSec,
+        ...extra,
+      });
+
+    // 1) Explicitný offline režim (0 tokenov)
+    if (useZeroTokenMode) {
+      const local = buildLocalDirectorPlan(safeMode, durationSec, language);
+      telemetryStats.localRequestsToday++;
+      return buildResponse(local.plan, "local-fallback", { summary: local.summary, tokensUsed: 0 });
+    }
+
+    // 2) Skúsime Gemini (rovnaká logika výberu kľúčov ako inde v aplikácii)
+    const candidateKeys = selectCandidateKeysForTask("gemini", "TEXT_REASONING", "gemini-3.8-flash");
+
+    if (candidateKeys.length > 0) {
+      const modelCandidates = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+      const styleRule = qualityMode === "PORTFOLIO"
+        ? sk
+          ? "Režim PROFESSIONAL PORTFOLIO: rob radšej MENEJ, ale kvalitnejších zásahov. Žiadny efekt len preto, aby tam bol."
+          : "PROFESSIONAL PORTFOLIO mode: fewer but higher-quality decisions. No effect without an editorial reason."
+        : sk
+          ? "Režim FAST: maximalizuj úsporu času, zásahov môže byť viac."
+          : "FAST mode: maximise time saved.";
+
+      const prompt = [
+        sk
+          ? "Si skúsený profesionálny video editor. Navrhni strihový plán pre surové video."
+          : "You are an experienced professional video editor. Propose an edit plan for raw footage.",
+        "",
+        `REŽIM: ${modeInfo.labelSk}`,
+        `CIEĽ: ${modeInfo.goalSk}`,
+        `DĹŽKA SUROVÉHO VIDEA: ${Math.round(durationSec)} sekúnd`,
+        `JAZYK VIDEA: ${language}`,
+        styleRule,
+        transcript
+          ? `\nPREPIS (môže byť neúplný):\n"""${clampText(transcript, 6000)}"""`
+          : sk
+            ? "\nPrepisy nie sú k dispozícii — navrhni plán na základe bežnej štruktúry takéhoto videa."
+            : "\nNo transcript available — base the plan on the typical structure of such a video.",
+        notes ? `\nPOZNÁMKY POUŽÍVATEĽA:\n"""${clampText(notes, 1500)}"""` : "",
+        "",
+        sk
+          ? "Vráť VÝHRADNE JSON (bez markdownu, bez komentárov) v tomto tvare:"
+          : "Return ONLY JSON (no markdown, no comments) in this shape:",
+        '{"summary":"1-2 vety","plan":[{"type":"CUT","start":12.4,"end":14.1,"label":"krátky popis","reason":"prečo to robíme","lesson":"čo sa z toho používateľ naučí","confidence":0.8}]}',
+        "",
+        sk
+          ? "Pravidlá: type musí byť jedno z CUT, KEEP, SPEED, ZOOM, CROP, CAPTION, HOOK, HIGHLIGHT, BROLL, SFX, MUSIC. start/end sú sekundy (end môže chýbať). Zoraď položky podľa času. Maximálne 14 položiek. Ku KAŽDEJ položke daj krátky 'reason' a 'lesson' (learning mode) v slovenčine."
+          : "Rules: type must be one of CUT, KEEP, SPEED, ZOOM, CROP, CAPTION, HOOK, HIGHLIGHT, BROLL, SFX, MUSIC. start/end in seconds. Sort by time. Max 14 items. Every item needs a short 'reason' and 'lesson'.",
+      ].join("\n");
+
+      for (const modelName of modelCandidates) {
+        const keyItem = candidateKeys.find((k) => k.model === modelName) || candidateKeys[0];
+        try {
+          const ai = new GoogleGenAI({
+            apiKey: keyItem.key,
+            httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+          });
+
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: { responseMimeType: "application/json" },
+          });
+
+          const text = response.text || "";
+          const jsonStart = text.indexOf("{");
+          const jsonEnd = text.lastIndexOf("}");
+          if (jsonStart === -1 || jsonEnd <= jsonStart) throw new Error("Odpoveď neobsahuje JSON.");
+
+          const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+          const rawPlan = Array.isArray(parsed?.plan) ? parsed.plan : [];
+          const plan = rawPlan
+            .map((item: any, i: number) => normalizeDirectorItem(item, i))
+            .filter((x: DirectorPlanItem | null): x is DirectorPlanItem => x !== null)
+            .sort((a: DirectorPlanItem, b: DirectorPlanItem) => a.start - b.start)
+            .slice(0, 20);
+
+          if (plan.length === 0) throw new Error("Plán neobsahuje žiadne použiteľné zásahy.");
+
+          keyItem.requestCount++;
+          keyItem.lastSuccessfulUse = new Date().toISOString();
+          return buildResponse(plan, "gemini", {
+            model: modelName,
+            summary: clampText(parsed?.summary, 500) || undefined,
+          });
+        } catch (modelErr: any) {
+          const errText = String(modelErr?.message || modelErr);
+          if (errText.includes("429") || errText.toLowerCase().includes("quota")) {
+            handleRateLimitOnKey(keyItem, errText);
+            break;
+          }
+          // inak skús ďalší model
+        }
+      }
+    }
+
+    // 3) Fallback — lokálny deterministický plán (aplikácia nesmie „umrieť“)
+    const local = buildLocalDirectorPlan(safeMode, durationSec, language);
+    telemetryStats.localRequestsToday++;
+    return buildResponse(local.plan, "local-fallback", {
+      summary: local.summary,
+      fallbackReason: candidateKeys.length === 0
+        ? "Nie je dostupný žiadny API kľúč."
+        : "Gemini nevrátil použiteľný plán.",
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: `Director Engine zlyhal: ${err?.message || err}`,
+    });
+  }
+});
+
 // Dedicated Audio Speech Transcription Endpoint (CapCut Auto Captions style)
 app.post("/api/transcribe-speech", async (req, res) => {
   try {
