@@ -472,6 +472,87 @@ const settle = async () => {
     check('App opens the real export dialog from the pipeline', app.includes('onOpenExport={() => setIsExportOpen(true)}'));
   }
 
+  // ---------------------------------------------------------------- §9 measured stage narration
+  console.log('\n=== §9 project check narration is measured, not scripted ===');
+  {
+    const { buildStressStages, summariseStages } = await import('./src/core/ai/stressStages');
+
+    const project = mkProject([
+      videoTrack([mkClip({ id: 'v1', start: 0, duration: 5 }), mkClip({ id: 'v2', start: 6.5, duration: 5, transitionsIn: { type: 'CROSSFADE', duration: 1.5 } })]),
+      audioTrack([mkClip({ id: 'a1', start: 0, duration: 5, type: 'audio', volume: 140 }), mkClip({ id: 'a2', start: 5, duration: 6.5, type: 'audio', volume: 100 })]),
+      captionTrack([mkClip({ id: 'c1', start: 0, duration: 3, text: 'Hook', fontSize: 72 })]),
+    ], {
+      assets: [
+        { id: 'asset_video_1', name: 'A001.mp4', type: 'video', duration: 600, size: 1, opfsPath: 'opfs://a001.mp4' } as unknown as ProjectModel['assets'][number],
+        { id: 'asset_video_2', name: 'B002.mp4', type: 'video', duration: 300, size: 1 } as unknown as ProjectModel['assets'][number],
+      ],
+      audioMastering: { loudnessTargetLUFS: -14, truePeakCeilingDbfs: -1 } as unknown as ProjectModel['audioMastering'],
+    });
+    const report = runQualityCheck(project);
+    const stages = buildStressStages(project, report, { hasExport: false });
+    const byStage = new Map(stages.map(stage => [stage.stage, stage]));
+
+    check('nine stages are produced', stages.length === 9, stages.map(s => s.stage));
+    check('stage order follows the pipeline', stages.map(s => s.stage).join('|') === 'TIMELINE|MEDIA|GAPS & OVERLAPS|CAPTIONS|AUDIO LEVELS|PACING|TRANSITIONS|TRANSCRIPT|EXPORT', stages.map(s => s.stage));
+
+    const timeline = byStage.get('TIMELINE');
+    check('TIMELINE reports the measured duration', (timeline?.descSk ?? '').includes('11.5s'), timeline?.descSk);
+    check('TIMELINE reports the measured cut count', (timeline?.descSk ?? '').includes('1 rezov'), timeline?.descSk);
+    check('TIMELINE is marked measured', timeline?.measured === true);
+
+    const media = byStage.get('MEDIA');
+    check('MEDIA counts real assets and OPFS paths', (media?.descSk ?? '').includes('2 assetov') && (media?.descSk ?? '').includes('1 s uloženou OPFS cestou'), media?.descSk);
+
+    const gaps = byStage.get('GAPS & OVERLAPS');
+    check('GAPS reports the measured 1 gap', (gaps?.descSk ?? '').includes('1 medzier'), gaps?.descSk);
+
+    const captions = byStage.get('CAPTIONS');
+    check('CAPTIONS is measured when caption clips exist', captions?.measured === true && (captions?.descSk ?? '').includes('1 titulkových klipov'));
+    check('CAPTIONS declares text width unmeasured', (captions?.descSk ?? '').includes('Šírka textu sa nemeria'));
+
+    const audio = byStage.get('AUDIO LEVELS');
+    check('AUDIO reports real clip levels', (audio?.descSk ?? '').includes('2 audio klipov') && (audio?.descSk ?? '').includes('1 nad 100 %'), audio?.descSk);
+    check('AUDIO names the project loudness target', (audio?.descSk ?? '').includes('-14 LUFS'), audio?.descSk);
+    check('AUDIO states ducking is not implemented', (audio?.descSk ?? '').includes('Ducking hudby nie je implementovaný'));
+
+    const transitions = byStage.get('TRANSITIONS');
+    check('TRANSITIONS counts real transitions', (transitions?.descSk ?? '').includes('1 z 2 video klipov') && (transitions?.descSk ?? '').includes('1 prechodov dlhších'), transitions?.descSk);
+
+    const transcript = byStage.get('TRANSCRIPT');
+    check('TRANSCRIPT is declared unmeasured without a transcript', transcript?.measured === false && (transcript?.descSk ?? '').startsWith('NEMERANÉ'));
+    check('TRANSCRIPT names what cannot be checked', (transcript?.descSk ?? '').includes('rezy v polovici slova'));
+
+    const exportStage = byStage.get('EXPORT');
+    check('EXPORT is declared unmeasured without a completed export', exportStage?.measured === false && (exportStage?.descSk ?? '').includes('história exportov neobsahuje dokončený export'));
+
+    const withExport = buildStressStages(project, report, { hasExport: true, sizeBytes: 154.8 * 1024 * 1024, container: 'WebM (9:16)', durationSeconds: 742, integratedLufs: -14.2, truePeakDbfs: -1.1 });
+    const exportMeasured = withExport.find(s => s.stage === 'EXPORT');
+    check('EXPORT becomes measured when a real export exists', exportMeasured?.measured === true);
+    check('EXPORT reports the real bytes, duration and loudness', (exportMeasured?.descSk ?? '').includes('154.8 MB') && (exportMeasured?.descSk ?? '').includes('742s') && (exportMeasured?.descSk ?? '').includes('-14.2 LUFS') && (exportMeasured?.descSk ?? '').includes('-1.1 dBFS'), exportMeasured?.descSk);
+
+    const summary = summariseStages(stages);
+    check('summary counts 7 measured / 2 unmeasured', summary.measured === 7 && summary.unmeasured === 2, summary);
+
+    const noCaptionProject = mkProject([videoTrack([mkClip({ id: 'v1', start: 0, duration: 5 })]), audioTrack([mkClip({ id: 'a1', start: 0, duration: 5, type: 'audio' })])]);
+    const withoutCaptions = buildStressStages(noCaptionProject, runQualityCheck(noCaptionProject), { hasExport: false });
+    check('CAPTIONS is declared unmeasured when the project has no captions', withoutCaptions.find(s => s.stage === 'CAPTIONS')?.measured === false);
+
+    // Anti-fabrication: the previous scripted narration must be gone for good.
+    const forbidden = ['raw_interview_01', 'ambient_cinematic_music', 'performance_metrics.png', 'drone_nature', 'Take 1', '154.8 MB, 742', '42s ticha', '1.8s emocionálna'];
+    const allText = stages.map(s => `${s.descSk} ${s.descEn}`).join(' ');
+    check('no scripted footage names survive in the narration', !forbidden.some(token => allText.includes(token)), forbidden.filter(t => allText.includes(t)));
+    check('no scripted stage titles survive', !allText.includes('BAD TAKE SELECTION') && !allText.includes('RENDER & REAL OUTPUT'));
+
+    const panel = read('src/components/QualityControlAndAnalytics.tsx');
+    check('the panel no longer holds a scripted stage array', !panel.includes('stressTestSteps'));
+    check('the panel builds stages from the project', panel.includes('buildStressStages(project, report,'));
+    check('the panel imports the measured stage builder', panel.includes('from "../core/ai/stressStages"'));
+    check('the panel marks measured vs unmeasured log lines', panel.includes('"✔ MERANÉ"') && panel.includes('"⚠ NEMERANÉ"'));
+    check('the panel reports measured/unmeasured counts in the toast', panel.includes('fáz meraných, ${unmeasured} NEMERANÝCH'));
+    check('the button no longer claims a stress test on scripted data', panel.includes('KONTROLA PROJEKTU (MERANÁ)'));
+    check('stage builder has no randomness', !read('src/core/ai/stressStages.ts').includes('Math.random'));
+  }
+
   // ---------------------------------------------------------------- summary
   console.log(`\n================ QC SUMMARY ================`);
   console.log(`PASS ${pass} / FAIL ${failures.length}`);

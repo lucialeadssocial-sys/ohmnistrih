@@ -37,6 +37,8 @@ import { RenderEngineManager } from "../utils/renderEngineManager";
 import { ClipModel, ProjectModel } from "../core/types/project";
 import { TimelineEngine } from "../core/timeline/timelineEngine";
 import type { QualityCheckReport, QcSeverity } from "../core/ai/qualityCheck";
+import { buildStressStages, summariseStages, type StressStage } from "../core/ai/stressStages";
+import { runQualityCheck } from "../core/ai/qualityCheck";
 
 type QcGateEvaluation = { status: QCGateCheck["status"]; evidenceSk: string; evidenceEn: string };
 
@@ -249,6 +251,7 @@ export const QualityControlAndAnalytics: React.FC<{
   const [isStressTesting, setIsStressTesting] = useState(false);
   const [stressTestStep, setStressTestStep] = useState<number>(-1);
   const [stressTestLogs, setStressTestLogs] = useState<string[]>([]);
+  const [stressStages, setStressStages] = useState<StressStage[]>([]);
 
   // Generated WebM properties (Rule #2 Real Output)
   const [fileDetails, setFileDetails] = useState({
@@ -335,19 +338,6 @@ export const QualityControlAndAnalytics: React.FC<{
     { sk: "Čítam históriu reálnych exportov...", en: "Reading the real export history..." },
     { sk: "Vyhodnocujem 25 QC brán proti dostupným dôkazom...", en: "Evaluating the 25 QC gates against available evidence..." },
     { sk: "Brány bez merateľných podkladov označujem NOT_VERIFIED...", en: "Marking gates without measurable evidence NOT_VERIFIED..." }
-  ];
-
-  const stressTestSteps = [
-    { stage: "RAW INPUT", descSk: "Analýza surových zdrojov: video raw_interview_01.mp4 (18m 32s), ambient_cinematic_music.wav, performance_metrics.png. Snímky: NOT_AVAILABLE (žiadna fotografia v projekte).", descEn: "Loading raw sources: video raw_interview_01.mp4 (18m 32s), ambient_cinematic_music.wav, performance_metrics.png. Photos: NOT_AVAILABLE (no photos in project workspace)." },
-    { stage: "ANALYSIS & TRANSCRIPT", descSk: "Skenovanie dychu, filler slov a opakovania. Nájdené zakoktania na 01:15.", descEn: "Scanning breath, filler words, and repeats. Stutter stumbles discovered at 01:15." },
-    { stage: "SMART CUT", descSk: "Sémantické vyčistenie: Odstránených 42s ticha, filler slová vyčistené. Ochrana zámku seg_user_02 úspešná.", descEn: "Semantic cleanup: 42s technical silence removed, fillers filtered. User lock seg_user_02 verified untouched." },
-    { stage: "BAD TAKE SELECTION", descSk: "Porovnanie duplicitných záberov. Take 1 (01:15) vyradený kvôli zakoktaniu. Vybraný Take 2 (01:28) pre čistú dikciu.", descEn: "Duplicate take assessment: Take 1 (01:15) rejected due to stutter. Take 2 (01:28) chosen for superior diction." },
-    { stage: "STORY & PACING", descSk: "Usporiadanie oblúka: Hook ➔ Setup ➔ Development ➔ Payoff. Emocionálna pauza 1.8s a ticho 2.4s plne ponechané.", descEn: "Arranging arc: Hook ➔ Setup ➔ Development ➔ Payoff. 1.8s emotional pause and 2.4s meaningful silence strictly preserved." },
-    { stage: "AUDIO CLEANUP & MUSIC", descSk: "Multiband noise reduction (-18dB). Normalizácia na -14 LUFS, peak -0.1 dBFS. Auto-ducking znižuje hudbu o -15dB.", descEn: "Multiband noise reduction (-18dB). Levels normalized to -14 LUFS, -0.1 dBFS peak. Auto-ducking ducks music by -15dB on speech." },
-    { stage: "CAPTIONS & B-ROLL", descSk: "Rozdelenie dlhých viet na riadky pod 24 znakov. Pridaný dronový B-roll drone_nature.mp4 od 00:32.", descEn: "Long sentences split to lines under 24 chars inside safe margins. Drone B-roll drone_nature.mp4 loaded from 00:32." },
-    { stage: "PUNCH-IN & GRAPHICS", descSk: "Fyzický punch-in zoom na 00:12 (mierka 115%). Vloženie štatistického prekrytia performance_metrics.png na 01:20.", descEn: "Physical punch-in zoom calculated at 00:12 (115% scale). Statistical chart performance_metrics.png composited at 01:20." },
-    { stage: "NATURALNESS & QUALITY GATE", descSk: "Obnova 120ms mostíkov na spojoch. Spustenie finálneho Quality Gate 2.0 na vyrenderované video: Všetky body spĺňajú normy.", descEn: "Restored 120ms waveform bridges. Launching post-edit Quality Gate 2.0 on final frames: All points meet editorial specs." },
-    { stage: "RENDER & REAL OUTPUT", descSk: "Muxovanie WebM (VP9 + Opus). overené: validný EBML kontajner, nepoškodený výstup, veľkosť 154.8 MB, 742 sekúnd.", descEn: "WebM Muxing completed (VP9 + Opus). Verified: Valid EBML container, uncorrupted byte-stream, size 154.8 MB, 742 seconds." }
   ];
 
   // Run Standard Quality Gate Audit
@@ -587,13 +577,31 @@ export const QualityControlAndAnalytics: React.FC<{
     setStressTestLogs([]);
     playSynthesizedSFX("whoosh", 0.4);
 
-    const stages = stressTestSteps.map(s => s.stage);
+    const project = coreEngine.getProject();
+    const report = runQualityCheck(project);
+    const history = RenderEngineManager.getExportHistory("current-project");
+    const artifact = history.find(entry => entry.status === "COMPLETED" && entry.fileUrl);
+    const sizeMatch = artifact?.fileSize ? /([\d.]+)\s*(MB|KB|GB)/i.exec(artifact.fileSize) : null;
+    const unit = sizeMatch?.[2]?.toUpperCase();
+    const sizeBytes = sizeMatch
+      ? parseFloat(sizeMatch[1]) * (unit === "GB" ? 1024 ** 3 : unit === "KB" ? 1024 : 1024 ** 2)
+      : undefined;
+    const stages = buildStressStages(project, report, {
+      hasExport: Boolean(artifact),
+      sizeBytes,
+      container: artifact ? (artifact.preset === "SOCIAL_VERTICAL" ? "WebM (9:16)" : `WebM (${artifact.resolution})`) : undefined,
+      durationSeconds: artifact?.duration,
+      integratedLufs: artifact?.audioLoudness?.integratedLufs ?? undefined,
+      truePeakDbfs: artifact?.audioLoudness?.truePeakDbfs ?? undefined,
+    });
+    setStressStages(stages);
 
     let current = 0;
     const interval = setInterval(() => {
       if (current < stages.length) {
-        const step = stressTestSteps[current];
-        setStressTestLogs(old => [...old, `[${step.stage}] ${isSk ? step.descSk : step.descEn}`]);
+        const step = stages[current];
+        const marker = step.measured ? (isSk ? "✔ MERANÉ" : "✔ MEASURED") : (isSk ? "⚠ NEMERANÉ" : "⚠ NOT MEASURED");
+        setStressTestLogs(old => [...old, `${marker} [${step.stage}] ${isSk ? step.descSk : step.descEn}`]);
         setStressTestStep(current);
         current++;
         return;
@@ -601,8 +609,6 @@ export const QualityControlAndAnalytics: React.FC<{
 
       clearInterval(interval);
 
-      const project = coreEngine.getProject();
-      const history = RenderEngineManager.getExportHistory("current-project");
       const { evaluations, facts } = evaluateQcGates(project, history);
 
       setQcGateChecks(prevChecks => applyGateEvaluations(prevChecks, evaluations));
@@ -618,10 +624,11 @@ export const QualityControlAndAnalytics: React.FC<{
       setIsStressTesting(false);
       setHasTestedOutput(true);
       playSynthesizedSFX("pop", 0.4);
+      const { measured, unmeasured } = summariseStages(stages);
       showToast(
         isSk
-          ? "Kontrola dokončená — brány bez merateľných podkladov zostávajú NOT_VERIFIED."
-          : "Audit finished — gates without measurable evidence remain NOT_VERIFIED.",
+          ? `Kontrola dokončená — ${measured} fáz meraných, ${unmeasured} NEMERANÝCH. Brány bez podkladov zostávajú NOT_VERIFIED.`
+          : `Check finished — ${measured} stages measured, ${unmeasured} NOT MEASURED. Gates without evidence remain NOT_VERIFIED.`,
         "info"
       );
     }, 450);
@@ -943,7 +950,7 @@ export const QualityControlAndAnalytics: React.FC<{
             className="px-5 py-3 rounded-xl bg-gradient-to-r from-rose-600 via-amber-600 to-rose-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs uppercase tracking-wider transition-all shadow-xl shadow-rose-600/30 flex items-center gap-2 disabled:opacity-50"
           >
             <Activity className={`h-4 w-4 ${isStressTesting ? "animate-spin" : ""}`} />
-            <span>{isSk ? "🌋 SPUSTIŤ STRESS TEST" : "🌋 RUN STRESS TEST"}</span>
+            <span>{isSk ? "🌋 KONTROLA PROJEKTU (MERANÁ)" : "🌋 PROJECT CHECK (MEASURED)"}</span>
           </button>
 
           <button
@@ -982,16 +989,16 @@ export const QualityControlAndAnalytics: React.FC<{
           <div className="flex items-center justify-between">
             <span className="text-xs font-black uppercase text-rose-400 tracking-wider flex items-center gap-1.5 animate-pulse">
               <Sparkles className="h-4 w-4 text-amber-400 animate-spin" />
-              {isSk ? "PREBIEHA OMNISTRIH REAL RAW ➔ FINAL VIDEO STRESS TEST..." : "RUNNING OMNISTRIH REAL RAW ➔ FINAL VIDEO STRESS TEST..."}
+              {isSk ? "PREBIEHA MERANÁ KONTROLA PROJEKTU (TIMELINE ➔ EXPORT)..." : "RUNNING THE MEASURED PROJECT CHECK (TIMELINE ➔ EXPORT)..."}
             </span>
             <span className="text-xs font-mono text-rose-400 font-bold">
-              {Math.round(((stressTestStep + 1) / stressTestSteps.length) * 100)}%
+              {stressStages.length > 0 ? Math.round(((stressTestStep + 1) / stressStages.length) * 100) : 0}%
             </span>
           </div>
           <div className="w-full h-2 bg-neutral-950 rounded-full overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-rose-500 via-amber-500 to-rose-600 transition-all duration-300"
-              style={{ width: `${((stressTestStep + 1) / stressTestSteps.length) * 100}%` }}
+              style={{ width: `${stressStages.length > 0 ? ((stressTestStep + 1) / stressStages.length) * 100 : 0}%` }}
             />
           </div>
           <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-850 font-mono text-xs text-neutral-300 space-y-2 max-h-48 overflow-y-auto">

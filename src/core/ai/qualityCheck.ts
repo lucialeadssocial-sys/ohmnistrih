@@ -431,8 +431,8 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
     },
     {
       id: 'true_peak',
-      reasonSk: 'Skutočný peak (dBFS) sa meria počas exportu z reálneho mixu, nie z timeline.',
-      reasonEn: 'The true peak (dBFS) is measured during export from the real mix, not from the timeline.',
+      reasonSk: 'Skutočný peak (dBFS) sa meria počas reálneho exportu z mixu a zapisuje sa do histórie exportov — v paneli Overiť súbor ho uvidíš, keď export existuje.',
+      reasonEn: 'The true peak (dBFS) is measured during a real export from the mix and stored in the export history — the Verify File panel shows it once an export exists.',
     },
     {
       id: 'caption_width',
