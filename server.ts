@@ -671,6 +671,8 @@ interface DirectorPlanItem {
   lesson?: string;
   confidence: number;
   status: "proposed";
+  /** Odkiaľ zásah pochádza: z konkrétnej vety prepisu, z odhadu, alebo od AI. */
+  basis?: "transcript" | "estimate" | "ai";
 }
 
 const DIRECTOR_MODES: Record<string, { labelSk: string; goalSk: string; minutesSavedPerRawMinute: number }> = {
@@ -744,6 +746,7 @@ function normalizeDirectorItem(raw: any, index: number): DirectorPlanItem | null
       ? Math.min(1, Math.max(0, confidenceNum))
       : 0.6,
     status: "proposed",
+    basis: "ai",
   };
 }
 
@@ -752,11 +755,196 @@ function normalizeDirectorItem(raw: any, index: number): DirectorPlanItem | null
  * Nie je to „fake AI“: je to poctivý offline režim, ktorý dá použiteľnú kostru
  * strihu a používateľ vidí, že beží bez API (source: "local-fallback").
  */
+type PlanBasis = "transcript" | "estimate" | "ai";
+
+interface TranscriptSentence {
+  text: string;
+  start: number;
+  end: number;
+  index: number;
+}
+
+const FILLER_WORDS = [
+  // SK
+  "ehm", "éhm", "emm", "hmm", "hm", "no", "takže", "vlastne", "akože", "jakoby",
+  "proste", "teda", "čiže", "nuž", "hej", "normálne", "v podstate", "nejak",
+  // EN
+  "um", "uh", "like", "you know", "basically", "actually", "literally", "well",
+  "right", "kinda", "sorta", "i mean",
+];
+
+const POWER_WORDS = [
+  // SK — slová, ktoré reálne ťahajú pozornosť
+  "zadarmo", "najlepš", "tajomstv", "chyba", "chyb", "peniaz", "peňaz", "eur", "rýchl",
+  "výsledok", "trik", "nikdy", "vždy", "nikto", "každý", "prestaň", "pozor", "tajné",
+  "jednoduch", "za 5 minút", "bez platenia", "ušetr", "zdarma",
+  // EN
+  "free", "best", "secret", "mistake", "money", "fast", "result", "trick",
+  "never", "always", "nobody", "everyone", "stop", "save", "without paying",
+];
+
+function shortQuote(text: string, max = 46): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max).trimEnd()}…`;
+}
+
+/**
+ * Rozdelí prepis na vety a odhadne ich časové rozsahy.
+ * Ak má používateľ text bez časovania (bežné pri kopírovaní z titulkovej appky),
+ * rozdelíme dĺžku videa úmerne dĺžke viet. Je to odhad — preto ho vždy
+ * označíme (basis) a v odôvodnení uvedieme KTORÁ veta to je, aby sa dal
+ * zásah overiť za dve sekundy.
+ */
+function estimateSentenceTimings(transcript: string, durationSec: number): TranscriptSentence[] {
+  const cleaned = String(transcript || "").replace(/\s+/g, " ").trim();
+  if (cleaned.length < 20) return [];
+
+  let parts = cleaned.split(/(?<=[.!?…])\s+/).map((t) => t.trim()).filter((t) => t.length >= 3);
+
+  // Prepis bez interpunkcie (napr. z auto-captions) → delíme na hranici slova po ~90 znakoch
+  if (parts.length < 3) {
+    parts = [];
+    const words = cleaned.split(" ");
+    let buf: string[] = [];
+    for (const w of words) {
+      buf.push(w);
+      if (buf.join(" ").length >= 90) {
+        parts.push(buf.join(" "));
+        buf = [];
+      }
+    }
+    if (buf.length > 0) parts.push(buf.join(" "));
+  }
+
+  const sentences = parts.slice(0, 120);
+  if (sentences.length === 0) return [];
+
+  const totalChars = sentences.reduce((sum, t) => sum + t.length, 0);
+  const usable = Math.max(durationSec, 10);
+  let cursor = 0;
+
+  return sentences.map((text, index) => {
+    const share = (text.length / totalChars) * usable;
+    const start = cursor;
+    const end = Math.min(usable, cursor + share);
+    cursor = end;
+    return { text, start, end, index };
+  });
+}
+
+function fillerRatio(text: string): number {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return 0;
+  const hits = words.filter((w) => FILLER_WORDS.includes(w)).length;
+  return hits / words.length;
+}
+
+function isFillerSentence(sentence: TranscriptSentence): boolean {
+  const ratio = fillerRatio(sentence.text);
+  if (ratio >= 0.22) return true;
+  return sentence.text.length < 60 && ratio > 0;
+}
+
+/**
+ * Výplň na ZAČIATKU vety („Takže, ehm, dnes si ukážeme…").
+ * V praxi editor najčastejšie nestrihá celú vetu, ale práve tento rozbeh.
+ * Čas odhadneme podielom dĺžky výplne na dĺžke vety (max 2,5 s), aby zásah
+ * nebol nikdy väčší, než je reálne bezpečné.
+ */
+function leadingFillerChunk(
+  sentence: TranscriptSentence,
+): { start: number; end: number; words: string } | null {
+  const clean = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const words = sentence.text.split(/\s+/).filter((w) => clean(w) !== "");
+  if (words.length === 0) return null;
+
+  const leading: string[] = [];
+  for (const w of words) {
+    if (FILLER_WORDS.includes(clean(w))) leading.push(w);
+    else break;
+  }
+  if (leading.length === 0) return null;
+  // Ak celá veta je výplň, rieši ju isFillerSentence — tu chceme len rozbeh.
+  if (leading.length >= words.length) return null;
+
+  const duration = Math.max(0.2, sentence.end - sentence.start);
+  const share = leading.join(" ").length / Math.max(6, sentence.text.length);
+  const chunk = Math.min(2.5, Math.max(0.4, duration * share + 0.2));
+
+  return {
+    start: sentence.start,
+    end: Math.min(sentence.end, sentence.start + chunk),
+    words: leading.join(" "),
+  };
+}
+
+function powerScore(text: string): number {
+  const t = text.toLowerCase();
+  let score = 0;
+  for (const w of POWER_WORDS) if (t.includes(w)) score += 2;
+  if (/\d/.test(t)) score += 1.5;
+  if (/\d+\s?(%|€|\$|eur|kč|kc|sekúnd|sekund|minút|minut)/.test(t)) score += 1.5;
+  if (t.length > 40 && t.length < 160) score += 0.5;
+  return score;
+}
+
+/**
+ * Poistka kvality: plán sa nesmie vymknúť realite videa.
+ * Oreže časy do dĺžky klipu, odstráni prekrývajúce sa strihy (nechá ten
+ * s vyššou istotou) a zastropuje počet zásahov.
+ */
+function validateDirectorPlan(plan: DirectorPlanItem[], durationSec: number): DirectorPlanItem[] {
+  const usable = Math.max(durationSec, 10);
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  const cleaned: DirectorPlanItem[] = [];
+  for (const item of plan) {
+    const start = Math.min(Math.max(0, item.start), Math.max(0, usable - 0.5));
+    let end = item.end;
+    if (end !== undefined) end = Math.min(Math.max(start + 0.5, end), usable);
+    cleaned.push({
+      ...item,
+      start: round2(start),
+      end: end !== undefined ? round2(end) : undefined,
+    });
+  }
+
+  const cutLike = cleaned
+    .filter((i) => i.type === "CUT" || i.type === "KEEP")
+    .sort((a, b) => b.confidence - a.confidence);
+  const keptCuts: DirectorPlanItem[] = [];
+  for (const c of cutLike) {
+    const cEnd = c.end ?? c.start + 1.5;
+    const overlaps = keptCuts.some((k) => {
+      const kEnd = k.end ?? k.start + 1.5;
+      return c.start < kEnd && k.start < cEnd;
+    });
+    if (!overlaps) keptCuts.push(c);
+  }
+
+  const others = cleaned.filter((i) => i.type !== "CUT" && i.type !== "KEEP");
+  return [...others, ...keptCuts].sort((a, b) => a.start - b.start).slice(0, 20);
+}
+
+/**
+ * Deterministický lokálny plán — použije sa, keď nie je kľúč alebo Gemini zlyhá.
+ * Nie je to „fake AI“: je to poctivý offline režim.
+ *
+ * Dôležité: keď máme prepis, plán sa kotví na KONKRÉTNE VETY (a povie ktoré),
+ * nie na náhodne rozmiestnené časové body. Keď prepis nemáme, plán je označený
+ * ako odhad (confidence ~0.4) a rovno to aj prizná — žiadne predstieranie AI.
+ */
 function buildLocalDirectorPlan(
   mode: string,
   durationSec: number,
   language: string,
-): { plan: DirectorPlanItem[]; summary: string } {
+  transcript = "",
+): { plan: DirectorPlanItem[]; summary: string; basis: PlanBasis; anchoredSentences: number } {
   const sk = language === "sk";
   const plan: DirectorPlanItem[] = [];
   const push = (
@@ -767,6 +955,7 @@ function buildLocalDirectorPlan(
     reason: string,
     lesson: string,
     confidence = 0.55,
+    basis: PlanBasis = "estimate",
   ) => {
     plan.push({
       id: `local-${plan.length + 1}`,
@@ -778,13 +967,213 @@ function buildLocalDirectorPlan(
       lesson,
       confidence,
       status: "proposed",
+      basis,
     });
   };
 
   const total = Math.max(durationSec, 10);
-  const step = Math.max(total / 8, 2);
+  const sentences = estimateSentenceTimings(transcript, total);
+  const aggressive = mode === "SOCIAL" || mode === "ADS";
+  const maxCuts = aggressive ? 6 : mode === "PODCAST" || mode === "YOUTUBE" ? 3 : 4;
 
-  // 1) Hook na úvod
+  // ============================================================
+  // A) PLÁN KOTVENÝ NA PREPISE (keď ho máme)
+  // ============================================================
+  if (sentences.length >= 3) {
+    // 1) Výplň → strih. Najprv celé výplňové vety, potom rozbeh na začiatku viet.
+    let fillerCuts = 0;
+
+    for (const s of sentences) {
+      if (fillerCuts >= maxCuts) break;
+      if (!isFillerSentence(s)) continue;
+      push(
+        "CUT",
+        s.start,
+        s.end,
+        sk ? `Vystrihnúť celú výplňovú vetu: „${shortQuote(s.text, 40)}“` : `Cut filler line: "${shortQuote(s.text, 40)}"`,
+        sk
+          ? `Veta „${shortQuote(s.text, 110)}“ nesie minimum informácie — väčšinu tvoria výplňové slová. Divák ju preskočí hlavou, strih ju preskočí za neho.`
+          : `The line "${shortQuote(s.text, 110)}" carries almost no information.`,
+        sk
+          ? "Technika: odstránenie výplne — najlacnejší strih, ktorý zlepší tempo. Pri rozhovoroch sa používa aj jemnejšia verzia: skrátiť, nie vyhodiť."
+          : "Technique: filler removal.",
+        0.72,
+        "transcript",
+      );
+      fillerCuts++;
+    }
+
+    for (const s of sentences) {
+      if (fillerCuts >= maxCuts) break;
+      const lead = leadingFillerChunk(s);
+      if (!lead) continue;
+      push(
+        "CUT",
+        lead.start,
+        lead.end,
+        sk ? `Vystrihnúť rozbeh vety: „${lead.words}…“` : `Cut the sentence warm-up: "${lead.words}…"`,
+        sk
+          ? `Veta začína výplňou („${lead.words}“) — než sa dostane k pointnej časti „${shortQuote(s.text, 80)}“, stratí sa ${(lead.end - lead.start).toFixed(1)} s. Presne tento rozbeh strihajú profíci najčastejšie.`
+          : `The line opens with filler ("${lead.words}") — cut the ${(lead.end - lead.start).toFixed(1)}s warm-up.`,
+        sk
+          ? "Technika: tight opening. Nestrihaj celú vetu — stačí odstrániť rozbeh a pointa zostane nedotknutá."
+          : "Technique: tight opening — cut the warm-up, keep the point.",
+        0.66,
+        "transcript",
+      );
+      fillerCuts++;
+    }
+
+    // 2) Rozvláčne vety → zrýchlenie namiesto strihu (nezmysel sa neruší, len hustí)
+    const longOnes = sentences
+      .filter((s) => s.text.length > 220 && !isFillerSentence(s))
+      .slice(0, aggressive ? 2 : 1);
+    for (const s of longOnes) {
+      push(
+        "SPEED",
+        s.start,
+        s.end,
+        sk ? `Zrýchliť rozvláčnu pasáž (1,4×): „${shortQuote(s.text, 34)}“` : `Speed up verbose passage`,
+        sk
+          ? `Veta má ${s.text.length} znakov. Informáciu má, ale tempo je pomalé — zrýchlenie ju zachová celú a získa ${Math.round(
+              (s.end - s.start) * 0.28,
+            )} s.`
+          : `The line is ${s.text.length} chars long — speeding it up keeps it whole.`,
+        sk
+          ? "Technika: speed ramp namiesto strihu — používa sa, keď nechceš prísť o obsah, len o hluché tempo."
+          : "Technique: speed ramp instead of a cut.",
+        0.6,
+        "transcript",
+      );
+    }
+
+    // 3) Najsilnejšia veta → highlight + punch-in + zvukový akcent.
+    // Hook vetu vyberáme prv: highlight nemá zmysel na tej istej vete, ktorú
+    // aj tak presúvame na začiatok — vtedy by plán len duplikoval sám seba.
+    const hookCandidates = sentences.filter((s) => s.text.length < 130);
+    const hookPool = hookCandidates.length > 0 ? hookCandidates : sentences;
+    const hookSentence =
+      hookPool.slice().sort((a, b) => powerScore(b.text) - powerScore(a.text))[0] || sentences[0];
+
+    const best =
+      sentences.filter((s) => s !== hookSentence).sort((a, b) => powerScore(b.text) - powerScore(a.text))[0] ||
+      hookSentence;
+    if (best && powerScore(best.text) > 0) {
+      push(
+        "HIGHLIGHT",
+        best.start,
+        best.end,
+        sk ? `Highlight: „${shortQuote(best.text, 40)}“` : `Highlight: "${shortQuote(best.text, 40)}"`,
+        sk
+          ? `Najvyššia informačná váha v celom klipu (${powerScore(best.text).toFixed(1)} b). Presne takáto veta sa dá použiť ako samostatný krátky klip.`
+          : `Highest information weight in the clip — usable as a standalone short.`,
+        sk
+          ? "Technika: jedna veta = jeden krátky klip. Vždy hľadaj vetu, ktorá obstojí bez kontextu."
+          : "Technique: one sentence = one short clip.",
+        0.78,
+        "transcript",
+      );
+      push(
+        "ZOOM",
+        best.start,
+        best.end,
+        sk ? "Punch-in 115 % na pointu" : "Punch-in 115% on the payoff",
+        sk
+          ? `Framing sa zmení presne na vete „${shortQuote(best.text, 60)}“ — mozog si zmenu spojí s pointou.`
+          : `Framing changes exactly on the payoff line.`,
+        sk ? "Technika: framing + timing. Menej je viac — netreba efekty, stačí zmena." : "Technique: framing + timing.",
+        0.68,
+        "transcript",
+      );
+      push(
+        "SFX",
+        best.start,
+        undefined,
+        sk ? "Zvukový akcent na pointu" : "Sound accent on the payoff",
+        sk
+          ? "Krátky akcent (pop/boom) podčiarkne pointu a zároveň prekryje prípadný skok strihu."
+          : "A short accent underlines the payoff and masks any cut.",
+        sk ? "Technika: SFX masking — zvuk zakryje strih, takže divák ho nepostrehne." : "Technique: SFX masking.",
+        0.6,
+        "transcript",
+      );
+    }
+
+    // 4) Hook — najsilnejšia KRÁTKA veta patrí na začiatok (front-loading)
+    const hookAlreadyFirst = hookSentence.index === 0;
+    // Ak je hook veta už prvá a začína výplňou, plán jej rozbeh aj tak strihá.
+    // Musí to povedať jedným dychom, inak si zásahy navzájom odporujú.
+    const hookLead = leadingFillerChunk(hookSentence);
+    push(
+      "HOOK",
+      0,
+      Math.min(3, total * 0.1),
+      hookAlreadyFirst
+        ? sk ? `Hook: „${shortQuote(hookSentence.text, 44)}“ (už je prvá — drž ju)` : `Hook stays first: "${shortQuote(hookSentence.text, 44)}"`
+        : sk ? `Hook: „${shortQuote(hookSentence.text, 44)}“ na začiatok` : `Hook: move the strongest line first`,
+      hookAlreadyFirst && hookLead
+        ? sk
+          ? `Veta „${shortQuote(hookSentence.text, 100)}“ má najvyššiu váhu a už je na začiatku — to je správne. Vystrihni len rozbeh („${hookLead.words}“) a pusti pointu okamžite: prvá sekunda musí niesť obsah, nie logom ani titulkom.`
+          : `The strongest line is already first — cut only its warm-up and get to the point immediately.`
+        : hookAlreadyFirst
+        ? sk
+          ? `Veta „${shortQuote(hookSentence.text, 100)}“ má najvyššiu váhu a už je na začiatku — to je správne. Neskracuj prvú sekundu a nezačínaj logom ani titulkom.`
+          : `The strongest line is already first — keep it that way.`
+        : sk
+          ? `Veta „${shortQuote(hookSentence.text, 100)}“ má najvyššiu váhu spomedzi krátkych viet. Presuň ju na začiatok — prvých 3 s rozhoduje o zvyšku videa.`
+          : `This line carries the most weight among short lines — move it to the start.`,
+      sk
+        ? "Technika: front-loading. Pozor na čestnosť: hook musí naozaj niečo sľúbiť, inak si divák pripadá podvedený."
+        : "Technique: front-loading.",
+      0.75,
+      "transcript",
+    );
+
+    // 5) Titulky a hudba (globálne)
+    push(
+      "CAPTION",
+      0,
+      total,
+      sk ? "Titulky s dôrazom na kľúčové slová" : "Captions with keyword emphasis",
+      sk
+        ? `Väčšina ľudí pozerá bez zvuku. V texte zvýrazni čísla a slová z vety „${shortQuote(best?.text || "", 50)}“ — nie všetko rovnako.`
+        : "Most viewers watch muted — emphasise keywords, not everything.",
+      sk ? "Technika: keyword emphasis. Podčiarkni max 1–2 slová na vetu." : "Technique: keyword emphasis.",
+      0.7,
+      "transcript",
+    );
+    push(
+      "MUSIC",
+      0,
+      total,
+      sk ? "Podkresová hudba s duckingom (−24 dB)" : "Background music with ducking (−24 dB)",
+      sk ? "Hudba drží rytmus, ale nesmie prekryť hlas. Ducking stiahne hudbu pod rečou." : "Music holds rhythm but must never cover the voice.",
+      sk ? "Technika: sidechain/ducking pod rečou." : "Technique: sidechain ducking.",
+      0.6,
+      "estimate",
+    );
+
+    const fillerCount = fillerCuts;
+    const summary = sk
+      ? `Offline plán (0 tokenov) kotvený na ${sentences.length} vetách z tvojho prepisu — ${fillerCount} strihov na výplni, zvyšok je tempo a framing. Každý zásah uvádza konkrétnu vetu, takže si ho vieš overiť za dve sekundy.`
+      : `Offline plan (0 tokens) anchored on ${sentences.length} transcript sentences.`;
+
+    return {
+      plan: validateDirectorPlan(plan, total),
+      summary,
+      basis: "transcript",
+      anchoredSentences: sentences.length,
+    };
+  }
+
+  // ============================================================
+  // B) BEZ PREPISU → poctivá kostra (nízka istota, jasne priznané)
+  // ============================================================
+  const step = Math.max(total / 8, 2);
+  const noTranscript = sk
+    ? " Bez prepisu neviem, čo je vo videu povedané — toto je len orientačný bod. Vlož text a plán sa skotví na skutočné vety."
+    : " Without a transcript this is only a rough marker — paste the text for a plan anchored to real lines.";
+
   push(
     "HOOK",
     0,
@@ -792,12 +1181,12 @@ function buildLocalDirectorPlan(
     sk ? "Hook v prvých 3 sekundách" : "Hook in first 3 seconds",
     sk
       ? "Prvé sekundy rozhodujú, či divák zostane. Najsilnejšia veta patrí na začiatok."
-      : "The first seconds decide retention — the strongest line belongs at the start.",
-    sk ? "Technika: front-loading (najsilnejšia veta prv)." : "Technique: front-loading.",
-    0.7,
+      : "The first seconds decide retention.",
+    sk ? "Technika: front-loading." : "Technique: front-loading.",
+    0.4,
+    "estimate",
   );
 
-  // 2) Pauzy a tempo
   for (let i = 1; i <= 4; i++) {
     const at = step * i;
     if (at + 1.2 > total) break;
@@ -806,84 +1195,76 @@ function buildLocalDirectorPlan(
       long ? "SPEED" : "CUT",
       at,
       at + (long ? 2.4 : 1.2),
-      long
-        ? sk ? "Zrýchliť hluchú pasáž (1,5×)" : "Speed up dead air (1.5×)"
-        : sk ? "Vystrihnúť zbytočnú pauzu" : "Cut unnecessary pause",
-      long
+      long ? (sk ? "Zrýchliť hluchú pasáž (1,5×)" : "Speed up dead air (1.5×)") : sk ? "Vystrihnúť zbytočnú pauzu" : "Cut unnecessary pause",
+      (long
         ? sk
-          ? "Pasáž nesie málo informácie — zrýchlenie udrží tempo bez pocitu vynechania."
-          : "Low-information passage — speeding up keeps pace without losing meaning."
+          ? "Pasáž nesie málo informácie — zrýchlenie udrží tempo."
+          : "Low-information passage."
         : sk
           ? "Pauza nič nepridáva, len spomaľuje tempo."
-          : "The pause adds nothing but drag.",
-      long
-        ? sk ? "Technika: speed ramp namiesto strihu." : "Technique: speed ramp instead of a cut."
-        : sk ? "Technika: tight cut / removing dead air." : "Technique: tight cut.",
+          : "The pause adds nothing.") + noTranscript,
+      long ? (sk ? "Technika: speed ramp namiesto strihu." : "Technique: speed ramp.") : sk ? "Technika: tight cut." : "Technique: tight cut.",
+      0.4,
+      "estimate",
     );
   }
 
-  // 3) Punch-in na dôležitú myšlienku
   if (total > 12) {
     push(
       "ZOOM",
       Math.min(step * 2.5, total - 3),
       undefined,
       sk ? "Punch-in 115 % na kľúčovú myšlienku" : "Punch-in 115% on key idea",
-      sk
-        ? "Zmena framingu zvýrazní pointu bez pridávania efektu."
-        : "A framing change emphasises the point without adding an effect.",
-      sk ? "Menej je viac: framing + timing často stačí." : "Less is more: framing + timing.",
-      0.6,
+      (sk ? "Zmena framingu zvýrazní pointu bez pridávania efektu." : "A framing change emphasises the point.") + noTranscript,
+      sk ? "Menej je viac: framing + timing často stačí." : "Less is more.",
+      0.4,
+      "estimate",
     );
   }
 
-  // 4) Titulky
   push(
     "CAPTION",
     0,
     total,
     sk ? "Titulky s dôrazom na kľúčové slová" : "Captions with keyword emphasis",
-    sk
-      ? "Väčšina divákov sleduje bez zvuku; titulky držia pozornosť."
-      : "Most viewers watch muted — captions hold attention.",
-    sk ? "Technika: keyword emphasis (nie všetko rovnako)." : "Technique: keyword emphasis.",
-    0.65,
+    sk ? "Väčšina divákov sleduje bez zvuku; titulky držia pozornosť." : "Most viewers watch muted.",
+    sk ? "Technika: keyword emphasis." : "Technique: keyword emphasis.",
+    0.6,
+    "estimate",
   );
 
-  // 5) Hudba
   push(
     "MUSIC",
     0,
     total,
     sk ? "Podkresová hudba s duckingom (−24 dB)" : "Background music with ducking (−24 dB)",
-    sk
-      ? "Hudba drží rytmus, ale nesmie prekrývať hlas."
-      : "Music holds rhythm but must never cover the voice.",
+    sk ? "Hudba drží rytmus, ale nesmie prekrývať hlas." : "Music holds rhythm but must not cover the voice.",
     sk ? "Technika: sidechain/ducking pod rečou." : "Technique: sidechain ducking.",
-    0.6,
+    0.55,
+    "estimate",
   );
 
-  // 6) Zvukový akcent
   push(
     "SFX",
     Math.min(step, total * 0.2),
     undefined,
     sk ? "Jemný whoosh pri prechode" : "Subtle whoosh on transition",
-    sk
-      ? "Zvukový akcent prekryje strih, aby nebol počuť skok."
-      : "A sound accent masks the cut so it isn't audible.",
-    sk ? "Technika: SFX masking cut." : "Technique: SFX masking the cut.",
-    0.55,
+    sk ? "Zvukový akcent prekryje strih, aby nebol počuť skok." : "A sound accent masks the cut.",
+    sk ? "Technika: SFX masking cut." : "Technique: SFX masking.",
+    0.5,
+    "estimate",
   );
 
   const summary = sk
-    ? `Offline plán pre režim ${DIRECTOR_MODES[mode]?.labelSk || mode}. Vytvorený lokálnym algoritmom bez API (0 tokenov) — je to kostra na doladenie, nie finálny strih.`
-    : `Offline plan for mode ${mode}, generated locally without any API (0 tokens).`;
+    ? `Offline kostra pre režim ${DIRECTOR_MODES[mode]?.labelSk || mode} (0 tokenov). POZOR: bez prepisu ide o odhad — časy sú orientačné a istota je nízka. Vlož prepis (alebo zapni AI) a plán sa skotví na skutočné vety.`
+    : `Offline skeleton for ${mode} (0 tokens). Without a transcript this is an estimate.`;
 
-  // Rovnaké pravidlo ako pri AI pláne: zoradené podľa času.
-  plan.sort((a, b) => a.start - b.start);
-
-  return { plan, summary };
+  return {
+    plan: validateDirectorPlan(plan, total),
+    summary,
+    basis: "estimate",
+    anchoredSentences: 0,
+  };
 }
 
 app.post("/api/director/plan", async (req, res) => {
@@ -930,9 +1311,14 @@ app.post("/api/director/plan", async (req, res) => {
 
     // 1) Explicitný offline režim (0 tokenov)
     if (useZeroTokenMode) {
-      const local = buildLocalDirectorPlan(safeMode, durationSec, language);
+      const local = buildLocalDirectorPlan(safeMode, durationSec, language, String(transcript || ""));
       telemetryStats.localRequestsToday++;
-      return buildResponse(local.plan, "local-fallback", { summary: local.summary, tokensUsed: 0 });
+      return buildResponse(local.plan, "local-fallback", {
+        summary: local.summary,
+        tokensUsed: 0,
+        planBasis: local.basis,
+        anchoredSentences: local.anchoredSentences,
+      });
     }
 
     // 2) Skúsime Gemini (rovnaká logika výberu kľúčov ako inde v aplikácii)
@@ -958,6 +1344,9 @@ app.post("/api/director/plan", async (req, res) => {
         `DĹŽKA SUROVÉHO VIDEA: ${Math.round(durationSec)} sekúnd`,
         `JAZYK VIDEA: ${language}`,
         styleRule,
+        sk
+          ? "KOTVENIE: ak máš prepis, v 'reason' VŽDY uveď konkrétnu vetu (krátky citát v úvodzovkách), na ktorú sa zásah viaže. Nevymýšľaj si časy od oka."
+          : "ANCHORING: if a transcript is available, always quote the specific line the decision refers to.",
         transcript
           ? `\nPREPIS (môže byť neúplný):\n"""${clampText(transcript, 6000)}"""`
           : sk
@@ -1004,11 +1393,18 @@ app.post("/api/director/plan", async (req, res) => {
 
           if (plan.length === 0) throw new Error("Plán neobsahuje žiadne použiteľné zásahy.");
 
+          // Poistka kvality: časy orežeme do dĺžky videa a odstránime prekrývajúce sa strihy.
+          const safePlan = validateDirectorPlan(plan, durationSec).map((item) => ({
+            ...item,
+            basis: "ai" as const,
+          }));
+
           keyItem.requestCount++;
           keyItem.lastSuccessfulUse = new Date().toISOString();
-          return buildResponse(plan, "gemini", {
+          return buildResponse(safePlan, "gemini", {
             model: modelName,
             summary: clampText(parsed?.summary, 500) || undefined,
+            planBasis: "ai",
           });
         } catch (modelErr: any) {
           const errText = String(modelErr?.message || modelErr);
@@ -1022,10 +1418,12 @@ app.post("/api/director/plan", async (req, res) => {
     }
 
     // 3) Fallback — lokálny deterministický plán (aplikácia nesmie „umrieť“)
-    const local = buildLocalDirectorPlan(safeMode, durationSec, language);
+    const local = buildLocalDirectorPlan(safeMode, durationSec, language, String(transcript || ""));
     telemetryStats.localRequestsToday++;
     return buildResponse(local.plan, "local-fallback", {
       summary: local.summary,
+      planBasis: local.basis,
+      anchoredSentences: local.anchoredSentences,
       fallbackReason: candidateKeys.length === 0
         ? "Nie je dostupný žiadny API kľúč."
         : "Gemini nevrátil použiteľný plán.",
