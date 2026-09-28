@@ -217,6 +217,26 @@ const SEVERITY_STYLE: Record<QcSeverity, { bg: string; text: string; border: str
   INFO: { bg: "bg-sky-500/10", text: "text-sky-400", border: "border-sky-500/40", labelSk: "INFO", labelEn: "INFO" },
 };
 
+/** Human labels for the measured-finding categories (the enum itself is unreadable). */
+const CATEGORY_LABEL_SK: Record<string, string> = {
+  TIMELINE: "timeline",
+  MEDIA: "médiá",
+  CAPTION: "titulky",
+  AUDIO: "zvuk",
+  PACING: "tempo",
+  TRANSITION: "prechody",
+  SUBJECT: "tvár v zábere",
+};
+const CATEGORY_LABEL_EN: Record<string, string> = {
+  TIMELINE: "timeline",
+  MEDIA: "media",
+  CAPTION: "captions",
+  AUDIO: "audio",
+  PACING: "pacing",
+  TRANSITION: "transitions",
+  SUBJECT: "subject in frame",
+};
+
 export const QualityControlAndAnalytics: React.FC<{
   language: "sk" | "en";
   showToast: (msg: string, type?: "success" | "info" | "warning") => void;
@@ -879,7 +899,9 @@ export const QualityControlAndAnalytics: React.FC<{
                       <div className="flex-1">
                         <div className="text-xs font-bold text-white">
                           {isSk ? finding.titleSk : finding.titleEn}
-                          <span className="ml-2 text-[10px] font-mono text-neutral-500">{finding.category}</span>
+                          <span className="ml-2 text-[10px] font-mono text-neutral-500">
+                            {(isSk ? CATEGORY_LABEL_SK : CATEGORY_LABEL_EN)[finding.category] ?? finding.category}
+                          </span>
                         </div>
                         <div className="text-xs text-neutral-400 mt-1">{isSk ? finding.detailSk : finding.detailEn}</div>
                       </div>

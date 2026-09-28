@@ -406,7 +406,10 @@ const settle = async () => {
   check('facts block renders the measured 11.5 s duration', (container.querySelector('#omnistrih-measured-qc-facts')?.textContent ?? '').includes('11.5s'), container.querySelector('#omnistrih-measured-qc-facts')?.textContent);
   check('findings list renders the gap finding', (container.querySelector('#omnistrih-measured-qc-findings')?.textContent ?? '').includes('Diera na timeline'));
   check('finding detail shows the measured 1.5s', (container.querySelector('#omnistrih-measured-qc-findings')?.textContent ?? '').includes('1.5s'));
-  check('finding category label present', (container.querySelector('#omnistrih-measured-qc-findings')?.textContent ?? '').includes('TIMELINE'));
+  check(
+    'finding category rendered as a readable label, not the raw enum',
+    (container.querySelector('#omnistrih-measured-qc-findings')?.textContent ?? '').toLowerCase().includes('timeline'),
+  );
   check('unmeasurable block lists STT limitation', (container.querySelector('#omnistrih-measured-qc-unmeasurable')?.textContent ?? '').includes('STT'));
   check('panel never claims the browser verified the file', !container.textContent?.includes('BROWSER VERIFIED'));
 
@@ -551,6 +554,74 @@ const settle = async () => {
     check('the panel reports measured/unmeasured counts in the toast', panel.includes('fáz meraných, ${unmeasured} NEMERANÝCH'));
     check('the button no longer claims a stress test on scripted data', panel.includes('KONTROLA PROJEKTU (MERANÁ)'));
     check('stage builder has no randomness', !read('src/core/ai/stressStages.ts').includes('Math.random'));
+    const panelSource = read('src/components/QualityControlAndAnalytics.tsx');
+    check('the measured findings list labels the SUBJECT category in words', panelSource.includes('SUBJECT: "tvár v zábere"'));
+  }
+
+  // ------------------------------------------------- §8 subject track (measured faces)
+  section('§8 the reframe check reads a real face track, or says it has none');
+  {
+    const sample = (time: number, x: number, y: number, confidence: number) => ({
+      time, x, y, width: 40, height: 50, confidence, frameWidth: 400, frameHeight: 300, source: 'FACE_DETECTOR' as const,
+    });
+    const twoClips = [videoTrack([mkClip({ id: 'v1', start: 0, duration: 5 }), mkClip({ id: 'v2', start: 5, duration: 4 })])];
+
+    // No track at all: the check must stay in the honest "unmeasurable" list with a way forward.
+    const withoutTrack = runQualityCheck(mkProject(twoClips));
+    check('without a measurement the subject check is declared unmeasured', withoutTrack.unmeasurable.some(u => u.id === 'subject_tracking'));
+    check(
+      'the unmeasured reason names the studio button that would fix it',
+      withoutTrack.unmeasurable.find(u => u.id === 'subject_tracking')?.reasonSk.includes('Zmerať pozície tvárí') === true,
+    );
+    check('without a measurement no subject finding is invented', !ids(withoutTrack).some(id => id.startsWith('qc_subject_')));
+
+    // Track covering both clips, one confident and one weak measurement.
+    const covered = runQualityCheck(
+      mkProject(twoClips, {
+        analysisResults: { subjectTrack: [sample(1, 100, 60, 0.9), sample(6.5, 60, 40, 0.42)] } as unknown as ProjectModel['analysisResults'],
+      })
+    );
+    check('a covering track is no longer declared unmeasured', !covered.unmeasurable.some(u => u.id === 'subject_tracking'));
+    check('every clip with a sample produces no gap finding', !ids(covered).includes('qc_subject_track_gap'));
+    check('a weak measurement is reported with its confidence', ids(covered).includes('qc_subject_low_confidence'));
+    const weakFinding = covered.findings.find(f => f.id === 'qc_subject_low_confidence');
+    check('the weak-measurement finding carries the measured percentage', weakFinding?.detailSk.includes('42 %') === true, weakFinding?.detailSk);
+    check('the subject findings use their own category', weakFinding?.category === 'SUBJECT', weakFinding?.category);
+
+    // Track that leaves the second clip uncovered.
+    const gap = runQualityCheck(
+      mkProject(twoClips, {
+        analysisResults: { subjectTrack: [sample(1, 100, 60, 0.9)] } as unknown as ProjectModel['analysisResults'],
+      })
+    );
+    check('a clip without any sample is reported as a gap', ids(gap).includes('qc_subject_track_gap'));
+    const gapFinding = gap.findings.find(f => f.id === 'qc_subject_track_gap');
+    check('the gap finding names how many clips are uncovered', gapFinding?.detailSk.includes('1 z 2 video klipov') === true, gapFinding?.detailSk);
+    check('a single sample is declared sparse', ids(gap).includes('qc_subject_track_sparse'));
+
+    // Face hugging the left edge of the source.
+    const edge = runQualityCheck(
+      mkProject(twoClips, {
+        analysisResults: { subjectTrack: [sample(1, 20, 60, 0.9), sample(6.5, 200, 60, 0.9)] } as unknown as ProjectModel['analysisResults'],
+      })
+    );
+    check('a face near the edge is a warning, not a silent detail', edge.findings.find(f => f.id === 'qc_subject_near_edge')?.severity === 'WARNING');
+    check('the edge finding carries the measured position', edge.findings.find(f => f.id === 'qc_subject_near_edge')?.detailSk.includes('5 % šírky') === true, edge.findings.find(f => f.id === 'qc_subject_near_edge')?.detailSk);
+    const edgeBaseline = runQualityCheck(
+      mkProject(twoClips, {
+        analysisResults: { subjectTrack: [sample(1, 200, 60, 0.9), sample(6.5, 200, 60, 0.9)] } as unknown as ProjectModel['analysisResults'],
+      })
+    );
+    check('the edge warning costs the same 8 points as any warning', edge.score === edgeBaseline.score - 8, { edge: edge.score, baseline: edgeBaseline.score });
+
+    // A zero-width frame can never be turned into a position — it must be ignored, not divided by zero.
+    const brokenFrame = runQualityCheck(
+      mkProject(twoClips, {
+        analysisResults: { subjectTrack: [{ ...sample(1, 100, 60, 0.9), frameWidth: 0 }] } as unknown as ProjectModel['analysisResults'],
+      })
+    );
+    check('a sample without frame dimensions cannot produce an edge warning', !ids(brokenFrame).includes('qc_subject_near_edge'));
+    check('a broken sample still counts as a measured track', !brokenFrame.unmeasurable.some(u => u.id === 'subject_tracking'));
   }
 
   // ---------------------------------------------------------------- summary

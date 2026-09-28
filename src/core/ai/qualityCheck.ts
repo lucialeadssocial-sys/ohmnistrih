@@ -13,7 +13,7 @@ import { ProjectModel } from '../types/project';
  */
 
 export type QcSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
-export type QcCategory = 'TIMELINE' | 'MEDIA' | 'CAPTION' | 'AUDIO' | 'PACING' | 'TRANSITION';
+export type QcCategory = 'TIMELINE' | 'MEDIA' | 'CAPTION' | 'AUDIO' | 'PACING' | 'TRANSITION' | 'SUBJECT';
 
 export interface QcFinding {
   id: string;
@@ -415,6 +415,88 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
     });
   }
 
+  // ------------------------------------------------- subject track (measured faces only)
+  // The reframe can only follow a position that a real detector measured
+  // (core/vision/subjectTrack.ts). What is checkable here is therefore the *track itself*:
+  // does it cover the timeline, is the face reachable by the crop, is the measurement confident?
+  const subjectTrack = project.analysisResults?.subjectTrack ?? [];
+  const subjectUnmeasurable: QcUnmeasurable | null = {
+    id: 'subject_tracking',
+    reasonSk:
+      'Pozície tvárí nie sú namerané — spusť „Zmerať pozície tvárí" v štúdiu (FaceDetector v prehliadači). Bez merania ostáva výrez vystredený a nič sa neodhaduje.',
+    reasonEn:
+      'No face positions have been measured — run "Measure face positions" in the studio (browser FaceDetector). Without a measurement the crop stays centred and nothing is guessed.',
+  };
+  if (subjectTrack.length > 0) {
+    const uncovered = videoClips.filter(({ clip }) =>
+      !subjectTrack.some(sample => sample.time >= clipStart(clip) - TIMELINE_EPSILON && sample.time <= clipEnd(clip) + TIMELINE_EPSILON)
+    );
+    if (uncovered.length > 0) {
+      findings.push({
+        id: 'qc_subject_track_gap',
+        category: 'SUBJECT',
+        severity: 'INFO',
+        titleSk: 'Časť klipov bez meranej tváre',
+        titleEn: 'Some clips have no measured face',
+        detailSk: `${uncovered.length} z ${videoClips.length} video klipov nemá v tracku ani jedno meranie — výrez tam ostane vystredený (napr. „${uncovered[0].clip.name ?? uncovered[0].clip.id}" v ${round2(clipStart(uncovered[0].clip))}s).`,
+        detailEn: `${uncovered.length} of ${videoClips.length} video clips have no sample in the track — the crop stays centred there (e.g. "${uncovered[0].clip.name ?? uncovered[0].clip.id}" at ${round2(clipStart(uncovered[0].clip))}s).`,
+        time: clipStart(uncovered[0].clip),
+        clipId: uncovered[0].clip.id,
+      });
+    }
+
+    // A face hugging the edge of the source is what the crop may have to cut off.
+    const EDGE_RATIO = 0.12;
+    const nearEdge = subjectTrack
+      .map(sample => {
+        const frameWidth = sample.frameWidth > 0 ? sample.frameWidth : 0;
+        if (frameWidth === 0) return null;
+        const centre = sample.x / frameWidth;
+        const distance = Math.min(centre, 1 - centre);
+        return distance < EDGE_RATIO ? { sample, centre, distance } : null;
+      })
+      .filter((entry): entry is { sample: (typeof subjectTrack)[number]; centre: number; distance: number } => entry !== null);
+    if (nearEdge.length > 0) {
+      const worst = nearEdge.reduce((a, b) => (b.distance < a.distance ? b : a));
+      findings.push({
+        id: 'qc_subject_near_edge',
+        category: 'SUBJECT',
+        severity: 'WARNING',
+        titleSk: 'Tvár pri okraji záberu',
+        titleEn: 'Face near the edge of the frame',
+        detailSk: `${nearEdge.length} meraní má stred tváre bližšie ako ${Math.round(EDGE_RATIO * 100)} % k okraju (najtesnejšie ${Math.round(worst.centre * 100)} % šírky v ${round2(worst.sample.time)}s) — pri 9:16 výreze sa časť tváre môže orezať.`,
+        detailEn: `${nearEdge.length} measurements put the face centre closer than ${Math.round(EDGE_RATIO * 100)} % to the edge (tightest ${Math.round(worst.centre * 100)} % of the width at ${round2(worst.sample.time)}s) — a 9:16 crop may cut part of the face off.`,
+        time: worst.sample.time,
+      });
+    }
+
+    const weak = subjectTrack.filter(sample => sample.confidence < 0.5);
+    if (weak.length > 0) {
+      findings.push({
+        id: 'qc_subject_low_confidence',
+        category: 'SUBJECT',
+        severity: 'INFO',
+        titleSk: 'Nízka istota merania tváre',
+        titleEn: 'Low face-measurement confidence',
+        detailSk: `${weak.length} z ${subjectTrack.length} meraní má istotu pod 50 % (najnižšie ${Math.round(Math.min(...weak.map(w => w.confidence)) * 100)} %) — reframe sa o také pozície opiera len slabo.`,
+        detailEn: `${weak.length} of ${subjectTrack.length} samples are below 50 % confidence (lowest ${Math.round(Math.min(...weak.map(w => w.confidence)) * 100)} %) — the reframe leans on them only weakly.`,
+        time: weak[0].time,
+      });
+    }
+    if (subjectTrack.length === 1) {
+      findings.push({
+        id: 'qc_subject_track_sparse',
+        category: 'SUBJECT',
+        severity: 'INFO',
+        titleSk: 'Track stojí na jedinom meraní',
+        titleEn: 'The track rests on a single measurement',
+        detailSk: `Celý záber sa riadi jednou nameranou pozíciou (${round2(subjectTrack[0].time)}s) — medzi meraniami sa výrez nehýbe.`,
+        detailEn: `The whole shot is driven by a single measured position (${round2(subjectTrack[0].time)}s) — the crop does not move between measurements.`,
+        time: subjectTrack[0].time,
+      });
+    }
+  }
+
   // ---------------------------------------------------------------- score + honesty
   const counts = {
     critical: findings.filter(f => f.severity === 'CRITICAL').length,
@@ -444,11 +526,7 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
       reasonSk: 'Rez v polovici slova potrebuje slová s časmi (STT), ktoré projekt zatiaľ nemá.',
       reasonEn: 'A cut in the middle of a word needs word timestamps (STT), which the project does not have yet.',
     },
-    {
-      id: 'subject_tracking',
-      reasonSk: 'Kontrola, či reframe drží tvár v zábere, potrebuje detekciu tváre vo snímkach.',
-      reasonEn: 'Checking that the reframe keeps the face in frame needs face detection on the frames.',
-    },
+    ...(subjectTrack.length === 0 && subjectUnmeasurable ? [subjectUnmeasurable] : []),
   ];
 
   const scoreBasisSk =
