@@ -1,4 +1,5 @@
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -74,6 +75,77 @@ function maskApiKey(key: string): string {
   return `${key.slice(0, 7)}...${key.slice(-4)}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TRVALÉ UKLADANIE API KĽÚČOV
+// Kľúče sa inak držia výhradne v pamäti (apiKeyPool) a pri každom reštarte
+// servera sa stratia – používateľ ich musí znova vkladať. Preto ich ukladáme
+// do .data/api-keys.json (mimo gitu, pozri .gitignore).
+// ─────────────────────────────────────────────────────────────────────────────
+const DATA_DIR = process.env.OMNISTRIH_DATA_DIR || path.join(process.cwd(), ".data");
+const KEYS_FILE = path.join(DATA_DIR, "api-keys.json");
+
+/** Zapíše aktuálny zoznam kľúčov na disk (atomicky, práva 600). */
+function persistKeys(): void {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const payload = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      // Systémový kľúč z ENV sa neukladá – obnoví sa z prostredia pri štarte.
+      keys: apiKeyPool.filter((k) => !k.isDefaultSystemKey),
+    };
+    const tmpFile = `${KEYS_FILE}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    fs.renameSync(tmpFile, KEYS_FILE);
+  } catch (err: any) {
+    console.warn(`[Keys] Nepodarilo sa uložiť kľúče: ${err?.message || err}`);
+  }
+}
+
+/** Načíta uložené kľúče pri štarte servera. */
+function restoreKeys(): void {
+  try {
+    if (!fs.existsSync(KEYS_FILE)) return;
+    const payload = JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
+    const saved: ServerApiKey[] = Array.isArray(payload?.keys) ? payload.keys : [];
+    const now = Date.now();
+    let restored = 0;
+
+    for (const item of saved) {
+      if (!item || typeof item.key !== "string" || item.key.trim().length < 8) continue;
+      // Duplicitu sa vyhneme (napr. rovnaký kľúč je už z ENV).
+      if (apiKeyPool.some((k) => k.key === item.key)) continue;
+
+      const enabled = item.enabled !== false;
+      let status = item.status;
+      // Po reštarte je cooldown z rate-limitu už často vypršaný.
+      if (status === "rate-limited" && (!item.rateLimitResetTime || now > item.rateLimitResetTime)) {
+        status = enabled ? "active" : "disabled";
+      }
+      if (!status) status = enabled ? "active" : "disabled";
+
+      apiKeyPool.push({
+        ...item,
+        id: item.id || "key-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        enabled,
+        status,
+        rateLimitResetTime: status === "rate-limited" ? item.rateLimitResetTime : undefined,
+        isDefaultSystemKey: false,
+        // Počítadlá používania sú relačné k behu servera, nie perzistentné.
+        requestCount: 0,
+        errorCount: 0,
+      });
+      restored++;
+    }
+
+    if (restored > 0) {
+      console.log(`[Keys] Obnovených ${restored} API kľúčov z ${KEYS_FILE}`);
+    }
+  } catch (err: any) {
+    console.warn(`[Keys] Nepodarilo sa načítať uložené kľúče: ${err?.message || err}`);
+  }
+}
+
 // In-memory key pool
 const apiKeyPool: ServerApiKey[] = [];
 
@@ -98,6 +170,9 @@ if (process.env.GEMINI_API_KEY) {
     errorCount: 0,
   });
 }
+
+// Obnovenie kľúčov uložených z predchádzajúceho behu (aby prežili reštart).
+restoreKeys();
 
 // Real telemetry stats for AI usage
 const telemetryStats = {
@@ -327,6 +402,7 @@ app.post("/api/keys", async (req, res) => {
     };
 
     apiKeyPool.push(newKeyItem);
+    persistKeys();
 
     return res.json({
       success: true,
@@ -374,6 +450,7 @@ app.patch("/api/keys/:id", (req, res) => {
   if (typeof model === "string") keyItem.model = model;
   if (typeof projectId === "string") keyItem.projectId = projectId.trim();
   if (quotaScope) keyItem.quotaScope = quotaScope;
+  persistKeys();
 
   return res.json({
     success: true,
@@ -398,6 +475,7 @@ app.delete("/api/keys/:id", (req, res) => {
   }
 
   apiKeyPool.splice(index, 1);
+  persistKeys();
   return res.json({
     success: true,
     message: "Kľúč bol úspešne odstránený.",
@@ -452,6 +530,7 @@ app.post("/api/keys/test", async (req, res) => {
               found.status = "active";
             }
           }
+          persistKeys();
           return res.json({
             success: true,
             valid: true,
@@ -491,6 +570,7 @@ app.post("/api/keys/test", async (req, res) => {
               found.status = "error";
             }
           }
+          persistKeys();
         }
 
         return res.json({
