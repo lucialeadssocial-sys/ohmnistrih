@@ -343,7 +343,10 @@ export class WebCodecsOfflineBackend implements RenderBackend {
       }
 
       // Canonical composite render frame
-      renderEngine.renderFrame(project, timelineTime, canvas, { reframe: plan.reframe ?? 'FIT' });
+      renderEngine.renderFrame(project, timelineTime, canvas, {
+        reframe: plan.reframe ?? 'FIT',
+        trackSubject: plan.trackSubject !== false,
+      });
 
       if (this.videoEncoder) {
         const frame = new (window as any).VideoFrame(canvas, {

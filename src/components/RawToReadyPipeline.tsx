@@ -804,6 +804,8 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                     currentTime={currentTime}
                     language={language}
                     isAnalyzing={isAnalyzingAttention}
+                    autoFollow={settings.autoReframeFace}
+                    onToggleAutoFollow={(val: boolean) => onUpdateSettings({ autoReframeFace: val })}
                   />
                   <ObjectEraserSuite
                     settings={settings}

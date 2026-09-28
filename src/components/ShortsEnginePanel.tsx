@@ -228,7 +228,7 @@ export const ShortsEnginePanel: React.FC<ShortsEnginePanelProps> = ({
         <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
         <span>
           {isSk
-            ? 'Export vykresľuje presne to okno (video aj zvuk) cez render backendy a sťahuje .webm. 9:16 rám sa vyplní (cover) — žiadne čierne pruhy; sledovanie tváre nie je implementované, preto drží kompozícia stred záberu. Beží v prehliadači — bez prehliadača (napr. v tomto sandboxe) ho nemožno overiť, takže stav exportu ber ako neoverený, kým si ho nespustíš.'
+            ? 'Export vykresľuje presne to okno (video aj zvuk) cez render backendy a sťahuje .webm. 9:16 rám sa vyplní (cover) — žiadne čierne pruhy. Ak si predtým spustila meranie tvárí v paneli Detekcia tvárí, výrez sa posunie za nameranou tvárou; bez merania (alebo bez podpory FaceDetector API) ostáva vystredený — pozícia sa nikdy neodhaduje. Beží v prehliadači — bez prehliadača (napr. v tomto sandboxe) ho nemožno overiť, takže stav exportu ber ako neoverený, kým si ho nespustíš.'
             : 'The export renders exactly that window (video and audio) through the render backends and downloads a .webm. The 9:16 frame is filled (cover) — no black bars; face tracking is not implemented, so the composition stays centred. It runs in the browser — without a browser (e.g. in this sandbox) it cannot be verified, so treat the export result as unverified until you run it.'}
         </span>
       </div>

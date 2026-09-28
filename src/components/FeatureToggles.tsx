@@ -742,12 +742,12 @@ export const FeatureToggles: React.FC<FeatureTogglesProps> = ({
             </div>
             <div>
               <div className="text-sm font-bold text-white">
-                {isSk ? "Opus Auto-Reframe (Sledovanie tváre)" : "Opus Auto-Reframe (Face Track)"}
+                {isSk ? "Face-safe reframe (namerané pozície tváre)" : "Face-safe reframe (measured face positions)"}
               </div>
               <div className="text-neutral-400">
                 {isSk
-                  ? "Automaticky drží tvár hovoriaceho v strede vertikálneho videa"
-                  : "Keeps speaker face centered automatically in vertical 9:16 layout"}
+                  ? "Pri 9:16 výreze posunie záber za nameranou tvárou. Pozície meria panel Detekcia tvárí cez FaceDetector v prehliadači — keď nič namerané nie je, záber ostáva vystredený a nič sa neodhaduje."
+                  : "Shifts the 9:16 crop towards the measured face. Positions are measured by the Face detection panel via the browser FaceDetector — with no measurement the crop stays centred and nothing is guessed."}
               </div>
             </div>
           </div>

@@ -3,6 +3,8 @@
  * Defines data contracts for non-destructive media & content intelligence.
  */
 
+import type { SubjectSample } from '../vision/subjectTrack';
+
 export type AnalysisType =
   | 'metadata'
   | 'transcript'
@@ -334,6 +336,11 @@ export interface AnalysisResultCollection {
   ctas?: CTACandidate[];
   brollOpportunities?: BrollOpportunity[];
   insights?: EditingInsight[];
+  /**
+   * Measured subject positions from a real face detector (see core/vision/subjectTrack.ts).
+   * Empty or absent means nothing was measured — the reframe then stays centred.
+   */
+  subjectTrack?: SubjectSample[];
 }
 
 export interface EditComparison {

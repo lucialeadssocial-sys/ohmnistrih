@@ -85,7 +85,8 @@ export class RenderEngineManager {
     presetId: ExportPresetId,
     customWidth?: number,
     customHeight?: number,
-    sourceRange?: { start: number; end: number }
+    sourceRange?: { start: number; end: number },
+    options?: { trackSubject?: boolean }
   ): RenderPlan {
     const edl = EDLManager.getEDL(projectId);
     const dna = EditBrainManager.getEffectiveDNA(projectId);
@@ -129,6 +130,8 @@ export class RenderEngineManager {
       sourceRange: sourceRange ? { start: windowStart, end: windowEnd } : undefined,
       // Social deliverables must fill the frame (COVER); other presets keep the legacy FIT drawing.
       reframe: presetId.startsWith('SOCIAL_') ? 'COVER' : 'FIT',
+      // The user's auto-reframe switch: off means the crop stays centred even if faces were measured.
+      trackSubject: options?.trackSubject !== false,
       createdAt: new Date().toISOString(),
       edlSnapshot: JSON.parse(JSON.stringify(edl)),
       dnaSnapshot: JSON.parse(JSON.stringify(dna)),

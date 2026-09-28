@@ -20,6 +20,8 @@ import { RenderEngineManager } from "./utils/renderEngineManager";
 import { ShortsEnginePanel } from "./components/ShortsEnginePanel";
 import { ShortsEngineResult, ShortsProposal, buildShortsProposals } from "./core/ai/shortsEngine";
 import { QualityCheckReport, runQualityCheck } from "./core/ai/qualityCheck";
+import { detectFacesInVideo, faceDetectionAvailable } from "./core/vision/subjectTrack";
+import type { DirectorDecisionItem } from "./core/ai/analysisTypes";
 import { RenderBackendSelector } from "./render/RenderBackendSelector";
 import { ExportPresetId } from "./types/renderEngine";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -826,18 +828,12 @@ function MainApp() {
     }, 1500);
   };
 
+  // Held empty until a real detector measured something — no invented boxes or confidences.
   const [visualAttentionProject, setVisualAttentionProject] = useState<VisualAttentionProject>({
     id: "att-001",
     sourceVideoId: "v1",
-    points: [
-      { id: "p1", time: 1.5, type: "FACE", confidence: 0.98, box: { x: 45, y: 30, width: 10, height: 15 }, labelSk: "Tvár hovorcu", labelEn: "Speaker Face" },
-      { id: "p2", time: 1.5, type: "PRODUCT", confidence: 0.92, box: { x: 20, y: 60, width: 15, height: 20 }, labelSk: "Vlogovací set", labelEn: "Vlogging set" },
-      { id: "p3", time: 1.5, type: "TEXT", confidence: 0.85, box: { x: 70, y: 10, width: 20, height: 10 }, labelSk: "Titulok v obraze", labelEn: "On-screen text" }
-    ],
-    suggestions: [
-      { id: "s1", startTime: 1.2, endTime: 4.5, type: "ZOOM", targetId: "p2", descriptionSk: "Priblížiť na produkt pre zvýšenie detailu.", descriptionEn: "Zoom in on the product for more detail.", applied: false },
-      { id: "s2", startTime: 5.0, endTime: 8.0, type: "BLUR_BG", targetId: "p1", descriptionSk: "Rozmazať pozadie za hovorcom.", descriptionEn: "Blur background behind the speaker.", applied: false }
-    ],
+    points: [],
+    suggestions: [],
     isAnalyzed: false,
     heatmapEnabled: false
   });
@@ -1169,7 +1165,8 @@ function MainApp() {
           "SOCIAL_VERTICAL",
           undefined,
           undefined,
-          { start: proposal.start, end: proposal.end }
+          { start: proposal.start, end: proposal.end },
+          { trackSubject: settings.autoReframeFace }
         );
         const backend = await RenderBackendSelector.selectBackend(plan);
         await backend.prepare(plan, () => {});
@@ -1246,7 +1243,9 @@ function MainApp() {
 
     for (const config of enabledConfigs) {
       try {
-        const plan = RenderEngineManager.createRenderPlan("current-project", presetFor(config));
+        const plan = RenderEngineManager.createRenderPlan("current-project", presetFor(config), undefined, undefined, undefined, {
+          trackSubject: settings.autoReframeFace,
+        });
         const backend = await RenderBackendSelector.selectBackend(plan);
 
         await backend.prepare(plan, (info) => {
@@ -1329,25 +1328,163 @@ function MainApp() {
     }, 4000);
   };
 
-  const handleRunAttentionAnalysis = () => {
+  /**
+   * Real face detection (Shape Detection API) over sampled timeline positions.
+   *
+   * Nothing is simulated: when the browser has no FaceDetector, or the detector finds no face, the
+   * studio stays empty and says so. Measured positions are stored on the canonical project so the
+   * COVER reframe can keep the speaker in frame.
+   */
+  const handleRunAttentionAnalysis = async () => {
+    const video = videoRef.current;
     setIsAnalyzingAttention(true);
-    showToast(isSk ? "👀 AI analyzuje vizuálnu pozornosť..." : "👀 AI analyzing visual attention...");
-    
-    setTimeout(() => {
-      setVisualAttentionProject({ ...visualAttentionProject, isAnalyzed: true });
+    playSynthesizedSFX("glitch", 0.4);
+
+    try {
+      if (!faceDetectionAvailable()) {
+        setVisualAttentionProject(prev => ({ ...prev, isAnalyzed: false }));
+        showToast(
+          isSk
+            ? "Detekcia tvárí nie je v tomto prehliadači dostupná (FaceDetector API) — nič sa nevygenerovalo."
+            : "Face detection is not available in this browser (FaceDetector API) — nothing was generated."
+        );
+        return;
+      }
+
+      if (!video || !(video.videoWidth > 0) || !(video.duration > 0)) {
+        showToast(
+          isSk
+            ? "Nie je načítané žiadne video — detekcia tvárí nemá na čom bežať."
+            : "No video is loaded — face detection has nothing to run on."
+        );
+        return;
+      }
+
+      const project = coreEngine.getProject();
+      const videoClips = project.tracks.filter(track => track.type === "video").flatMap(track => track.clips);
+      const samplesPerClip = 4;
+      const maxSamples = 24;
+      const sampleTimes = videoClips
+        .flatMap(clip =>
+          Array.from({ length: samplesPerClip }, (_, index) =>
+            clip.timelineStart + ((index + 0.5) / samplesPerClip) * clip.duration
+          )
+        )
+        .sort((a, b) => a - b)
+        .slice(0, maxSamples);
+
+      if (sampleTimes.length === 0) {
+        showToast(isSk ? "Na timeline nie je žiadny video klip — nie je čo skenovať." : "There is no video clip on the timeline — nothing to scan.");
+        return;
+      }
+
+      const samples = await detectFacesInVideo(video, sampleTimes, {
+        timelineToSource: (timelineTime) => {
+          const clip =
+            videoClips.find(c => timelineTime >= c.timelineStart && timelineTime <= c.timelineStart + c.duration) ??
+            videoClips[0];
+          return clip ? TimelineEngine.timelineToSourceTime(clip, timelineTime) : timelineTime;
+        },
+      });
+
+      const stored = coreEngine.recordSubjectTrack(samples, { replace: true });
+
+      setVisualAttentionProject(prev => ({
+        ...prev,
+        isAnalyzed: stored > 0,
+        points: samples.map((sample, index) => {
+          // Samples are in source-frame pixels; the overlay positions boxes in percent of the frame.
+          const frameW = sample.frameWidth > 0 ? sample.frameWidth : 1;
+          const frameH = sample.frameHeight > 0 ? sample.frameHeight : 1;
+          const pct = (value: number) => Math.min(100, Math.max(0, value * 100));
+          return {
+            id: `face_${index}_${Math.round(sample.time * 100)}`,
+            time: sample.time,
+            type: "FACE" as const,
+            confidence: sample.confidence,
+            box: {
+              x: pct((sample.x - sample.width / 2) / frameW),
+              y: pct((sample.y - sample.height / 2) / frameH),
+              width: pct(sample.width / frameW),
+              height: pct(sample.height / frameH),
+            },
+            labelSk: "Nameraná tvár",
+            labelEn: "Measured face",
+          };
+        }),
+      }));
+
+      showToast(
+        stored > 0
+          ? isSk
+            ? `Nameraných ${stored} pozícií tváre z ${sampleTimes.length} vzoriek — reframe ich drží v zábere.`
+            : `Measured ${stored} face positions out of ${sampleTimes.length} samples — the reframe keeps them in frame.`
+          : isSk
+            ? `Detektor nenašiel tvár v žiadnej z ${sampleTimes.length} vzoriek — track zostáva prázdny a reframe je vystredený.`
+            : `The detector found no face in any of the ${sampleTimes.length} samples — the track stays empty and the reframe is centred.`
+      );
+    } finally {
       setIsAnalyzingAttention(false);
-      showToast(isSk ? "✅ Vizuálna analýza hotová!" : "✅ Visual analysis complete!");
-      playSynthesizedSFX("glitch", 0.4);
-    }, 3000);
+    }
   };
 
+  /**
+   * Applies a visual suggestion through the canonical command layer (a real punch-in on the clip
+   * that sits at that time). When nothing can be applied, the studio says so instead of claiming
+   * that the timeline changed.
+   */
   const handleApplyAttentionSuggestion = (id: string) => {
-    setVisualAttentionProject({
-      ...visualAttentionProject,
-      suggestions: visualAttentionProject.suggestions.map(s => s.id === id ? { ...s, applied: true } : s)
-    });
-    showToast(isSk ? "✨ Úprava aplikovaná na timeline!" : "✨ Edit applied to timeline!");
-    playSynthesizedSFX("camera-shutter", 0.6);
+    const suggestion = visualAttentionProject.suggestions.find(s => s.id === id);
+    if (!suggestion) return;
+
+    const project = coreEngine.getProject();
+    const clip = project.tracks
+      .flatMap(track => track.clips)
+      .find(c => suggestion.startTime >= c.timelineStart && suggestion.startTime <= c.timelineStart + c.duration);
+
+    if (!clip) {
+      showToast(
+        isSk
+          ? "V tomto čase nie je na timeline žiadny klip — návrh sa nedá aplikovať."
+          : "There is no clip at that time on the timeline — the suggestion cannot be applied."
+      );
+      return;
+    }
+
+    const scalePercent = suggestion.type === "ZOOM" ? 115 : 105;
+    const decision: DirectorDecisionItem = {
+      id: `att_${suggestion.id}`,
+      editDecisionId: `att_${suggestion.id}`,
+      priority: "RECOMMENDED",
+      what: `Vizuálna úprava (${suggestion.type}) na ${suggestion.startTime.toFixed(1)}s`,
+      why: isSk ? suggestion.descriptionSk : suggestion.descriptionEn,
+      whenToUse: isSk ? "Keď chceš diváka doviezť bližšie k detailu." : "When you want to pull the viewer closer to the detail.",
+      whenNotToUse: isSk ? "Keď záber potrebuje dýchať v celku." : "When the shot needs to breathe in a wider framing.",
+      howToManual: [isSk ? "Vyber klip a nastav mierku." : "Select the clip and set its scale."],
+      alternatives: [],
+      confidence: 0.9,
+      source: "Vizuálna pozornosť (merané tvary)",
+      category: "creative_choice",
+      proposedAction: { kind: "PUNCH_IN", parameters: { scale: scalePercent } },
+      affectedClipId: clip.id,
+      timelineLocation: { start: suggestion.startTime, end: suggestion.endTime },
+      status: "proposed",
+    };
+
+    const result = coreEngine.applyDirectorDecisions([decision], "Vizuálna pozornosť");
+    if (result.success && result.appliedCount > 0) {
+      setVisualAttentionProject(prev => ({
+        ...prev,
+        suggestions: prev.suggestions.map(s => (s.id === id ? { ...s, applied: true } : s)),
+      }));
+      showToast(isSk ? `Aplikované na timeline (${scalePercent} % na klip ${clip.name}).` : `Applied to the timeline (${scalePercent} % on clip ${clip.name}).`);
+      playSynthesizedSFX("camera-shutter", 0.6);
+    } else {
+      showToast(
+        (isSk ? "Návrh sa nepodarilo aplikovať: " : "The suggestion could not be applied: ") +
+          (result.error || result.skipped[0]?.reason || "neznámy dôvod")
+      );
+    }
   };
 
   const handleProcessAudio = () => {
@@ -4501,7 +4638,7 @@ function MainApp() {
                     {activeTab === "bilingual" && <BilingualEditor project={bilingualProject} rawAnalysis={rawAnalysis} captionProject={captionProject} isGenerating={isTranslating} onUpdateProject={setBilingualProject} onGenerateTranslation={handleGenerateBilingualTranslation} onGenerateVoiceover={handleGenerateVoiceover} onSeek={handleSeek} currentTime={currentTime} language={language} />}
                     {activeTab === "audio" && <AIAudioStudio project={audioProject} rawAnalysis={rawAnalysis} isProcessing={isProcessingAudio} onUpdateProject={setAudioProject} onProcessAudio={handleProcessAudio} language={language} />}
                     {activeTab === "beat" && <BeatSyncStudio project={beatSyncProject} rawAnalysis={rawAnalysis} isAnalyzing={isAnalyzingBeats} onUpdateProject={setBeatSyncProject} onAnalyzeBeats={handleAnalyzeBeats} onSnapToBeat={handleSnapToBeat} onSeek={handleSeek} currentTime={currentTime} language={language} />}
-                    {activeTab === "attention" && <VisualAttentionStudio project={visualAttentionProject} rawAnalysis={rawAnalysis} isAnalyzing={isAnalyzingAttention} onUpdateProject={setVisualAttentionProject} onRunAnalysis={handleRunAttentionAnalysis} onApplySuggestion={handleApplyAttentionSuggestion} onSeek={handleSeek} currentTime={currentTime} language={language} />}
+                    {activeTab === "attention" && <VisualAttentionStudio project={visualAttentionProject} rawAnalysis={rawAnalysis} isAnalyzing={isAnalyzingAttention} onUpdateProject={setVisualAttentionProject} onRunAnalysis={handleRunAttentionAnalysis} onApplySuggestion={handleApplyAttentionSuggestion} onSeek={handleSeek} currentTime={currentTime} language={language} autoFollow={settings.autoReframeFace} onToggleAutoFollow={(val: boolean) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} />}
                     {activeTab === "finder" && <AIBrollFinder project={brollFinderProject} rawAnalysis={rawAnalysis} isAnalyzing={isAnalyzingBroll} onUpdateProject={setBrollFinderProject} onGenerateSuggestions={handleGenerateBrollFinderSuggestions} language={language} />}
                     {activeTab === "cleanup" && <SmartCleanupSuite project={cleanupProject} rawAnalysis={rawAnalysis} isAnalyzing={isAnalyzingCleanup} isProcessing={isProcessingCleanup} onUpdateProject={setCleanupProject} onRunDetection={handleRunCleanupDetection} onApplyCleanup={handleApplyCleanup} onSeek={handleSeek} currentTime={currentTime} language={language} />}
                     {activeTab === "export" && <MultiPlatformExport project={multiExportProject} isExporting={isExportingMulti} onStartExport={handleStartMultiExport} onUpdateProject={setMultiExportProject} language={language} />}

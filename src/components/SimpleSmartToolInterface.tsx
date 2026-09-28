@@ -1872,7 +1872,7 @@ export const SimpleSmartToolInterface: React.FC<SimpleSmartToolInterfaceProps> =
                     </select>
                   </div>
                   <div className="flex items-center justify-between py-1">
-                    <span className="text-neutral-400">{isSk ? "Auto-Reframe na tvár" : "Face Auto-Reframe"}</span>
+                    <span className="text-neutral-400">{isSk ? "Face-safe reframe (merané)" : "Face-safe reframe (measured)"}</span>
                     <button
                       onClick={() => onChangeSettings({ autoReframeFace: !settings.autoReframeFace })}
                       className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${

@@ -43,6 +43,9 @@ interface VisualAttentionStudioProps {
   currentTime: number;
   language: "sk" | "en";
   isAnalyzing: boolean;
+  /** The user's real auto-reframe switch (shared with Settings — it drives the export crop). */
+  autoFollow?: boolean;
+  onToggleAutoFollow?: (value: boolean) => void;
 }
 
 export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
@@ -54,10 +57,14 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
   onSeek,
   currentTime,
   language,
-  isAnalyzing
+  isAnalyzing,
+  autoFollow = false,
+  onToggleAutoFollow
 }) => {
   const isSk = language === "sk";
   const [filter, setFilter] = useState<AttentionObjectType | "ALL">("ALL");
+  /** Auto-follow has nothing to follow until a real measurement exists. */
+  const hasMeasuredFaces = project.points.length > 0;
 
   const getObjectIcon = (type: AttentionObjectType) => {
     switch (type) {
@@ -95,8 +102,12 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
             <Eye className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">VISUAL ATTENTION MAP</h3>
-            <p className="text-[10px] text-neutral-500 font-bold uppercase">Gaze-Aware Production Intelligence</p>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">DETEKCIA TVÁRÍ (MERANÁ)</h3>
+            <p className="text-[10px] text-neutral-500 font-bold uppercase">
+              {isSk
+                ? "Pozície tvárí meria prehliadač (FaceDetector) · reframe ich drží v zábere"
+                : "Face positions are measured by the browser (FaceDetector) · the reframe keeps them in frame"}
+            </p>
           </div>
         </div>
 
@@ -120,9 +131,11 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
               <Target className="h-8 w-8" />
            </div>
            <div className="space-y-1">
-              <h4 className="text-sm font-black text-white uppercase tracking-widest">{isSk ? "ATTENTION ANALÝZA CHÝBA" : "NO ATTENTION ANALYSIS"}</h4>
-              <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[280px]">
-                {isSk ? "AI musí analyzovať vizuálne objekty a pohyb očí diváka pre inteligentný cropping." : "AI needs to analyze visual objects and viewer's gaze for intelligent cropping."}
+              <h4 className="text-sm font-black text-white uppercase tracking-widest">{isSk ? "TVÁRE ZATIAĽ NEMERANÉ" : "NO FACES MEASURED YET"}</h4>
+              <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[320px]">
+                {isSk
+                  ? "Detekcia beží lokálne v prehliadači cez FaceDetector API. Ak ju prehliadač nepodporuje, nič sa nevygeneruje — žiadne odhady ani vymyslené boxy. Namerané pozície sa ukladajú do projektu a COVER reframe ich drží v zábere."
+                  : "Detection runs locally in the browser through the FaceDetector API. If the browser does not support it, nothing is generated — no estimates, no invented boxes. Measured positions are stored on the project and the COVER reframe keeps them in frame."}
               </p>
            </div>
            <button 
@@ -131,7 +144,7 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
              className="mt-2 flex items-center gap-3 px-6 py-3 rounded-xl bg-violet-600 text-white text-xs font-black uppercase tracking-[0.2em] shadow-lg shadow-violet-600/20 hover:bg-violet-500 transition-all disabled:opacity-50"
            >
               <Zap className={`h-4 w-4 ${isAnalyzing ? "animate-spin" : ""}`} />
-              <span>{isAnalyzing ? (isSk ? "ANALYZUJEM..." : "ANALYZING...") : (isSk ? "SPUSTIŤ VIZUÁLNU ANALÝZU" : "START VISUAL ANALYSIS")}</span>
+              <span>{isAnalyzing ? (isSk ? "MERIAM..." : "MEASURING...") : (isSk ? "ZMERIAŤ POZÍCIE TVÁRÍ" : "MEASURE FACE POSITIONS")}</span>
            </button>
         </div>
       ) : (
@@ -140,20 +153,10 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
            <div className="col-span-7 flex flex-col gap-6">
               <section className="space-y-3">
                  <div className="flex items-center justify-between px-1">
-                    <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest">REAL-TIME OBJECTS</h4>
-                    <div className="flex gap-2">
-                       {["ALL", "FACE", "PRODUCT", "TEXT"].map(f => (
-                         <button
-                           key={f}
-                           onClick={() => setFilter(f as any)}
-                           className={`px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
-                             filter === f ? "bg-violet-600 text-white" : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"
-                           }`}
-                         >
-                           {f}
-                         </button>
-                       ))}
-                    </div>
+                    <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest">{isSk ? "NAMERANÉ TVÁRE" : "MEASURED FACES"}</h4>
+                    <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase bg-neutral-900 text-neutral-500">
+                      {isSk ? "len FACE — merané" : "FACE only — measured"}
+                    </span>
                  </div>
 
                  <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
@@ -188,7 +191,9 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
                     {currentPoints.length === 0 && (
                       <div className="py-8 text-center border border-neutral-800 border-dashed rounded-xl">
                          <Search className="h-6 w-6 text-neutral-700 mx-auto mb-2" />
-                         <p className="text-[10px] font-black text-neutral-600 uppercase">Scanning for objects...</p>
+                         <p className="text-[10px] font-black text-neutral-600 uppercase">
+                           {isSk ? "V tomto čase nie je nameraná žiadna tvár" : "No measured face at this time"}
+                         </p>
                       </div>
                     )}
                  </div>
@@ -198,11 +203,13 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
                  <div className="flex items-start gap-4">
                     <Zap className="h-6 w-6 text-violet-500 mt-1" />
                     <div className="flex-1">
-                       <h5 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">AI PRODUCTION SUGGESTION</h5>
-                       <p className="text-[10px] text-neutral-400 leading-relaxed italic">
-                          {isSk 
-                            ? "Divák sa v tejto sekvencii príliš dlho pozerá na nepodstatné pozadie. AI navrhuje Blur-Background a Zoom-In na produkt pre zvýšenie pozornosti o 32%."
-                            : "Viewer is looking at irrelevant background for too long in this sequence. AI suggests Blur-Background and Zoom-In on the product to increase attention by 32%."}
+                       <h5 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">
+                         {isSk ? "AKO TO POUŽÍVA REFRAME" : "HOW THE REFRAME USES IT"}
+                       </h5>
+                       <p className="text-[10px] text-neutral-400 leading-relaxed">
+                          {isSk
+                            ? "Namerané pozície sa ukladajú do kanonického projektu (analysisResults.subjectTrack). Pri 9:16 exporte COVER reframe posunie výrez tak, aby tvár ostala v zábere s rezervou; keď je klip ručne posunutý, platí tvoj zámer. Žiadne počty divákov ani percentá pozornosti sa nedopĺňajú odhadom."
+                            : "Measured positions are stored on the canonical project (analysisResults.subjectTrack). During a 9:16 export the COVER reframe shifts the crop so the face stays in frame with a margin; when a clip is manually offset, your framing wins. No viewer numbers or attention percentages are filled in by guessing."}
                        </p>
                     </div>
                  </div>
@@ -267,34 +274,54 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                        <MousePointer2 className="h-4 w-4 text-violet-500" />
-                       <span className="text-[10px] font-black text-white uppercase tracking-widest">AUTO-FOLLOW MODE</span>
+                       <span className="text-[10px] font-black text-white uppercase tracking-widest">
+                         {isSk ? "POSUN ZÁBERU ZA TVÁROU" : "CROP FOLLOWS THE FACE"}
+                       </span>
                     </div>
-                    <button className="w-10 h-5 rounded-full bg-neutral-800 relative transition-all">
-                       <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-neutral-600" />
+                    <button
+                      onClick={() => onToggleAutoFollow?.(!autoFollow)}
+                      disabled={!onToggleAutoFollow || !hasMeasuredFaces}
+                      title={
+                        !onToggleAutoFollow
+                          ? (isSk ? "Prepínač je v Nastaveniach." : "The switch lives in Settings.")
+                          : !hasMeasuredFaces
+                            ? (isSk ? "Zatiaľ nie je nameraná žiadna tvár — zapnutie nemá čo sledovať." : "No face has been measured yet — there is nothing to follow.")
+                            : undefined
+                      }
+                      className={`w-10 h-5 rounded-full relative transition-all ${
+                        autoFollow && hasMeasuredFaces ? "bg-violet-600" : "bg-neutral-800"
+                      } ${!onToggleAutoFollow || !hasMeasuredFaces ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                    >
+                       <div className={`absolute top-0.5 h-4 w-4 rounded-full transition-all ${autoFollow && hasMeasuredFaces ? "left-5 bg-white" : "left-0.5 bg-neutral-600"}`} />
                     </button>
                  </div>
-                 <p className="text-[9px] text-neutral-500 mt-2 italic">Automatically pan & zoom based on the most active attention object.</p>
+                 <p className="text-[9px] text-neutral-500 mt-2 italic">
+                   {isSk
+                     ? "Zapnuté = 9:16 výrez sa posúva za nameranou tvárou (rovnaký prepínač ako v Nastaveniach). Vypnuté = vždy vystredený. Nič sa neodhaduje."
+                     : "On = the 9:16 crop follows the measured face (same switch as in Settings). Off = always centred. Nothing is guessed."}
+                 </p>
               </div>
            </div>
         </div>
       )}
 
-      {/* Heatmap Overlay Simulation (Small version for insight) */}
+      {/* Schematic preview of the measured boxes — no energy, no attention, no viewer data. */}
       {project.isAnalyzed && project.heatmapEnabled && (
         <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 flex flex-col gap-4">
-           <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest">VISUAL ENERGY DISTRIBUTION</h4>
+           <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest">
+             {isSk ? "SCHÉMA NAMERANÝCH POZÍCIÍ" : "SCHEMATIC OF MEASURED POSITIONS"}
+           </h4>
            <div className="relative h-48 w-full bg-black rounded-xl overflow-hidden group">
-              {/* Fake frame */}
-              <div className="absolute inset-0 opacity-40">
-                 <div className="h-full w-full bg-[radial-gradient(circle_at_center,_rgba(124,58,237,0.4)_0%,_rgba(0,0,0,1)_70%)]" />
+              <div className="absolute inset-0">
                  {currentPoints.map(p => (
-                   <div 
+                   <div
                      key={p.id}
-                     className="absolute w-20 h-20 rounded-full blur-3xl opacity-60"
-                     style={{ 
-                       left: `${p.box.x}%`, 
-                       top: `${p.box.y}%`, 
-                       backgroundColor: p.type === "FACE" ? "red" : p.type === "PRODUCT" ? "orange" : "blue" 
+                     className="absolute rounded-lg border-2 border-dashed border-violet-500/40"
+                     style={{
+                       left: `${p.box.x}%`,
+                       top: `${p.box.y}%`,
+                       width: `${p.box.width}%`,
+                       height: `${p.box.height}%`
                      }}
                    />
                  ))}
@@ -322,7 +349,7 @@ export const VisualAttentionStudio: React.FC<VisualAttentionStudioProps> = ({
               <div className="absolute inset-0 border border-white/5 pointer-events-none" />
               <div className="absolute bottom-3 left-3 flex items-center gap-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[8px] font-black text-violet-400 border border-violet-500/20">
                  <Zap className="h-3 w-3" />
-                 ATTENTION HEATMAP LIVE
+                 {isSk ? "RÁMY NAMERANÉ DETEKTOROM TVÁRÍ" : "BOXES MEASURED BY THE FACE DETECTOR"}
               </div>
            </div>
         </div>

@@ -192,7 +192,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
       // 2. Generate immutable canonical RenderPlan
       const project = coreEngine.getProject();
-      const plan = RenderEngineManager.createRenderPlan(project.id, "CUSTOM", width, height);
+      const plan = RenderEngineManager.createRenderPlan(project.id, "CUSTOM", width, height, undefined, {
+        trackSubject: settings.autoReframeFace,
+      });
 
       // 3. Select appropriate rendering backend (WebCodecs Offline / Realtime Fallback)
       const backend = await RenderBackendSelector.selectBackend(plan);

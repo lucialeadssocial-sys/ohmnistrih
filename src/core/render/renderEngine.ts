@@ -5,6 +5,7 @@
 
 import { ProjectModel, ClipModel } from '../types/project';
 import { computeReframeTransform, ReframeMode } from './reframe';
+import { SubjectSample, subjectAt, subjectInMedia } from '../vision/subjectTrack';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { computeClipTransitionState } from './transitionMath';
 
@@ -26,6 +27,10 @@ export class RenderEngine {
    */
   /** Reframe mode of the frame currently being rendered (set by renderFrame). */
   private activeReframe: ReframeMode = 'FIT';
+  /** Whether the measured subject track may move the crop (user-controlled). */
+  private activeTrackSubject = true;
+  /** Measured subject sample that belongs to the layer being drawn (null = no measurement). */
+  private activeSubject: SubjectSample | null = null;
 
   public registerMediaElement(assetId: string, element: HTMLVideoElement | HTMLImageElement): void {
     this.mediaElements.set(assetId, element);
@@ -39,11 +44,13 @@ export class RenderEngine {
     project: ProjectModel,
     currentTime: number,
     canvas: HTMLCanvasElement,
-    options?: { reframe?: ReframeMode }
+    options?: { reframe?: ReframeMode; trackSubject?: boolean }
   ): void {
     // COVER fills the output frame (used by the social/vertical exports); FIT keeps the legacy
     // native-size drawing. Nothing here tracks a face — see core/render/reframe.ts.
     this.activeReframe = options?.reframe ?? 'FIT';
+    // Measured faces only move the crop while the user wants auto-reframe.
+    this.activeTrackSubject = options?.trackSubject !== false;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -132,6 +139,13 @@ export class RenderEngine {
       }
       ctx.scale(scale * transitionState.scaleMultiplier, scale * transitionState.scaleMultiplier);
 
+      // Measured subject for this layer (only when the editor has not framed the shot manually).
+      const subjectSamples = project.analysisResults?.subjectTrack ?? [];
+      this.activeSubject = null;
+      if (this.activeTrackSubject && subjectSamples.length > 0 && positionX === 0 && positionY === 0) {
+        this.activeSubject = subjectAt(subjectSamples, currentTime);
+      }
+
       // Render Clip Content according to Type
       if (clip.type === 'video' || clip.type === 'b-roll' || clip.type === 'image') {
         this.renderMediaClip(ctx, clip, width, height);
@@ -165,9 +179,16 @@ export class RenderEngine {
     }
 
     // Fill the output frame when the export asks for it (uniform scale, aspect ratio preserved).
-    const reframe = computeReframeTransform(mediaWidth, mediaHeight, canvasWidth, canvasHeight, this.activeReframe);
+    // A measured subject sample shifts the crop so the speaker stays inside the visible area.
+    const measuredSubject = this.activeSubject ? subjectInMedia(this.activeSubject, mediaWidth, mediaHeight) : null;
+    const reframe = computeReframeTransform(mediaWidth, mediaHeight, canvasWidth, canvasHeight, this.activeReframe, {
+      subject: measuredSubject,
+    });
     if (reframe.scale !== 1) {
       ctx.scale(reframe.scale, reframe.scale);
+    }
+    if (reframe.offsetX !== 0 || reframe.offsetY !== 0) {
+      ctx.translate(reframe.offsetX, reframe.offsetY);
     }
 
     // Apply Filters if defined

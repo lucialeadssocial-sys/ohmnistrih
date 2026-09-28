@@ -61,6 +61,7 @@ export * from './input/keyboardManager';
 export * from './ai';
 
 import { analysisEngine } from './ai/analysisEngine';
+import type { SubjectSample } from './vision/subjectTrack';
 import { directorEngine } from './ai/directorEngine';
 import { ShortsEngineResult, buildShortsProposals } from './ai/shortsEngine';
 import { editingBrain } from './ai/editingBrain';
@@ -692,6 +693,40 @@ export class CoreEngine {
     this.saveCurrentProject();
 
     return results;
+  }
+
+  /**
+   * Stores MEASURED subject positions (real face detection, see core/vision/subjectTrack.ts) on
+   * the canonical project so the renderer can keep the speaker in frame during a COVER reframe.
+   *
+   * Nothing is invented here: an empty array clears the track and the reframe goes back to centred.
+   * Returns how many samples are stored afterwards.
+   */
+  public recordSubjectTrack(samples: SubjectSample[], options: { replace?: boolean } = {}): number {
+    const currentProj = this.getProject();
+    const existing = currentProj.analysisResults?.subjectTrack ?? [];
+    const replace = options.replace ?? true;
+
+    let merged: SubjectSample[];
+    if (replace) {
+      merged = samples.slice();
+    } else {
+      const byTime = new Map<number, SubjectSample>();
+      for (const sample of [...existing, ...samples]) byTime.set(sample.time, sample);
+      merged = [...byTime.values()].sort((a, b) => a.time - b.time);
+    }
+
+    const analysis = currentProj.analysisResults ?? {
+      projectId: currentProj.id,
+      timestamp: Date.now(),
+    };
+
+    this.commandManager.setProject({
+      ...currentProj,
+      analysisResults: { ...analysis, projectId: analysis.projectId || currentProj.id, subjectTrack: merged },
+    });
+    this.saveCurrentProject();
+    return merged.length;
   }
 
   public cancelAnalysisJob(jobId: string): void {

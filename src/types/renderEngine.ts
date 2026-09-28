@@ -69,6 +69,12 @@ export interface RenderPlan {
    * deliverable); everything else keeps FIT (native size, the legacy behaviour).
    */
   reframe?: ReframeMode;
+  /**
+   * Whether the COVER crop may follow the measured face positions (analysisResults.subjectTrack).
+   * `false` keeps the crop centred even when a measurement exists — this is what the user's
+   * "auto-reframe" switch controls. Undefined counts as `true` (behaviour before the switch existed).
+   */
+  trackSubject?: boolean;
 }
 
 export interface QCGateResult {

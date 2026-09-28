@@ -95,7 +95,9 @@ export const ProfessionalExportCenter: React.FC<ProfessionalExportCenterProps> =
 
   useEffect(() => {
     if (isOpen) {
-      const plan = RenderEngineManager.createRenderPlan(projectId, selectedPreset);
+      const plan = RenderEngineManager.createRenderPlan(projectId, selectedPreset, undefined, undefined, undefined, {
+      trackSubject: settings.autoReframeFace,
+    });
       setRenderPlan(plan);
       setExportHistory(RenderEngineManager.getExportHistory(projectId));
 
@@ -197,7 +199,9 @@ export const ProfessionalExportCenter: React.FC<ProfessionalExportCenterProps> =
 
   const handlePresetChange = (presetId: ExportPresetId) => {
     setSelectedPreset(presetId);
-    const plan = RenderEngineManager.createRenderPlan(projectId, presetId);
+    const plan = RenderEngineManager.createRenderPlan(projectId, presetId, undefined, undefined, undefined, {
+      trackSubject: settings.autoReframeFace,
+    });
     setRenderPlan(plan);
   };
 
@@ -218,7 +222,9 @@ export const ProfessionalExportCenter: React.FC<ProfessionalExportCenterProps> =
       setQcResult(null);
 
       // Verify EDL unchanged during prep
-      const currentPlan = RenderEngineManager.createRenderPlan(projectId, selectedPreset);
+      const currentPlan = RenderEngineManager.createRenderPlan(projectId, selectedPreset, undefined, undefined, undefined, {
+      trackSubject: settings.autoReframeFace,
+    });
       if (currentPlan.edlVersion !== renderPlan.edlVersion) {
         setJobStatus("FAILED");
         const err = RenderEngineManager.getErrorMessage("EDL_CHANGED");

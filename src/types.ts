@@ -384,6 +384,7 @@ export interface AttentionPoint {
   time: number;
   type: AttentionObjectType;
   confidence: number;
+  /** Box in PERCENT of the frame (0–100), because the overlay renders it as a CSS position. */
   box: { x: number; y: number; width: number; height: number };
   labelSk: string;
   labelEn: string;
