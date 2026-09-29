@@ -275,12 +275,17 @@ export function parseGoogleTrendsRss(xml: string, geo: string): TrendSignal[] {
   return out;
 }
 
-/** Sila dopytu: logaritmicky podľa záujmu + prídavok za čerstvosť. */
+/**
+ * Sila dopytu: logaritmicky podľa záujmu + prídavok za čerstvosť.
+ *
+ * Kalibrácia je zámerne rozložená tak, aby sa horné priečky **nesploštili**:
+ * keď má päť tém zhodne 100/100, používateľka sa z poradia nič nedozvie.
+ *   200 → 50 · 1 000 → 62 · 5 000 → 75 · 10 000 → 80 · 50 000 → 92 · 100 000 → 98
+ */
 export function scoreSearchTrend(traffic: number | undefined, publishedAt?: string, now: Date = new Date()): number {
   let base = 30;
   if (traffic && traffic > 0) {
-    // 200 → ~46, 500 → ~52, 1000 → ~58, 5000 → ~70, 50000 → ~88
-    base = 20 + 17 * Math.log10(Math.max(10, traffic));
+    base = 10 + 17.5 * Math.log10(Math.max(10, traffic));
   }
   const rec = recencyBonus(publishedAt, now);
   return clampScore(base + rec);
