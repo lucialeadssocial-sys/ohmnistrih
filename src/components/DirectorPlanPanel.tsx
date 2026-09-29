@@ -102,6 +102,8 @@ interface DirectorPlanPanelProps {
   /** Spustí/zastaví náhľad krátkeho klipu (preskakovanie vystrihnutých úsekov v prehrávači). */
   onPreviewEdl?: (edl: RetentionEdl | null) => void;
   isPreviewing?: boolean;
+  /** Zdrojové video pre render strihu. */
+  getSourceBlob?: () => Promise<Blob | null>;
 }
 
 const MODES = [
@@ -150,6 +152,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   onOpenTimeline,
   onPreviewEdl,
   isPreviewing,
+  getSourceBlob,
 }) => {
   const isSk = language === "sk";
 
@@ -784,6 +787,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
               onPreviewEdl={onPreviewEdl}
               isPreviewing={isPreviewing}
               onSeek={onSeek}
+              getSourceBlob={getSourceBlob}
             />
 
             {/* Zoznam zásahov */}

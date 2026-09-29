@@ -241,6 +241,12 @@ function MainApp() {
 
   // RETENTION SHORT — náhľad klipu preskakovaním vystrihnutých úsekov (bez renderu).
   const [retentionEdl, setRetentionEdl] = useState<RetentionEdl | null>(null);
+  /**
+   * Zdrojové video pre render strihu. Držíme pôvodný File, aby sa dal zostrihať
+   * bez opätovného nahrávania; keď nie je (napr. demo), skúsime blob URL.
+   */
+  const sourceFileRef = useRef<File | null>(null);
+  const currentVideoUrlRef = useRef<string>("");
   const retentionEdlRef = useRef<RetentionEdl | null>(null);
   useEffect(() => {
     retentionEdlRef.current = retentionEdl;
@@ -1383,6 +1389,8 @@ function MainApp() {
     }
 
     setCurrentVideoUrl(url);
+    currentVideoUrlRef.current = url;
+    if (file) sourceFileRef.current = file;
 
     // Phase 1: Register with the new Media Engine if it's a real file
     if (file) {
@@ -1796,6 +1804,26 @@ function MainApp() {
       LastSeekWinsCoordinator.requestSeek(videoRef.current, jumpTo);
     }
   }, []);
+
+  /**
+   * Zdroj pre render strihu: najprv pôvodný súbor (najrýchlejšie a bezpečné),
+   * potom blob URL, ktorú vie prehliadač načítať znova.
+   */
+  const getSourceBlobForRender = useCallback(async (): Promise<Blob | null> => {
+    if (sourceFileRef.current) return sourceFileRef.current;
+
+    const url = currentVideoUrlRef.current || currentVideoUrl;
+    // Blob URL vie prehliadač načítať znova (napr. keď súbor prišiel z inej cesty).
+    if (url && url.startsWith("blob:")) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) return await resp.blob();
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, [currentVideoUrl]);
 
   const handleApplyCuts = (selectedIds: string[]) => {
     if (!jumpSequence) return;
@@ -3693,6 +3721,7 @@ function MainApp() {
                         onOpenTimeline={() => setActiveTab("pro_timeline")}
                         onPreviewEdl={setRetentionEdl}
                         isPreviewingRetention={retentionEdl !== null}
+                        getSourceBlob={getSourceBlobForRender}
                         isGeneratingCuts={isGeneratingCuts}
                         brollProject={brollProject}
                         onUpdateBrollProject={setBrollProject}
