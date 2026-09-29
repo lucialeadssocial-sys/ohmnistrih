@@ -25,6 +25,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { TrendRadar } from "./TrendRadar";
 import { RetentionShortPanel } from "./RetentionShortPanel";
+import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 import type { RetentionEdl } from "../core/retention/retentionEngine";
 import {
   loadEditDna,
@@ -104,6 +105,11 @@ interface DirectorPlanPanelProps {
   isPreviewing?: boolean;
   /** Zdrojové video pre render strihu. */
   getSourceBlob?: () => Promise<Blob | null>;
+  /**
+   * Titulky s word-level časovaním (z automatického prepisu).
+   * Keď sú, plán aj strih kotvia na SKUTOČNÉ časy slov — nie na odhad z textu.
+   */
+  speechSegments?: SpeechSegmentLike[];
 }
 
 const MODES = [
@@ -153,6 +159,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   onPreviewEdl,
   isPreviewing,
   getSourceBlob,
+  speechSegments,
 }) => {
   const isSk = language === "sk";
 
@@ -230,6 +237,8 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
           // Trendové signály, ktoré používateľka výslovne vybrala v Trend Radare.
           // Server ich pripojí k promptu ako reálne fakty (nie ako AI odhad).
           trendContext: trendContextRef.current?.text || "",
+          // Word-level časovanie: server vďaka tomu kotví vety na reálne sekundy.
+          speechSegments: speechSegments || [],
         }),
       });
       const data: DirectorPlanResponse = await res.json();
@@ -799,6 +808,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
               isPreviewing={isPreviewing}
               onSeek={onSeek}
               getSourceBlob={getSourceBlob}
+              speechSegments={speechSegments}
             />
 
             {/* Zoznam zásahov */}

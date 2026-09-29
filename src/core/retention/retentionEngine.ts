@@ -18,6 +18,16 @@
  *  - Presuny (hook na začiatok) menia poradie rozprávania — preto sú vždy ohlásené.
  */
 
+import {
+  buildWordIndex,
+  flattenWords,
+  snapRangeToWords,
+  snapReportSk,
+  type SpeechSegmentLike,
+  type TimingPrecision,
+  type WordTimingIndex,
+} from "../transcript/wordTiming";
+
 export const DEFAULT_MIN_SEGMENT_SEC = 0.6;
 export const MIN_USEFUL_SEGMENT_SEC = 1.2;
 
@@ -94,6 +104,20 @@ export interface RetentionEdl {
   };
   /** Na čom je strih postavený — dedí sa z plánu. */
   basis: "transcript" | "estimate" | "mixed" | "none";
+  /**
+   * Na čom sú postavené ČASY strihu:
+   *  - `words` — prichytené na hranice slov (presnosť ~0,1 s), z word-level tituliek
+   *  - `sentences` — málo slov, ale presné časy viet z tituliek
+   *  - `estimate` — časy viet odhadnuté z dĺžky textu (najmenej presné)
+   */
+  timingPrecision: TimingPrecision;
+  /** Koľko strihov sa posunulo kvôli hranici slova (a o koľko najviac). */
+  wordSnap: {
+    snappedCount: number;
+    maxShiftSec: number;
+    /** Ľudské hlásenia — presne to, čo sa stalo. */
+    reports: string[];
+  };
 }
 
 export interface BuildRetentionEdlInput {
@@ -103,6 +127,13 @@ export interface BuildRetentionEdlInput {
   mode?: string;
   /** Krátke zvyšky sa zahodia, aby klip nebol nervózny. */
   minSegmentSec?: number;
+  /**
+   * Word-level časovanie z automatických tituliek (`/api/transcribe-speech`).
+   * Keď je k dispozícii, strihy sa **prichytia na hranice slov** — reč sa
+   * nepretne v polovici a každý posun je ohlásený v desatinách sekundy.
+   * Keď nie je, strih funguje ako doteraz (a je to priznané).
+   */
+  speechSegments?: SpeechSegmentLike[];
   now?: Date;
 }
 
@@ -195,6 +226,40 @@ export function buildRetentionEdl(input: BuildRetentionEdlInput): RetentionEdl {
     const [s, e] = clampRange(item.start, end, duration);
     if (e - s < 0.05) continue;
     rawRemoved.push([s, e]);
+  }
+
+  // --- Prichytenie strihov na hranice slov (krok A) ---
+  // Ak máme word-level časovanie, strih nikdy nepretne slovo v polovici:
+  // posunie sa do najbližšej pauzy alebo na hranicu slova. Každý posun sa hlási.
+  const wordIndex: WordTimingIndex | null = input.speechSegments?.length
+    ? buildWordIndex(flattenWords(input.speechSegments))
+    : null;
+  const wordSnapReports: string[] = [];
+  let snappedCount = 0;
+  let maxShiftSec = 0;
+
+  if (wordIndex && wordIndex.words.length >= 3) {
+    for (let i = 0; i < rawRemoved.length; i++) {
+      const [s0, e0] = rawRemoved[i];
+      const snapped = snapRangeToWords(s0, e0, wordIndex, 0.6);
+      const startReport = snapReportSk(`Strih ${i + 1}`, snapped.startSnap, "start");
+      const endReport = snapReportSk(`Strih ${i + 1}`, snapped.endSnap, "end");
+      for (const r of [startReport, endReport]) {
+        if (r) {
+          wordSnapReports.push(r);
+          snappedCount++;
+          maxShiftSec = Math.max(maxShiftSec, snapped.startSnap.deltaSec, snapped.endSnap.deltaSec);
+        }
+      }
+      rawRemoved[i] = [snapped.start, snapped.end];
+    }
+    if (snappedCount > 0) {
+      warnings.push({
+        level: "info",
+        text: `Strihy som prichytil na hranice slov — ${pluralSk(snappedCount, "posun", "posuny", "posunov")}, najviac o ${round2(maxShiftSec).toFixed(2)} s.`,
+        hint: "Je to zámerné: strih v pauze alebo na hranici slova divák nepočuje. Detaily sú v zozname nižšie.",
+      });
+    }
   }
 
   const mergedRemoved = mergeRanges(rawRemoved);
@@ -425,6 +490,13 @@ export function buildRetentionEdl(input: BuildRetentionEdlInput): RetentionEdl {
       cutsPerMinute,
     },
     basis,
+    timingPrecision:
+      wordIndex && wordIndex.words.length >= 3 ? wordIndex.precision : basis === "transcript" ? "sentences" : "estimate",
+    wordSnap: {
+      snappedCount,
+      maxShiftSec: round2(maxShiftSec),
+      reports: wordSnapReports,
+    },
   };
 }
 

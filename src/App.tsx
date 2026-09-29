@@ -3722,6 +3722,9 @@ function MainApp() {
                         onPreviewEdl={setRetentionEdl}
                         isPreviewingRetention={retentionEdl !== null}
                         getSourceBlob={getSourceBlobForRender}
+                        // Word-level časovanie z automatických tituliek — vďaka tomu
+                        // plán aj strih sedia na skutočné slová, nie na odhad z textu.
+                        speechSegments={captionProject.segments}
                         isGeneratingCuts={isGeneratingCuts}
                         brollProject={brollProject}
                         onUpdateBrollProject={setBrollProject}

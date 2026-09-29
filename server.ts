@@ -5,6 +5,13 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import {
+  buildSentenceTimings,
+  buildWordIndex,
+  flattenWords,
+  speechCoverage,
+  type SpeechSegmentLike,
+} from "./src/core/transcript/wordTiming";
+import {
   buildBundle,
   DEFAULT_GEOS,
   GEO_OPTIONS,
@@ -812,6 +819,42 @@ function shortQuote(text: string, max = 46): string {
  * označíme (basis) a v odôvodnení uvedieme KTORÁ veta to je, aby sa dal
  * zásah overiť za dve sekundy.
  */
+/**
+ * Časy viet pre plán.
+ *
+ * Poradie dôveryhodnosti je jasné a v odpovedi sa vždy prizná:
+ *  1. **slová** — word-level časovanie z automatických tituliek (presnosť ~0,1 s),
+ *  2. **odhad** — rozdelenie dĺžky videa podľa dĺžky textu (keď máme len text).
+ */
+function sentenceTimingsFor(
+  transcript: string,
+  durationSec: number,
+  speechSegments?: SpeechSegmentLike[],
+): { sentences: TranscriptSentence[]; precision: "words" | "sentences" | "estimate"; wordCount: number } {
+  const words = speechSegments?.length ? flattenWords(speechSegments) : [];
+  if (words.length >= 3) {
+    const sentences = buildSentenceTimings(speechSegments || []).map((s) => ({
+      text: s.text,
+      start: s.start,
+      end: s.end,
+      index: s.index,
+    }));
+    if (sentences.length >= 2) {
+      const idx = buildWordIndex(words);
+      return {
+        sentences,
+        precision: idx.precision,
+        wordCount: words.length,
+      };
+    }
+  }
+  return {
+    sentences: estimateSentenceTimings(transcript, durationSec),
+    precision: "estimate",
+    wordCount: 0,
+  };
+}
+
 function estimateSentenceTimings(transcript: string, durationSec: number): TranscriptSentence[] {
   const cleaned = String(transcript || "").replace(/\s+/g, " ").trim();
   if (cleaned.length < 20) return [];
@@ -960,7 +1003,15 @@ function buildLocalDirectorPlan(
   durationSec: number,
   language: string,
   transcript = "",
-): { plan: DirectorPlanItem[]; summary: string; basis: PlanBasis; anchoredSentences: number } {
+  speechSegments?: SpeechSegmentLike[],
+): {
+  plan: DirectorPlanItem[];
+  summary: string;
+  basis: PlanBasis;
+  anchoredSentences: number;
+  timingPrecision: "words" | "sentences" | "estimate";
+  wordCount: number;
+} {
   const sk = language === "sk";
   const plan: DirectorPlanItem[] = [];
   const push = (
@@ -988,7 +1039,8 @@ function buildLocalDirectorPlan(
   };
 
   const total = Math.max(durationSec, 10);
-  const sentences = estimateSentenceTimings(transcript, total);
+  const timing = sentenceTimingsFor(transcript, total, speechSegments);
+  const sentences = timing.sentences;
   const aggressive = mode === "SOCIAL" || mode === "ADS";
   const maxCuts = aggressive ? 6 : mode === "PODCAST" || mode === "YOUTUBE" ? 3 : 4;
 
@@ -1176,9 +1228,13 @@ function buildLocalDirectorPlan(
 
     return {
       plan: validateDirectorPlan(plan, total),
-      summary,
+      summary: timing.precision === "words"
+        ? `${summary} Strihy som prichytil na skutočné slová z tituliek (${timing.wordCount} slov), takže reč sa nepretne v polovici.`
+        : summary,
       basis: "transcript",
       anchoredSentences: sentences.length,
+      timingPrecision: timing.precision,
+      wordCount: timing.wordCount,
     };
   }
 
@@ -1280,6 +1336,8 @@ function buildLocalDirectorPlan(
     summary,
     basis: "estimate",
     anchoredSentences: 0,
+    timingPrecision: timing.precision,
+    wordCount: timing.wordCount,
   };
 }
 
@@ -1292,12 +1350,37 @@ app.post("/api/director/plan", async (req, res) => {
       transcript = "",
       notes = "",
       trendContext = "", // trendové signály vybrané používateľkou v Trend Radare
+      speechSegments = [], // word-level časovanie z automatických tituliek (ak je)
       qualityMode = "PORTFOLIO", // PORTFOLIO = menej, ale kvalitnejších zásahov
       useZeroTokenMode = false,
     } = req.body || {};
 
     const modeKey = String(mode).toUpperCase();
     const safeMode = DIRECTOR_MODES[modeKey] ? modeKey : "CUSTOM";
+
+    // Word-level časovanie: berieme len to, čo dáva zmysel (čísla, rozumné limity).
+    // Poškodené položky radšej zahodíme, než aby posunuli strih o nezmysel.
+    const safeSpeechSegments: SpeechSegmentLike[] = Array.isArray(speechSegments)
+      ? speechSegments
+          .slice(0, 500)
+          .map((seg: any) => ({
+            start: Number(seg?.start) || 0,
+            end: Number(seg?.end) || 0,
+            text: String(seg?.text ?? "").slice(0, 400),
+            words: Array.isArray(seg?.words)
+              ? seg.words
+                  .slice(0, 60)
+                  .map((w: any) => ({
+                    word: String(w?.word ?? "").slice(0, 60),
+                    start: Number(w?.start) || 0,
+                    end: Number(w?.end) || 0,
+                    highlight: Boolean(w?.highlight),
+                  }))
+                  .filter((w: any) => w.word.length > 0)
+              : [],
+          }))
+          .filter((seg: any) => seg.end > seg.start || seg.words.length > 0)
+      : [];
     const modeInfo = DIRECTOR_MODES[safeMode];
     const durationSec = Number.isFinite(Number(duration)) ? Math.max(5, Number(duration)) : 30;
     const sk = language === "sk";
@@ -1328,13 +1411,21 @@ app.post("/api/director/plan", async (req, res) => {
 
     // 1) Explicitný offline režim (0 tokenov)
     if (useZeroTokenMode) {
-      const local = buildLocalDirectorPlan(safeMode, durationSec, language, String(transcript || ""));
+      const local = buildLocalDirectorPlan(
+        safeMode,
+        durationSec,
+        language,
+        String(transcript || ""),
+        safeSpeechSegments,
+      );
       telemetryStats.localRequestsToday++;
       return buildResponse(local.plan, "local-fallback", {
         summary: local.summary,
         tokensUsed: 0,
         planBasis: local.basis,
         anchoredSentences: local.anchoredSentences,
+        timingPrecision: local.timingPrecision,
+        wordCount: local.wordCount,
       });
     }
 
@@ -1364,11 +1455,36 @@ app.post("/api/director/plan", async (req, res) => {
         sk
           ? "KOTVENIE: ak máš prepis, v 'reason' VŽDY uveď konkrétnu vetu (krátky citát v úvodzovkách), na ktorú sa zásah viaže. Nevymýšľaj si časy od oka."
           : "ANCHORING: if a transcript is available, always quote the specific line the decision refers to.",
-        transcript
-          ? `\nPREPIS (môže byť neúplný):\n"""${clampText(transcript, 6000)}"""`
-          : sk
-            ? "\nPrepisy nie sú k dispozícii — navrhni plán na základe bežnej štruktúry takéhoto videa."
-            : "\nNo transcript available — base the plan on the typical structure of such a video.",
+        (() => {
+          const timing = sentenceTimingsFor(String(transcript || ""), Math.max(durationSec, 10), safeSpeechSegments);
+          if (timing.precision === "words" || timing.precision === "sentences") {
+            const idx = safeSpeechSegments?.length ? buildWordIndex(flattenWords(safeSpeechSegments)) : null;
+            const cov = idx ? speechCoverage(idx.words, Math.max(durationSec, 10)) : null;
+            const list = timing.sentences
+              .slice(0, 60)
+              .map((sen, i) => `${i + 1}. [${sen.start.toFixed(1)}–${sen.end.toFixed(1)} s] ${shortQuote(sen.text, 140)}`)
+              .join("\n");
+            return [
+              sk
+                ? `\nVETY S PRESNÝMI ČASMI (z automatických tituliek — ${timing.wordCount} slov; TOTO sú skutočné časy, použi ich):`
+                : `\nSENTENCES WITH EXACT TIMES (from captions, ${timing.wordCount} words — use these):`,
+              list,
+              cov
+                ? sk
+                  ? `Reč zaberá ${Math.round(cov.ratio * 100)} % videa (${cov.speechSec} s). Zvyšok sú pauzy.`
+                  : `Speech covers ${Math.round(cov.ratio * 100)}% of the video.`
+                : "",
+              sk
+                ? "Strihaj v pauzách medzi vetami — strih na hranici slova/pauzy divák nepočuje."
+                : "Cut inside the pauses between sentences.",
+            ].filter(Boolean).join("\n");
+          }
+          return transcript
+            ? `\nPREPIS (môže byť neúplný, bez časovania):\n"""${clampText(transcript, 6000)}"""`
+            : sk
+              ? "\nPrepisy nie sú k dispozícii — navrhni plán na základe bežnej štruktúry takéhoto videa."
+              : "\nNo transcript available — base the plan on the typical structure of such a video.";
+        })(),
         notes ? `\nPOZNÁMKY POUŽÍVATEĽA:\n"""${clampText(notes, 1500)}"""` : "",
         // Reálne dáta z platforiem vybrané človekom. Sú to fakty s dátumom a
         // zdrojom — preto ich AI nesmie vydávať za svoj odhad ani si ich domýšľať.
@@ -1440,7 +1556,13 @@ app.post("/api/director/plan", async (req, res) => {
     }
 
     // 3) Fallback — lokálny deterministický plán (aplikácia nesmie „umrieť“)
-    const local = buildLocalDirectorPlan(safeMode, durationSec, language, String(transcript || ""));
+    const local = buildLocalDirectorPlan(
+      safeMode,
+      durationSec,
+      language,
+      String(transcript || ""),
+      safeSpeechSegments,
+    );
     telemetryStats.localRequestsToday++;
     return buildResponse(local.plan, "local-fallback", {
       summary: local.summary,

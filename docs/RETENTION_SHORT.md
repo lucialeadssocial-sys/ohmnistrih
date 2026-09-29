@@ -94,6 +94,48 @@ Bez re-encodu sa **nedajú** robiť tieto veci: presný rez na stotinu sekundy b
 posunu, zmena rozlíšenia/framerate, prechody a titulky pripečené do obrazu.
 Tie patria do budúceho kroku (nadstavba nad FFmpeg/WebCodecs), nie do tohto.
 
+## 8. Word-level časovanie (krok A) — presnosť na slová
+
+Toto je odpoveď na to, čo v sekcii 8 stálo ako najväčšia nepresnosť: *„dnes sa časy
+viet odhadujú podľa dĺžky textu"*. Odteraz to platí len vtedy, keď presnejšie údaje
+nemáme.
+
+**Odkiaľ sa berú presné časy:** automatické titulky (`Titulky → Automatické titulky`)
+už od Gemini dostávajú **časovanie po slovách** (každé slovo má vlastný začiatok a koniec).
+Doteraz sa tieto dáta použili len na titulky — do plánu a do strihu išiel holý text.
+Teraz sa posielajú ďalej.
+
+**Čo sa s nimi robí:**
+
+1. **Plán** kotví vety na skutočné sekundy (nie na odhad) a v odpovedi to prizná:
+   `timingPrecision: "words"`, `wordCount: počet slov`. AI navyše dostane zoznam viet
+   s presnými časmi a inštrukciu strihať v pauzách — nie „od oka".
+2. **Strih** sa prichytáva na **hranice slov**: začiatok strihu ide na koniec slova,
+   ktoré by inak ostalo prerezané, koniec na koniec prerezaného slova. Nikdy sa
+   nepretne slovo v polovici.
+3. **Pauzy** (medzery medzi slovami) sú najlepšie miesta na strih — strih v pauze
+   divák nepočuje. Ak je na výber medzi hranicou v pauze a tesnou hranicou,
+   vyhráva pauza (do 0,25 s rozdielu).
+4. **Každý posun je hlásený** v desatinách sekundy, s tým, čo sa na hranici
+   nachádza: *„Strih 1: začiatok som posunul o 0.20 s skôr (pauza 2.50 s) — aby sa
+   slovo nepretlo."* Posun väčší ako 0,6 s sa radšej **nepoužije** (nič neprekvapí).
+
+**Poctivé mantinely:**
+
+- Keď titulky nemáš, strih funguje ako doteraz a panel to **napíše**:
+  „Časy sú odhad z dĺžky textu" + návod, ako získať presné.
+- Keď máš menej než 3 slová, presné časovanie sa nepredstiera.
+- Server berie word-level dáta len po sanitizácii (čísla, limity 500 segmentov /
+  60 slov na segment) — poškodená položka posunie strih maximálne tak, že sa zahodí.
+
+**Konkrétny príklad z ostrého behu** (30 s video, 21 slov, 4 pauzy):
+
+| | bez časovania slov | s časovaním slov |
+|---|---|---|
+| strih 1 | 4,20 – 6,10 | **4,00 – 6,50** (do púaz) |
+| strih 2 | 9,30 – 11,15 | **9,10 – 11,15** |
+| hlásenia | — | 3 posuny, najviac 0,40 s |
+
 ## 8. Čo ešte nie je hotové (poctivo)
 
 - **Word-level časovanie** z prepisu: dnes sa časy viet odhadujú podľa dĺžky textu.
