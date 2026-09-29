@@ -1,17 +1,36 @@
 /**
- * Minimálny typový štít pre `bun:test`.
+ * Minimálny typový štít pre `bun:test` a Bun globály.
  *
  * Repo beží na Bun, ale nemá nainštalované typy pre jeho test runner. Namiesto
  * pridania ďalšej závislosti (a zmeny lockfile) si tu deklarujeme len to, čo
  * testy naozaj používajú. Testy sa spúšťajú cez `bun test`, ktorý si ich
  * transpiluje sám — tento súbor slúži iba na to, aby `tsc --noEmit` nezlyhal.
  */
+
+/** Bun globál (testy používajú Bun.file a Bun.write). */
+declare const Bun: {
+  file(path: string): {
+    arrayBuffer(): Promise<ArrayBuffer>;
+    text(): Promise<string>;
+    json(): Promise<any>;
+    exists(): Promise<boolean>;
+  };
+  write(path: string, data: Uint8Array | ArrayBuffer | Blob | string): Promise<number>;
+};
+
 declare module "bun:test" {
   type TestFn = () => void | Promise<void>;
 
   export function describe(name: string, fn: TestFn): void;
-  export function test(name: string, fn: TestFn, timeout?: number): void;
-  export function it(name: string, fn: TestFn, timeout?: number): void;
+  interface TestFnWithSkip {
+    (name: string, fn: TestFn, timeout?: number): void;
+    skip(name: string, fn: TestFn, timeout?: number): void;
+    only(name: string, fn: TestFn, timeout?: number): void;
+    todo(name: string): void;
+  }
+
+  export const test: TestFnWithSkip;
+  export const it: TestFnWithSkip;
   export function beforeAll(fn: TestFn): void;
   export function beforeEach(fn: TestFn): void;
   export function afterAll(fn: TestFn): void;
@@ -38,6 +57,8 @@ declare module "bun:test" {
     toThrow(expected?: unknown): void;
     toBeInstanceOf(expected: unknown): void;
     not: Matchers;
+    resolves: Matchers;
+    rejects: Matchers;
   }
 
   export function expect(actual: unknown): Matchers;

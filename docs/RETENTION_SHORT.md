@@ -54,16 +54,51 @@ EDL je most k renderu: tie isté čísla sa dajú vložiť ako klipy do timeline
 (Mediabunny render) alebo odovzdať do DaVinci / Premiere. Je to len zoznam čísel —
 dá sa prečítať a skontrolovať očami.
 
-## 6. Testy (`bun test tests/retentionEngine.test.ts`)
+## 6. Testy
 
-23 testov: spájanie rozsahov, doplnok, presun hooku, krátke zvyšky, limit platformy,
-orezanie mimo dĺžky videa, prekrývajúce sa strihy, determinizmus, varovania,
-prehrávanie náhľadu a slovenské skloňovanie v textoch.
+- `bun test tests/retentionEngine.test.ts` — 23 testov: spájanie rozsahov, doplnok,
+  presun hooku, krátke zvyšky, limit platformy, orezanie mimo dĺžky videa,
+  prekrývajúce sa strihy, determinizmus, varovania, prehrávanie náhľadu a slovenské
+  skloňovanie v textoch.
+- `bun test tests/smartCutRenderer.test.ts` — 17 testov, ktoré naozaj **vygenerujú
+  video cez ffmpeg a overia výsledok** (streamy, dĺžku, dekódovanie bez chýb,
+  poradie hooku, rýchlosť, zrušenie, 6 úsekov v rade, ochranu pri zlom EDL).
+  Bez ffmpeg v prostredí sa korektne preskočia, nezlyhnú.
 
-## 7. Čo ešte nie je hotové (poctivo)
+## 7. Render klipu do súboru (F2b)
 
-- **Render do súboru** zatiaľ beží cez existujúce Export centrum, ktoré renderuje
-  core timeline. EDL je na to pripravené (klipy s časmi), ale samotné napojenie
-  EDL → timeline → MP4 je ďalší krok (F2b).
+Za tlačidlom **„Vyrenderovať klip"** nie je žiadny cloud ani prekódovanie. Klip sa
+skladá **kopírovaním packetov** z tvojho videa (Mediabunny) — obraz aj zvuk zostávajú
+bit po bite tie isté ako v zdroji, takže **žiadna strata kvality** a render je
+rádovo rýchlejší než reálny čas (25 s klip ≈ 0,1 s práce).
+
+Ako to funguje:
+
+1. **Video** — každý úsek začína **kľúčovým snímkom**. Ak plán určil rez doprostred
+   GOP, úsek sa posadí na najbližší predchádzajúci kľúčový snímok. Toto posadenie
+   sa **vždy prizná** — v zhrnutí aj v zozname upozornení („najviac o 0,50 s skôr
+   — cena za neprekódovanie“). Nikdy sa nekoná potichu.
+2. **Zvuk** — kopíruje sa presne podľa plánu; posadenie obrazu na kľúčový snímok
+   sa preto vždy hlási aj zvlášť (zvuk a obraz by inak mohli o kúsok „cestovať“).
+3. **Výstupný čas sa riadi realitou, nie plánom** — kurzor sa posúva podľa toho,
+   čo sa naozaj zapísalo. Vďaka tomu sa segmenty nikdy neprekryjú a súbor sa
+   nezrúti ani pri mnohých krátkych rezoch za sebou.
+4. **Kontajner** — podľa kodekov: H.264/H.265/AV1/VP9 + AAC/Opus/MP3/FLAC → **MP4**,
+   inak **WebM** (radšej bezpečnejšie, než nefunkčný súbor).
+5. **Zlé EDL sa odmietne s dôvodom** — úseky mimo dĺžky videa sa preskočia
+   s upozornením; ak je mimo celý EDL, appka napíše, že plán patrí k inému videu
+   (radšej jasná chyba než prázdny súbor).
+6. **Zastaviť sa dá kedykoľvek** — render sa preruší a nič sa neuloží.
+
+Bez re-encodu sa **nedajú** robiť tieto veci: presný rez na stotinu sekundy bez
+posunu, zmena rozlíšenia/framerate, prechody a titulky pripečené do obrazu.
+Tie patria do budúceho kroku (nadstavba nad FFmpeg/WebCodecs), nie do tohto.
+
+## 8. Čo ešte nie je hotové (poctivo)
+
 - **Word-level časovanie** z prepisu: dnes sa časy viet odhadujú podľa dĺžky textu.
   So skutočným časovaním slov budú strihy presné na desatinu sekundy.
+- **Render s efektmi** (titulky, zoom, prechody zapečené do obrazu) — to už
+  vyžaduje prekódovanie; naplánované ako ďalší krok nad FFmpeg.
+- **Presné strihy bez posunu na kľúčový snímok** (smart-render cez FFmpeg s
+  re-encodom len prvého GOP) — dnes je posun vždy priznaný, nie skrytý.

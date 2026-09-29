@@ -61,6 +61,8 @@ interface RawToReadyPipelineProps {
   /** Náhľad krátkeho klipu — preskakovanie vystrihnutých úsekov v prehrávači. */
   onPreviewEdl?: (edl: RetentionEdl | null) => void;
   isPreviewingRetention?: boolean;
+  /** Zdrojové video pre render strihu (Blob alebo null, ak nie je prístupné). */
+  getSourceBlob?: () => Promise<Blob | null>;
   isAnalyzingRaw: boolean;
 
   storyPlan: any;
@@ -168,6 +170,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   onOpenTimeline,
   onPreviewEdl,
   isPreviewingRetention,
+  getSourceBlob,
   isAnalyzingRaw,
   storyPlan,
   onGenerateStory,
@@ -596,6 +599,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                     onOpenTimeline={onOpenTimeline}
                     onPreviewEdl={onPreviewEdl}
                     isPreviewing={isPreviewingRetention}
+                    getSourceBlob={getSourceBlob}
                     onApplyPlan={(accepted: DirectorPlanItem[]) => {
                       if (!onApplyDirectorPlan) {
                         showToast(

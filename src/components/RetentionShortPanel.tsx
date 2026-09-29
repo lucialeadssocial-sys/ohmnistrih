@@ -11,6 +11,9 @@ import {
   Clock,
   Film,
   Wand2,
+  Clapperboard,
+  Loader2,
+  CheckCircle2,
 } from "lucide-react";
 import {
   buildRetentionEdl,
@@ -21,6 +24,14 @@ import {
   type RetentionEdl,
   type RetentionPlanItemLike,
 } from "../core/retention/retentionEngine";
+import {
+  smartCutRender,
+  smartCutSummarySk,
+  smartCutFileName,
+  SmartCutCanceledError,
+  type SmartCutProgress,
+  type SmartCutResult,
+} from "../core/export/smartCutRenderer";
 
 /** Platformy pre krátky klip — prevzaté z knižnice trendov, aby limity sedeli. */
 const TARGETS = [
@@ -40,6 +51,11 @@ interface RetentionShortPanelProps {
   onPreviewEdl?: (edl: RetentionEdl | null) => void;
   isPreviewing?: boolean;
   onSeek?: (seconds: number) => void;
+  /**
+   * Vráti zdrojové video ako Blob (pôvodný súbor alebo blob URL).
+   * Bez neho sa render nedá spustiť — a panel to rovno povie.
+   */
+  getSourceBlob?: () => Promise<Blob | null>;
 }
 
 const LEVEL_STYLE = {
@@ -56,10 +72,18 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
   onPreviewEdl,
   isPreviewing = false,
   onSeek,
+  getSourceBlob,
 }) => {
   const isSk = language === "sk";
   const [targetId, setTargetId] = useState("REELS");
   const [edl, setEdl] = useState<RetentionEdl | null>(null);
+  const [render, setRender] = useState<{ isRunning: boolean; progress: SmartCutProgress | null; result: SmartCutResult | null; error: string | null }>({
+    isRunning: false,
+    progress: null,
+    result: null,
+    error: null,
+  });
+  const cancelRef = React.useRef(false);
 
   const target = TARGETS.find((t) => t.id === targetId) || TARGETS[1];
 
@@ -80,6 +104,66 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
 
   const stopPreview = () => {
     onPreviewEdl?.(null);
+  };
+
+  /** Zloží hotový súbor z EDL (kopírovaním packetov, bez prekódovania). */
+  const renderClip = async () => {
+    if (!edl) return;
+    if (!getSourceBlob) {
+      setRender((r) => ({
+        ...r,
+        error: isSk
+          ? "Nemám prístup k zdrojovému videu. Nahraj video znova a skús to."
+          : "No access to the source video.",
+      }));
+      return;
+    }
+
+    cancelRef.current = false;
+    setRender({ isRunning: true, progress: null, result: null, error: null });
+
+    try {
+      const source = await getSourceBlob();
+      if (!source) {
+        throw new Error(
+          isSk
+            ? "Zdrojové video sa nepodarilo načítať (súbor už nie je v prehliadači)."
+            : "Could not load the source video.",
+        );
+      }
+
+      const result = await smartCutRender({
+        source,
+        segments: edl.segments.map((seg) => ({
+          sourceStart: seg.sourceStart,
+          sourceEnd: seg.sourceEnd,
+          timelineStart: seg.timelineStart,
+          duration: seg.duration,
+          label: seg.label,
+        })),
+        onProgress: (p) => setRender((r) => ({ ...r, progress: p })),
+        shouldCancel: () => cancelRef.current,
+      });
+
+      setRender({ isRunning: false, progress: null, result, error: null });
+
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(result.blob);
+      a.download = smartCutFileName(result.container, edl.platformLabelSk);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err: any) {
+      const canceled = err instanceof SmartCutCanceledError;
+      setRender({
+        isRunning: false,
+        progress: null,
+        result: null,
+        error: canceled
+          ? isSk ? "Render som zastavil. Nič sa nezmenilo." : "Render canceled."
+          : err?.message || (isSk ? "Render zlyhal." : "Render failed."),
+      });
+    }
   };
 
   const downloadEdl = () => {
@@ -185,6 +269,28 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
                 <Download className="h-3.5 w-3.5" />
                 EDL (JSON)
               </button>
+
+              {render.isRunning ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    cancelRef.current = true;
+                  }}
+                  className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-rose-600 text-neutral-200 hover:text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                  {isSk ? "Zastaviť render" : "Cancel render"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={renderClip}
+                  className="px-3 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <Clapperboard className="h-3.5 w-3.5" />
+                  {isSk ? "Vyrenderovať klip" : "Render the clip"}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -259,6 +365,64 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* RENDER: priebeh a výsledok */}
+          {render.isRunning && (
+            <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/30">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 text-violet-300 animate-spin" />
+                <p className="text-[11px] font-bold text-violet-200">
+                  {render.progress?.messageSk || (isSk ? "Pripravujem render…" : "Preparing…")}
+                </p>
+              </div>
+              <div className="mt-2 h-1.5 rounded bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full bg-violet-500 transition-all"
+                  style={{ width: `${render.progress?.percent ?? 2}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-neutral-400 mt-2">
+                {isSk
+                  ? "Skladám klip kopírovaním packetov — bez prekódovania, takže kvalita zostáva pôvodná a render je rádovo rýchlejší."
+                  : "Copying packets — no re-encode."}
+                {render.progress
+                  ? ` · ${render.progress.copiedVideoPackets} obrazových, ${render.progress.copiedAudioPackets} zvukových packetov`
+                  : ""}
+              </p>
+            </div>
+          )}
+
+          {render.error && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-200 flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{render.error}</span>
+            </div>
+          )}
+
+          {render.result && (
+            <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/30 space-y-2">
+              <p className="text-[11px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {isSk ? "Klip je hotový a stiahnutý" : "Clip rendered and downloaded"}
+              </p>
+              <p className="text-[11px] text-neutral-300">{smartCutSummarySk(render.result)}</p>
+              <p className="text-[10px] text-neutral-500">
+                {isSk
+                  ? `Skopírované packety: ${render.result.copiedVideoPackets} obraz · ${render.result.copiedAudioPackets} zvuk. Bez prekódovania = bez straty kvality.`
+                  : `${render.result.copiedVideoPackets} video / ${render.result.copiedAudioPackets} audio packets copied.`}
+              </p>
+              {render.result.warnings.length > 0 && (
+                <div className="pt-2 border-t border-emerald-500/20 space-y-1.5">
+                  {render.result.warnings.map((w, i) => (
+                    <p key={i} className="text-[10px] text-amber-300/90 leading-relaxed">
+                      ⚠️ <span className="font-bold">{w.text}</span>
+                      {w.hint && <span className="block opacity-80 mt-0.5">{w.hint}</span>}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
