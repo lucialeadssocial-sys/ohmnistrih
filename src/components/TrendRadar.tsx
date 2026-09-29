@@ -13,7 +13,9 @@ import {
   Clock,
   Calendar,
   TrendingUp,
+  Activity,
 } from "lucide-react";
+import { LiveSignalsPanel } from "./LiveSignalsPanel";
 import {
   PLATFORMS,
   NICHES,
@@ -32,12 +34,16 @@ interface TrendRadarProps {
   plan?: PlanItemLike[];
   durationSec?: number;
   onSeek?: (seconds: number) => void;
+  /** Trendové signály vybrané pre plán (text pre AI) — drží ich nadradený panel. */
+  onUseTrendSignals?: (contextText: string, count: number) => void;
+  usedTrendSignalsCount?: number;
 }
 
-type Section = "kontrola" | "principy" | "hooky" | "formaty" | "vlajky";
+type Section = "kontrola" | "zive" | "principy" | "hooky" | "formaty" | "vlajky";
 
 const SECTION_LABELS: { id: Section; labelSk: string; icon: any }[] = [
   { id: "kontrola", labelSk: "Kontrola virality", icon: TrendingUp },
+  { id: "zive", labelSk: "Živé signály", icon: Activity },
   { id: "hooky", labelSk: "Hook vzorce", icon: Flame },
   { id: "principy", labelSk: "Princípy", icon: BookOpen },
   { id: "formaty", labelSk: "Formáty", icon: Lightbulb },
@@ -77,6 +83,8 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
   plan = [],
   durationSec = 0,
   onSeek,
+  onUseTrendSignals,
+  usedTrendSignalsCount = 0,
 }) => {
   const isSk = language === "sk";
   const [platform, setPlatform] = useState<TrendPlatform>("TIKTOK");
@@ -184,6 +192,14 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
       </div>
 
       {/* KONTROLA VIRALITY */}
+      {section === "zive" && (
+        <LiveSignalsPanel
+          language={language}
+          onUseInPlan={onUseTrendSignals}
+          usedInPlanCount={usedTrendSignalsCount}
+        />
+      )}
+
       {section === "kontrola" && (
         <div className="space-y-3">
           {!audit ? (

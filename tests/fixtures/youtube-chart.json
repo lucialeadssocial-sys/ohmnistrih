@@ -1,0 +1,28 @@
+{
+  "//": "POSKLADANÉ PODĽA DOKUMENTOVANEJ SCHÉMY YouTube Data API v3 (videos.list?chart=mostPopular), NIE živá odpoveď — na tú treba kľúč. Hodnoty sú vymyslené, ale štruktúra polí sedí s dokumentáciou.",
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "dQw4w9WgXcQ",
+      "snippet": {
+        "publishedAt": "2026-09-27T16:00:14Z",
+        "channelTitle": "Podnikateľské skratky",
+        "title": "Ako som za 7 dní naplnil kaviareň",
+        "description": "Celý postup od nuly."
+      },
+      "statistics": { "viewCount": "1240000", "likeCount": "54000" }
+    },
+    {
+      "kind": "youtube#video",
+      "id": "9bZkp7q19f0",
+      "snippet": {
+        "publishedAt": "2026-09-25T09:30:00Z",
+        "channelTitle": "ReelsLab",
+        "title": "3 chyby, ktoré zabíjajú prvých 5 sekúnd",
+        "description": "Retention v praxi."
+      },
+      "statistics": { "viewCount": "310500", "likeCount": "12000" }
+    }
+  ]
+}

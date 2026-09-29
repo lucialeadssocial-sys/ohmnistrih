@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Sparkles,
   Scissors,
@@ -169,6 +169,9 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   const [result, setResult] = useState<DirectorPlanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /** Trendové signály vybrané v Trend Radare (text + počet) — ide do promptu. */
+  const trendContextRef = useRef<{ text: string; count: number } | null>(null);
+  const [trendContextCount, setTrendContextCount] = useState(0);
   const [acceptedIds, setAcceptedIds] = useState<string[]>([]);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [openWhyId, setOpenWhyId] = useState<string | null>(null);
@@ -224,6 +227,9 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
           notes,
           qualityMode,
           useZeroTokenMode: zeroToken,
+          // Trendové signály, ktoré používateľka výslovne vybrala v Trend Radare.
+          // Server ich pripojí k promptu ako reálne fakty (nie ako AI odhad).
+          trendContext: trendContextRef.current?.text || "",
         }),
       });
       const data: DirectorPlanResponse = await res.json();
@@ -380,6 +386,11 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
           plan={plan}
           durationSec={typeof rawDurationSeconds === "number" ? rawDurationSeconds : durationMin * 60}
           onSeek={onSeek}
+          onUseTrendSignals={(text: string, count: number) => {
+            trendContextRef.current = { text, count };
+            setTrendContextCount(count);
+          }}
+          usedTrendSignalsCount={trendContextCount}
         />
       )}
 
