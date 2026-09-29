@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { TrendRadar } from "./TrendRadar";
+import { RetentionShortPanel } from "./RetentionShortPanel";
+import type { RetentionEdl } from "../core/retention/retentionEngine";
 import {
   loadEditDna,
   saveEditDna,
@@ -97,6 +99,9 @@ interface DirectorPlanPanelProps {
   onApplyPlan?: (accepted: DirectorPlanItem[]) => DirectorApplyReport | void;
   /** Otvorí profesionálny timeline (aby používateľ videl, čo sa zmenilo). */
   onOpenTimeline?: () => void;
+  /** Spustí/zastaví náhľad krátkeho klipu (preskakovanie vystrihnutých úsekov v prehrávači). */
+  onPreviewEdl?: (edl: RetentionEdl | null) => void;
+  isPreviewing?: boolean;
 }
 
 const MODES = [
@@ -143,6 +148,8 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   onSeek,
   onApplyPlan,
   onOpenTimeline,
+  onPreviewEdl,
+  isPreviewing,
 }) => {
   const isSk = language === "sk";
 
@@ -767,6 +774,17 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                 )}
               </div>
             )}
+
+            {/* RETENTION SHORT — konkrétny strih z plánu */}
+            <RetentionShortPanel
+              language={language}
+              acceptedItems={plan.filter((p) => acceptedIds.includes(p.id))}
+              durationSec={typeof rawDurationSeconds === "number" ? rawDurationSeconds : durationMin * 60}
+              mode={result?.mode || mode}
+              onPreviewEdl={onPreviewEdl}
+              isPreviewing={isPreviewing}
+              onSeek={onSeek}
+            />
 
             {/* Zoznam zásahov */}
             <div className="space-y-2">

@@ -132,6 +132,7 @@ import {
   NaturalVoiceClip,
 } from "./types";
 import type { DirectorPlanItem, DirectorApplyReport } from "./components/DirectorPlanPanel";
+import { nextKeepTime, type RetentionEdl } from "./core/retention/retentionEngine";
 import { SimpleSmartToolInterface, SmartCategory } from "./components/SimpleSmartToolInterface";
 import { aiOrchestrator } from "./services/aiOrchestrator";
 import { DEFAULT_EDIT_DNA_PROFILES } from "./utils/editorBrainDefaults";
@@ -237,6 +238,13 @@ function MainApp() {
   const [isDirectorStudioOpen, setIsDirectorStudioOpen] = useState(false);
   const [activePhase, setActivePhase] = useState<"prepare" | "review" | "deliver">("prepare");
   const [storyPlan, setStoryPlan] = useState<StoryPlan | null>(null);
+
+  // RETENTION SHORT — náhľad klipu preskakovaním vystrihnutých úsekov (bez renderu).
+  const [retentionEdl, setRetentionEdl] = useState<RetentionEdl | null>(null);
+  const retentionEdlRef = useRef<RetentionEdl | null>(null);
+  useEffect(() => {
+    retentionEdlRef.current = retentionEdl;
+  }, [retentionEdl]);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
@@ -1770,6 +1778,24 @@ function MainApp() {
       showToast(isSk ? "✅ Jump-Cut návrhy sú pripravené!" : "✅ Jump-Cut proposals are ready!");
     }, 3000);
   };
+
+  /**
+   * Náhľad RETENTION SHORT: kým je aktívny, prehrávanie preskakuje vystrihnuté úseky.
+   * Nerenderuje sa nič — len sa posúva prehrávanie, takže výsledok vidíš hneď.
+   */
+  const handleRetentionTimeUpdate = useCallback((time: number) => {
+    const edl = retentionEdlRef.current;
+    setCurrentTime(time);
+    if (!edl) return;
+    const jumpTo = nextKeepTime(edl, time);
+    if (jumpTo === null) return;
+    // Skočíme na koniec vystrihnutého úseku — divák ho nikdy neuvidí.
+    playheadStore.setTime(jumpTo, true);
+    setCurrentTime(jumpTo);
+    if (videoRef.current) {
+      LastSeekWinsCoordinator.requestSeek(videoRef.current, jumpTo);
+    }
+  }, []);
 
   const handleApplyCuts = (selectedIds: string[]) => {
     if (!jumpSequence) return;
@@ -3665,6 +3691,8 @@ function MainApp() {
                         onApplyCuts={(ids) => handleApplyCuts(ids)}
                         onApplyDirectorPlan={handleApplyDirectorPlan}
                         onOpenTimeline={() => setActiveTab("pro_timeline")}
+                        onPreviewEdl={setRetentionEdl}
+                        isPreviewingRetention={retentionEdl !== null}
                         isGeneratingCuts={isGeneratingCuts}
                         brollProject={brollProject}
                         onUpdateBrollProject={setBrollProject}
@@ -3965,7 +3993,7 @@ function MainApp() {
                       currentTime={currentTime}
                       duration={duration}
                       isPlaying={isPlaying}
-                      onTimeUpdate={setCurrentTime}
+                      onTimeUpdate={retentionEdl ? handleRetentionTimeUpdate : setCurrentTime}
                       onDurationChange={setDuration}
                       onTogglePlay={handleTogglePlay}
                       canvasRef={canvasRef}
