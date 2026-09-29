@@ -170,6 +170,14 @@ describe("živé signály — YouTube rebríček (schéma Data API)", () => {
 });
 
 describe("živé signály — hodnotenie a poradie", () => {
+  test("horné priečky sa nesploštia na 100 — z poradia sa dá niečo dozvedieť", () => {
+    // Reálna chyba z ostrých dát: päť tém malo zhodne 100/100 a poradie bolo bezcenné.
+    const r = [500, 1000, 5000, 10_000, 50_000, 100_000].map((t) => scoreSearchTrend(t));
+    expect(new Set(r).size).toBeGreaterThanOrEqual(5); // aspoň 5 rôznych hodnôt zo 6
+    expect(r[r.length - 1]).toBeLessThanOrEqual(100);
+    expect(r[2]).toBeLessThan(85); // 5 000 vyhľadávaní ešte nesmie byť takmer strop
+  });
+
   test("záujem 5000 je silnejší než 500, ale oba sú v rozumnom pásme", () => {
     const maly = scoreSearchTrend(500);
     const velky = scoreSearchTrend(5000);
