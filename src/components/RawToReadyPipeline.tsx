@@ -48,6 +48,7 @@ import { ViralPresets } from "./ViralPresets";
 import { SmartAIInsight } from "./SmartAIInsight";
 import { OpusStudio } from "./OpusStudio";
 import { DirectorPlanPanel, DirectorPlanItem, DirectorApplyReport } from "./DirectorPlanPanel";
+import type { RetentionEdl } from "../core/retention/retentionEngine";
 
 interface RawToReadyPipelineProps {
   // Global States from App.tsx
@@ -57,6 +58,9 @@ interface RawToReadyPipelineProps {
   onApplyDirectorPlan?: (accepted: DirectorPlanItem[]) => DirectorApplyReport;
   /** Otvorí profesionálny timeline. */
   onOpenTimeline?: () => void;
+  /** Náhľad krátkeho klipu — preskakovanie vystrihnutých úsekov v prehrávači. */
+  onPreviewEdl?: (edl: RetentionEdl | null) => void;
+  isPreviewingRetention?: boolean;
   isAnalyzingRaw: boolean;
 
   storyPlan: any;
@@ -162,6 +166,8 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   onRunRawAnalysis,
   onApplyDirectorPlan,
   onOpenTimeline,
+  onPreviewEdl,
+  isPreviewingRetention,
   isAnalyzingRaw,
   storyPlan,
   onGenerateStory,
@@ -588,6 +594,8 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                     rawDurationSeconds={typeof duration === "number" ? duration : null}
                     onSeek={onSeek}
                     onOpenTimeline={onOpenTimeline}
+                    onPreviewEdl={onPreviewEdl}
+                    isPreviewing={isPreviewingRetention}
                     onApplyPlan={(accepted: DirectorPlanItem[]) => {
                       if (!onApplyDirectorPlan) {
                         showToast(

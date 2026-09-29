@@ -33,6 +33,8 @@ declare module "bun:test" {
     toHaveLength(expected: number): void;
     toMatch(expected: RegExp | string): void;
     toBeCloseTo(expected: number, precision?: number): void;
+    toMatchObject(expected: unknown): void;
+    toHaveProperty(path: string | string[], value?: unknown): void;
     toThrow(expected?: unknown): void;
     toBeInstanceOf(expected: unknown): void;
     not: Matchers;
