@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 import {
   Play,
   Square,
@@ -12,6 +13,7 @@ import {
   Film,
   Wand2,
   Clapperboard,
+  Target,
   Loader2,
   CheckCircle2,
 } from "lucide-react";
@@ -56,6 +58,8 @@ interface RetentionShortPanelProps {
    * Bez neho sa render nedá spustiť — a panel to rovno povie.
    */
   getSourceBlob?: () => Promise<Blob | null>;
+  /** Titulky s word-level časovaním — strihy sa prichytia na hranice slov. */
+  speechSegments?: SpeechSegmentLike[];
 }
 
 const LEVEL_STYLE = {
@@ -73,6 +77,7 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
   isPreviewing = false,
   onSeek,
   getSourceBlob,
+  speechSegments,
 }) => {
   const isSk = language === "sk";
   const [targetId, setTargetId] = useState("REELS");
@@ -98,6 +103,9 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
       durationSec,
       platform: target,
       mode,
+      // Ak máme word-level časovanie z tituliek, strihy sa prichytia na hranice
+      // slov — reč sa nepretne v polovici. Keď nie je, strih funguje ako doteraz.
+      speechSegments,
     });
     setEdl(built);
   };
@@ -368,7 +376,58 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
             </div>
           )}
 
-          {/* RENDER: priebeh a výsledok */}
+                    {/* PRESNOSŤ ČASOVANIA — poctivo, na čom strih stojí */}
+          {edl && (
+            <div
+              className={`p-3 rounded-xl border text-[11px] flex items-start gap-2 ${
+                edl.timingPrecision === "words"
+                  ? "bg-emerald-500/5 border-emerald-500/25 text-emerald-200"
+                  : "bg-neutral-800/40 border-neutral-700 text-neutral-300"
+              }`}
+            >
+              <Target className="h-4 w-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">
+                  {edl.timingPrecision === "words"
+                    ? isSk
+                      ? "Časy sú presné na slová (z automatických tituliek)"
+                      : "Word-accurate timing (from captions)"
+                    : edl.timingPrecision === "sentences"
+                      ? isSk
+                        ? "Časy viet sú z tituliek, ale bez časovania slov"
+                        : "Sentence timing from captions"
+                      : isSk
+                        ? "Časy sú odhad z dĺžky textu"
+                        : "Times are estimated from text length"}
+                </p>
+                <p className="opacity-80 mt-0.5">
+                  {edl.timingPrecision === "words"
+                    ? isSk
+                      ? "Strihy sa prichytávajú na hranice slov a do páuz — divák strih nepočuje."
+                      : "Cuts snap to word boundaries and pauses."
+                    : isSk
+                      ? "Pre presné strihy spusti v záložke Titulky „Automatické titulky“ — časovanie slov sa potom použije aj tu."
+                      : "Generate auto captions to get word-accurate cuts."}
+                </p>
+                {edl.wordSnap.snappedCount > 0 && (
+                  <div className="mt-2 pt-2 border-t border-current/20 space-y-1">
+                    <p className="font-bold">
+                      {isSk
+                        ? `Posuny kvôli hraniciam slov: ${edl.wordSnap.snappedCount} (najviac ${edl.wordSnap.maxShiftSec.toFixed(2)} s)`
+                        : `${edl.wordSnap.snappedCount} word-boundary shifts (max ${edl.wordSnap.maxShiftSec.toFixed(2)}s)`}
+                    </p>
+                    {edl.wordSnap.reports.slice(0, 6).map((r, i) => (
+                      <p key={i} className="opacity-80 leading-relaxed">
+                        • {r}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+{/* RENDER: priebeh a výsledok */}
           {render.isRunning && (
             <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/30">
               <div className="flex items-center gap-2">

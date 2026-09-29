@@ -288,3 +288,103 @@ describe("retention engine — slovenčina v textoch", () => {
     expect(text).not.toContain("2 úsekov");
   });
 });
+
+describe("RETENTION — prichytenie strihov na hranice slov (krok A)", () => {
+  /** Reč tak, ako ju vracia /api/transcribe-speech: krátke titulky s časmi slov. */
+  const reč = [
+    { start: 0.2, end: 4.0, text: "Dnes si ukážeme, ako som naplnil kaviareň.", words: [
+      { word: "Dnes", start: 0.2, end: 0.6 }, { word: "si", start: 0.62, end: 0.78 },
+      { word: "ukážeme", start: 0.8, end: 1.5 }, { word: "ako", start: 2.4, end: 2.7 },
+      { word: "som", start: 2.72, end: 2.95 }, { word: "naplnil", start: 3.0, end: 3.6 },
+      { word: "kaviareň", start: 3.62, end: 4.0 },
+    ]},
+    { start: 6.5, end: 12.0, text: "Prvý deň som dal inzerát a prišli ľudia.", words: [
+      { word: "Prvý", start: 6.5, end: 6.9 }, { word: "deň", start: 6.92, end: 7.15 },
+      { word: "som", start: 7.2, end: 7.4 }, { word: "dal", start: 7.42, end: 7.65 },
+      { word: "inzerát", start: 7.7, end: 8.3 }, { word: "a", start: 8.35, end: 8.45 },
+      { word: "prišli", start: 8.5, end: 9.1 }, { word: "ľudia", start: 9.12, end: 9.6 },
+    ]},
+  ];
+
+  const platform = { id: "REELS", labelSk: "Instagram Reels", minSeconds: 7, maxSeconds: 120 };
+
+  test("strih, ktorý pretínal slovo, sa posunie na hranicu a je to priznané", () => {
+    // CUT 4.2 – 6.3 by pretal „a“ (8.35... nie) — tu len over, že sa posunie do pauzy
+    const edl = buildRetentionEdl({
+      plan: [{ type: "CUT", start: 4.2, end: 6.3, basis: "transcript" }],
+      durationSec: 15,
+      platform,
+      speechSegments: reč,
+    });
+
+    expect(edl.timingPrecision).toBe("words");
+    const cut = edl.removedRanges[0];
+    // pôvodne 4.2 – 6.3; hranice slov/pauzy sú v 4.0 a 6.5 → strih ide do pauzy
+    expect(cut.start).toBeCloseTo(4.0, 1);
+    expect(cut.end).toBeCloseTo(6.5, 1);
+    expect(edl.wordSnap.snappedCount).toBeGreaterThan(0);
+    expect(edl.wordSnap.reports.length).toBeGreaterThan(0);
+    expect(edl.wordSnap.maxShiftSec).toBeGreaterThan(0);
+    // a posun sa nesmie skryť — je v hláseniach aj s číslom
+    expect(edl.warnings.some((w) => w.text.includes("hranice slov"))).toBe(true);
+  });
+
+  test("posun je vždy malý (nikdy neprekvapí o sekundy)", () => {
+    const edl = buildRetentionEdl({
+      plan: [{ type: "CUT", start: 3.05, end: 7.6, basis: "transcript" }],
+      durationSec: 15,
+      platform,
+      speechSegments: reč,
+    });
+    expect(edl.wordSnap.maxShiftSec).toBeLessThanOrEqual(0.6);
+  });
+
+  test("bez word-level časovania je strih presne tam, kde ho plán dal (a je to priznané)", () => {
+    const edl = buildRetentionEdl({
+      plan: [{ type: "CUT", start: 4.2, end: 6.3, basis: "transcript" }],
+      durationSec: 15,
+      platform,
+    });
+    expect(edl.removedRanges[0].start).toBeCloseTo(4.2, 2);
+    expect(edl.removedRanges[0].end).toBeCloseTo(6.3, 2);
+    expect(edl.wordSnap.snappedCount).toBe(0);
+    expect(edl.wordSnap.reports).toEqual([]);
+    expect(edl.timingPrecision).toBe("sentences");
+  });
+
+  test("strih už na hraniciach sa nehlási (žiadne zbytočné riadky)", () => {
+    const edl = buildRetentionEdl({
+      plan: [{ type: "CUT", start: 4.0, end: 6.5, basis: "transcript" }],
+      durationSec: 15,
+      platform,
+      speechSegments: reč,
+    });
+    expect(edl.wordSnap.snappedCount).toBe(0);
+    expect(edl.warnings.some((w) => w.text.includes("hranice slov"))).toBe(false);
+  });
+
+  test("determinizmus platí aj s prichytením na slová", () => {
+    const input = {
+      plan: [{ type: "CUT" as const, start: 4.2, end: 6.3, basis: "transcript" as const }],
+      durationSec: 15,
+      platform,
+      speechSegments: reč,
+      now: new Date("2026-09-29T10:00:00Z"),
+    };
+    const a = buildRetentionEdl(input);
+    const b = buildRetentionEdl(input);
+    expect(JSON.stringify(a.segments)).toBe(JSON.stringify(b.segments));
+    expect(JSON.stringify(a.wordSnap)).toBe(JSON.stringify(b.wordSnap));
+  });
+
+  test("príliš málo slov (pod 3) sa nepovažuje za presné časovanie", () => {
+    const edl = buildRetentionEdl({
+      plan: [{ type: "CUT", start: 4.2, end: 6.3, basis: "transcript" }],
+      durationSec: 15,
+      platform,
+      speechSegments: [{ start: 4, end: 5, text: "ahoj", words: [{ word: "ahoj", start: 4, end: 5 }] }],
+    });
+    expect(edl.timingPrecision).toBe("sentences");
+    expect(edl.wordSnap.snappedCount).toBe(0);
+  });
+});

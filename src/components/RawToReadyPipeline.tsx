@@ -63,6 +63,8 @@ interface RawToReadyPipelineProps {
   isPreviewingRetention?: boolean;
   /** Zdrojové video pre render strihu (Blob alebo null, ak nie je prístupné). */
   getSourceBlob?: () => Promise<Blob | null>;
+  /** Titulky s word-level časovaním (z automatického prepisu) — presné strihy. */
+  speechSegments?: { start: number; end: number; text: string; words?: { word: string; start: number; end: number; highlight?: boolean }[] }[];
   isAnalyzingRaw: boolean;
 
   storyPlan: any;
@@ -171,6 +173,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
   onPreviewEdl,
   isPreviewingRetention,
   getSourceBlob,
+  speechSegments,
   isAnalyzingRaw,
   storyPlan,
   onGenerateStory,
@@ -600,6 +603,7 @@ export const RawToReadyPipeline: React.FC<RawToReadyPipelineProps> = ({
                     onPreviewEdl={onPreviewEdl}
                     isPreviewing={isPreviewingRetention}
                     getSourceBlob={getSourceBlob}
+                    speechSegments={speechSegments}
                     onApplyPlan={(accepted: DirectorPlanItem[]) => {
                       if (!onApplyDirectorPlan) {
                         showToast(
