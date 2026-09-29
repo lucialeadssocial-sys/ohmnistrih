@@ -84,7 +84,23 @@ Ešte chýba:
 
 ## 6. Popritom sa učím
 
-- **Learning mode**: „Prečo?“ pri každom zásahu → technika + kedy ju použiť.
+**Stav: Learning mode + Edit DNA v1 hotové.**
+
+- **Learning mode**: „Prečo?“ pri každom zásahu → technika + kedy ju použiť. ✅
+- **Edit DNA** (0 tokenov, lokálne v prehliadači) ✅
+  - pamätá si, ktoré zásahy prijímaš a ktoré zamietaš, osobitne pre každý typ zásahu
+    aj pre každý režim strihu (iný strih na Reels, iný v podcaste),
+  - nabudúce upraví **istotu** zásahov podľa tvojich rozhodnutí (max ±0,15) a **vždy
+    napíše prečo** — nikdy neúčinkuje potichu,
+  - **nemení štruktúru plánu**: neodstraňuje, nepridáva ani neprehadzuje zásahy,
+  - pri menej než 5 rozhodnutiach o danom type **nerobí nič** a povie to — žiadne
+    hádanie z dvoch klikov,
+  - učí sa len v momente, keď klikneš „Použiť vybrané“ (nie z rozklikávania),
+  - dá sa vypnúť prepínačom a úplne vymazať („Vymazať naučené“),
+  - záložka **🧠 Môj štýl** ukazuje prehľad: prijaté/zamietnuté a podiel prijatia.
+  - Testy: `bun test tests/` (31 testov celkom, z toho 19 pre Edit DNA).
+
+Ešte chýba:
 - **Edit Academy**: po každom projekte krátke zhrnutie, čo si aplikoval a prečo.
 - **Skill Score**: čo už vieš sám, kde ti AI stále pomáha — bez hodnotenia, len mapa.
 - AI má učiť techniku, nie vytvárať závislosť. Cieľ: po čase vieš AI návrh obhájiť

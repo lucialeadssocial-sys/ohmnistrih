@@ -24,6 +24,18 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { TrendRadar } from "./TrendRadar";
+import {
+  loadEditDna,
+  saveEditDna,
+  resetEditDna,
+  recordDecisions,
+  applyDnaBias,
+  dnaTypeRows,
+  dnaSummarySk,
+  totalDecisions,
+  MIN_SAMPLES,
+  type EditDnaProfile,
+} from "../core/learning/editDna";
 
 /**
  * DirectorPlanPanel — „RAW → READY" jadro OmniStrihu (Fáza F1)
@@ -49,11 +61,16 @@ export interface DirectorPlanItem {
   status: "proposed";
   /** Odkiaľ zásah pochádza: z konkrétnej vety prepisu, z odhadu, alebo od AI. */
   basis?: "transcript" | "estimate" | "ai";
+  /** Vysvetlenie od Edit DNA, prečo sa zmenila istota (nikdy nie potichu). */
+  dnaNote?: string;
+  dnaDelta?: number;
 }
 
 interface DirectorPlanResponse {
   success: boolean;
   source: "gemini" | "local-fallback";
+  /** Režim strihu, ktorý server naozaj použil (môže sa líšiť od požiadaného). */
+  mode?: string;
   modeLabel?: string;
   model?: string;
   plan: DirectorPlanItem[];
@@ -146,10 +163,23 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [openWhyId, setOpenWhyId] = useState<string | null>(null);
   const [applyReport, setApplyReport] = useState<DirectorApplyReport | null>(null);
-  const [view, setView] = useState<"plan" | "trendy">("plan");
+  const [view, setView] = useState<"plan" | "trendy" | "styl">("plan");
+  const [dnaProfile, setDnaProfile] = useState<EditDnaProfile>(() => loadEditDna());
+  const [respectDna, setRespectDna] = useState(true);
   const [learningMode, setLearningMode] = useState(true);
 
-  const plan = result?.plan ?? [];
+  const rawPlan = result?.plan ?? [];
+
+  // Edit DNA: upraví len istotu zásahov a pripíše dôvod. Poradie ani počet sa nemení.
+  const dna = useMemo(
+    () =>
+      applyDnaBias(rawPlan, dnaProfile, {
+        mode: result?.mode || mode,
+        enabled: respectDna,
+      }),
+    [rawPlan, dnaProfile, respectDna, mode, result?.mode],
+  );
+  const plan = dna.plan;
 
   const stats = useMemo(() => {
     const byType: Record<string, number> = {};
@@ -221,8 +251,23 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
 
   const applyPlan = () => {
     const accepted = plan.filter((p) => acceptedIds.includes(p.id));
+    const rejected = plan.filter((p) => rejectedIds.includes(p.id));
     const report = onApplyPlan?.(accepted);
     if (report) setApplyReport(report);
+
+    // Edit DNA: učíme sa len z potvrdeného rozhodnutia, nie z rozklikávania.
+    if (accepted.length > 0 || rejected.length > 0) {
+      const advanced = recordDecisions(
+        dnaProfile,
+        result?.mode || mode,
+        [
+          ...accepted.map((i) => ({ type: i.type as string, decision: "accept" as const })),
+          ...rejected.map((i) => ({ type: i.type as string, decision: "reject" as const })),
+        ],
+      );
+      setDnaProfile(advanced);
+      saveEditDna(advanced);
+    }
   };
 
   const exportPlan = () => {
@@ -302,6 +347,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
         {([
           { id: "plan" as const, labelSk: "🎬 Plán strihu" },
           { id: "trendy" as const, labelSk: "🔥 Trend Radar" },
+          { id: "styl" as const, labelSk: "🧠 Môj štýl" },
         ]).map((t) => (
           <button
             key={t.id}
@@ -325,6 +371,111 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
           durationSec={typeof rawDurationSeconds === "number" ? rawDurationSeconds : durationMin * 60}
           onSeek={onSeek}
         />
+      )}
+
+      {view === "styl" && (
+        <div className="space-y-3">
+          <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800">
+            <p className="text-[11px] font-black text-white uppercase tracking-wider">
+              {isSk ? "🧠 Edit DNA — učím sa z tvojich rozhodnutí" : "🧠 Edit DNA"}
+            </p>
+            <p className="text-[11px] text-neutral-400 mt-2 leading-relaxed">
+              {isSk
+                ? "Zapamätám si, ktoré zásahy prijímaš a ktoré zamietaš, a nabudúce podľa toho zoradím istotu. Je to štatistika tvojich klikov — nie „AI, ktorá ťa chápe“. Nikdy neodstraňujem ani nepridávam zásahy, len označím, čo ti zvyčajne sedí."
+                : "I remember which edits you accept and which you reject — plain statistics of your clicks."}
+            </p>
+            <p className="text-[10px] text-neutral-500 mt-2">
+              {isSk
+                ? `Ukladá sa len v tomto prehliadači (localStorage). Nikam sa neposiela, stojí 0 tokenov. Učím sa v momente, keď klikneš „Použiť vybrané“.`
+                : "Stored locally only; zero tokens."}
+            </p>
+          </div>
+
+          <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800">
+            <p className="text-[11px] text-neutral-300">{dnaSummarySk(dnaProfile)}</p>
+            <label className="flex items-center gap-2 text-[11px] text-neutral-400 cursor-pointer mt-3">
+              <input
+                type="checkbox"
+                checked={respectDna}
+                onChange={(e) => setRespectDna(e.target.checked)}
+                className="accent-rose-500"
+              />
+              {isSk ? "Rešpektovať môj štýl v pláne (upraviť istotu podľa mňa)" : "Respect my style in the plan"}
+            </label>
+          </div>
+
+          {dna.insights.length > 0 && (
+            <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/20 space-y-1.5">
+              {dna.insights.map((line, i) => (
+                <p key={i} className="text-[11px] text-violet-200 leading-relaxed">
+                  • {line}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {dnaTypeRows(dnaProfile).length > 0 ? (
+            <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-2">
+              <p className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
+                {isSk ? "Tvoje rozhodnutia podľa typu zásahu" : "Your decisions by edit type"}
+              </p>
+              {dnaTypeRows(dnaProfile).map((row) => {
+                const total = row.accepted + row.rejected;
+                const pct = row.rate === null ? 0 : Math.round(row.rate * 100);
+                return (
+                  <div key={row.type} className="space-y-1">
+                    <div className="flex items-center justify-between gap-3 text-[11px]">
+                      <span className="text-neutral-300">{row.labelSk}</span>
+                      <span className="font-mono text-neutral-500">
+                        ✓ {row.accepted} · ✕ {row.rejected}
+                        {row.reliable && <span className="text-emerald-400"> · {pct} %</span>}
+                        {!row.reliable && <span className="text-neutral-600"> · málo dát</span>}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded bg-neutral-800 overflow-hidden">
+                      <div
+                        className={`h-full ${row.reliable ? "bg-emerald-500/70" : "bg-neutral-600"}`}
+                        style={{ width: `${total === 0 ? 0 : Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="text-[10px] text-neutral-600 pt-1">
+                {isSk
+                  ? `Spoľahlivo hodnotím až od ${MIN_SAMPLES} rozhodnutí pri jednom type — dovtedy sa zásahy nemenia.`
+                  : `Reliable from ${MIN_SAMPLES} decisions per type.`}
+              </p>
+            </div>
+          ) : (
+            <div className="p-6 rounded-xl border border-dashed border-neutral-800 text-center">
+              <p className="text-[11px] text-neutral-500 max-w-md mx-auto">
+                {isSk
+                  ? "Zatiaľ tu nie je čo ukázať. Spusti plán, označ zásahy a klikni „Použiť vybrané“ — potom sa tu objaví prehľad tvojich rozhodnutí."
+                  : "No data yet — apply a plan first."}
+              </p>
+            </div>
+          )}
+
+          {totalDecisions(dnaProfile.totals) > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && !window.confirm(
+                  isSk
+                    ? "Vymazať všetko naučené? Nástroj sa vráti na nulu a bude ťa musieť spoznať odznova."
+                    : "Erase everything learned?",
+                )) {
+                  return;
+                }
+                setDnaProfile(resetEditDna());
+              }}
+              className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-rose-600 text-neutral-300 hover:text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+            >
+              {isSk ? "Vymazať naučené" : "Erase learning"}
+            </button>
+          )}
+        </div>
       )}
 
       {view === "plan" && (
@@ -478,6 +629,17 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
             animate={{ opacity: 1, y: 0 }}
             className="space-y-3"
           >
+            {dna.adjustedCount > 0 && (
+              <div className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/30 text-[11px] text-violet-200 flex items-start gap-2">
+                <GraduationCap className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  {isSk
+                    ? `🧠 Edit DNA upravila istotu pri ${dna.adjustedCount} zásahoch podľa tvojich predchádzajúcich rozhodnutí. Späť na neutrál: vypni „Rešpektovať môj štýl“ v záložke 🧠 Môj štýl.`
+                    : `Edit DNA adjusted confidence on ${dna.adjustedCount} edits based on your past decisions.`}
+                </span>
+              </div>
+            )}
+
             {result.summary && (
               <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800 text-[11px] text-neutral-300">
                 {result.summary}
@@ -644,6 +806,18 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                         </button>
                         <p className="text-xs text-white font-semibold mt-0.5">{item.label}</p>
                         <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">{item.reason}</p>
+
+                        {item.dnaNote && (
+                          <p className="text-[10px] text-violet-300/80 mt-1.5 leading-relaxed">
+                            🧠 {item.dnaNote}
+                            {typeof item.dnaDelta === "number" && item.dnaDelta !== 0 && (
+                              <span className="font-mono ml-1">
+                                ({item.dnaDelta > 0 ? "+" : ""}
+                                {Math.round(item.dnaDelta * 100)} %)
+                              </span>
+                            )}
+                          </p>
+                        )}
 
                         {whyOpen && learningMode && item.lesson && (
                           <div className="mt-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/30 text-[11px] text-violet-200 flex items-start gap-2">
