@@ -2,6 +2,19 @@ import React, { useMemo, useState } from 'react';
 import { Film, Play, Download, CheckSquare, Square, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { ShortsEngineResult, ShortsProposal } from '../core/ai/shortsEngine';
 
+export interface ShortsCaptionState {
+  transcriptSegments: number;
+  captionClips: number;
+  burnCaptions: boolean;
+  isApplying: boolean;
+  onToggleBurn?: (value: boolean) => void;
+  onApply?: () => void;
+  /** Per-window result of the last export run: how many captions each Short really carried. */
+  lastWindows?: { window: string; captions: number; coverage: number; unsafe?: number }[];
+  /** Measured placement of every caption in the vertical export frame (project-wide, live). */
+  safeZone?: { measured: number; unsafe: number; frameWidth: number; frameHeight: number };
+}
+
 interface ShortsEnginePanelProps {
   result: ShortsEngineResult;
   isExporting: boolean;
@@ -10,15 +23,10 @@ interface ShortsEnginePanelProps {
   onExport: (proposals: ShortsProposal[]) => void;
   onSeek: (start: number, end: number) => void;
   language: 'sk' | 'en';
+  /** Captions burned into the export (clips on the canonical caption track, from the transcript). */
+  captions?: ShortsCaptionState;
 }
 
-/**
- * Long-form → Shorts.
- *
- * Every row is a real proposal from the Shorts engine (measured hooks + the real end of the
- * material); the export renders exactly that window through the same render backends as the normal
- * export. When there is nothing measured, the panel says so instead of showing suggestions.
- */
 /**
  * Long-form → Shorts.
  *
@@ -38,6 +46,7 @@ export const ShortsEnginePanel: React.FC<ShortsEnginePanelProps> = ({
   onExport,
   onSeek,
   language,
+  captions,
 }) => {
   const isSk = language === 'sk';
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -221,6 +230,101 @@ export const ShortsEnginePanel: React.FC<ShortsEnginePanelProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {captions && (
+        <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800 space-y-2" id="omnistrih-shorts-captions">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+              captions.captionClips > 0
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+            }`}>
+              {captions.captionClips > 0 ? (isSk ? 'TITULKY: PRIPRAVENÉ' : 'CAPTIONS: READY') : (isSk ? 'TITULKY: BEZ PREPISU' : 'CAPTIONS: NO TRANSCRIPT')}
+            </span>
+            <span className="text-[11px] text-neutral-400">
+              {captions.captionClips > 0
+                ? (isSk
+                    ? `${captions.captionClips} titulkov na časovej osi · prepis ${captions.transcriptSegments} segmentov`
+                    : `${captions.captionClips} caption clips on the timeline · transcript ${captions.transcriptSegments} segments`)
+                : (isSk
+                    ? `Prepis reči: ${captions.transcriptSegments} segmentov · titulky sa nevypália, kým nevygenerujete prepis`
+                    : `Transcript: ${captions.transcriptSegments} segments · captions are not burned until a transcript exists`)}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {captions.onApply && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  captions.onApply?.();
+                }}
+                disabled={captions.isApplying || captions.transcriptSegments === 0}
+                className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-bold disabled:opacity-40"
+                id="omnistrih-shorts-captions-apply"
+              >
+                {captions.isApplying
+                  ? (isSk ? 'Vypaľujem titulky…' : 'Burning captions…')
+                  : (isSk ? 'Vypáliť titulky z prepisu' : 'Burn captions from the transcript')}
+              </button>
+            )}
+            {captions.onToggleBurn && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  captions.onToggleBurn?.(!captions.burnCaptions);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                  captions.burnCaptions
+                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
+                }`}
+                id="omnistrih-shorts-captions-toggle"
+              >
+                {isSk ? 'Titulky v exporte' : 'Captions in the export'}: {captions.burnCaptions ? (isSk ? 'ZAP' : 'ON') : (isSk ? 'VYP' : 'OFF')}
+              </button>
+            )}
+          </div>
+
+          {captions.safeZone && captions.safeZone.measured > 0 && (
+            <div
+              className={`text-[10px] ${captions.safeZone.unsafe > 0 ? 'text-amber-300' : 'text-neutral-400'}`}
+              id="omnistrih-shorts-captions-safezone"
+            >
+              {isSk
+                ? `Bezpečná zóna v ${captions.safeZone.frameWidth}×${captions.safeZone.frameHeight} exporte: ${captions.safeZone.measured - captions.safeZone.unsafe} z ${captions.safeZone.measured} titulkov v zóne${captions.safeZone.unsafe > 0 ? `, ${captions.safeZone.unsafe} mimo (spodná UI lišta platforiem)` : ''}.`
+                : `Safe area in the ${captions.safeZone.frameWidth}×${captions.safeZone.frameHeight} export: ${captions.safeZone.measured - captions.safeZone.unsafe} of ${captions.safeZone.measured} captions inside${captions.safeZone.unsafe > 0 ? `, ${captions.safeZone.unsafe} outside (platform bottom UI)` : ''}.`}
+            </div>
+          )}
+
+          {captions.lastWindows && captions.lastWindows.length > 0 && (
+            <div className="text-[10px] text-neutral-400 space-y-0.5" id="omnistrih-shorts-captions-windows">
+              {captions.lastWindows.map(item => (
+                <div key={item.window} className={item.unsafe ? 'text-amber-300' : undefined}>
+                  {isSk
+                    ? `Okno ${item.window}: ${item.captions} titulkov · pokrytie ${Math.round(item.coverage * 100)} % okna`
+                    : `Window ${item.window}: ${item.captions} captions · ${Math.round(item.coverage * 100)} % of the window covered`}
+                  {item.unsafe
+                    ? isSk
+                      ? ` · ${item.unsafe} mimo bezpečnej zóny v 9:16 exporte`
+                      : ` · ${item.unsafe} outside the safe area in the 9:16 export`
+                    : ''}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="text-[10px] text-neutral-500">
+            {captions.captionClips > 0
+              ? (isSk
+                  ? 'Titulky sú na titulkovej stope projektu (dajú sa vrátiť cez Undo). Do exportu sa vypália — kontrola kvality zároveň meria, či nezasahujú do spodnej UI zóny platforiem.'
+                  : 'The captions live on the project caption track (undoable). They are burned into the export — the quality check also measures whether they reach into the bottom UI zone of the platforms.')
+              : (isSk
+                  ? 'Bez reálneho prepisu sa titulky nevymýšľajú. Vygenerujte titulky v štúdiu (alebo prepis reči) a potom ich vypáľte.'
+                  : 'Without a real transcript captions are not invented. Generate captions in the studio (or the transcript) and then burn them in.')}
+          </p>
         </div>
       )}
 

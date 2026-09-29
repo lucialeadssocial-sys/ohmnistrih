@@ -28,6 +28,7 @@ import {
   SetAudioFadeCommand,
   SetAudioKeyframeCommand,
   UpdateTranscriptCommand,
+  ReplaceGeneratedCaptionsCommand,
   GenerateCaptionsCommand,
   SetTransformCommand,
   SetColorCorrectionCommand,
@@ -46,6 +47,7 @@ import {
 import { mediaEngine } from './media/mediaEngine';
 import { idbManager } from './storage/idb';
 import { renderEngine } from './render/renderEngine';
+import { MIN_CAPTION_FONT_RATIO, toCaptionStyleConfig } from './captions/captionPlan';
 import { exportEngine } from './export/exportEngine';
 import { keyboardManager } from './input/keyboardManager';
 
@@ -71,6 +73,25 @@ import { REVIEW_KIND_MAP, ReviewQueueItem, LearnedRule, buildReviewQueue, buildL
 import { DirectorMode, DirectorQuality, ReadinessSummary, buildReadinessSummary, DIRECTOR_MODES } from './ai/directorModes';
 import { QualityCheckReport, runQualityCheck } from './ai/qualityCheck';
 import type { EditingPreference } from './types/project';
+
+export interface CaptionApplyReport {
+  applied: boolean;
+  /** Why nothing was applied (no transcript, no caption track, rejected command). */
+  reason?: 'NO_TRANSCRIPT' | 'NO_CAPTION_TRACK' | 'COMMAND_REJECTED';
+  transcriptSegments: number;
+  captionClips: number;
+  captionTrackId?: string;
+  noteSk: string;
+  noteEn: string;
+}
+
+export interface CaptionStatus {
+  transcriptSegments: number;
+  /** Caption clips on the canonical caption track (burned into every render). */
+  captionClips: number;
+  captionTrackId?: string;
+  language?: string;
+}
 
 // Default initial project factory with canonical tracks
 export function createInitialProject(title: string = 'Môj Nový Projekt'): ProjectModel {
@@ -1003,6 +1024,132 @@ export class CoreEngine {
    */
   public runQualityCheck(): QualityCheckReport {
     return runQualityCheck(this.getProject());
+  }
+
+  /** Stores a real transcript on the canonical project (undoable). Empty segments are refused. */
+  public saveTranscript(transcript: TranscriptModel): boolean {
+    if (!transcript || !Array.isArray(transcript.segments) || transcript.segments.length === 0) return false;
+    const success = this.commandManager.executeCommand(
+      new UpdateTranscriptCommand('Uložený prepis reči', transcript)
+    );
+    if (success) this.saveCurrentProject();
+    return success;
+  }
+
+  public getCaptionStatus(): CaptionStatus {
+    const project = this.getProject();
+    const captionTrack = project.tracks.find(track => track.type === 'caption');
+    return {
+      transcriptSegments: project.transcript?.segments?.length ?? 0,
+      captionClips: captionTrack?.clips.filter(clip => clip.type === 'caption').length ?? 0,
+      captionTrackId: captionTrack?.id,
+      language: project.transcript?.language,
+    };
+  }
+
+  /**
+   * Materialises the transcript into caption clips on the canonical caption track — the clips the
+   * renderer burns into every export. Idempotent: previously generated captions are replaced, not
+   * appended (and hand-placed text clips stay). Nothing is written without a real transcript.
+   */
+  public applyCaptionsFromTranscript(
+    options: {
+      segments?: { id?: string; start: number; end: number; text: string }[];
+      style?: Partial<CaptionStyleConfig>;
+      language?: string;
+      /** Export canvas the project is cropped to — the placement stays safe in it as well. */
+      styleOutput?: { width: number; height: number };
+    } = {}
+  ): CaptionApplyReport {
+    const project = this.getProject();
+    const captionTrack = project.tracks.find(track => track.type === 'caption');
+    if (!captionTrack) {
+      return {
+        applied: false,
+        reason: 'NO_CAPTION_TRACK',
+        transcriptSegments: 0,
+        captionClips: 0,
+        noteSk: 'Projekt nemá titulkovú stopu — titulky sa nedajú vypáliť.',
+        noteEn: 'The project has no caption track — captions cannot be burned in.',
+      };
+    }
+
+    const provided = options.segments?.filter(segment => segment.text && segment.text.trim().length > 0 && segment.end > segment.start);
+    const transcript: TranscriptModel | null = provided && provided.length > 0
+      ? {
+          id: project.transcript?.id ?? `transcript_${project.id}`,
+          language: options.language ?? project.transcript?.language,
+          segments: provided.map((segment, index) => ({
+            id: segment.id ?? `seg_${index + 1}`,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text.trim(),
+          })),
+        }
+      : project.transcript && project.transcript.segments.length > 0
+        ? project.transcript
+        : null;
+
+    if (!transcript) {
+      return {
+        applied: false,
+        reason: 'NO_TRANSCRIPT',
+        transcriptSegments: 0,
+        captionClips: captionTrack.clips.filter(clip => clip.type === 'caption').length,
+        captionTrackId: captionTrack.id,
+        noteSk: 'Projekt nemá prepis reči — titulky sa nevymýšľajú. Vygenerujte prepis (alebo titulky) a skúste znova.',
+        noteEn: 'The project has no transcript — captions are not invented. Generate the transcript (or captions) first.',
+      };
+    }
+
+    // Keep the canonical transcript in step with what is being burned in.
+    if (provided && provided.length > 0 && !project.transcript) {
+      this.commandManager.executeCommand(new UpdateTranscriptCommand('Uložený prepis reči', transcript));
+    }
+
+    // The studio works in preview units, the renderer in output pixels: scale the style to the
+    // canonical canvas and apply the legibility floor (the same rule the quality check uses).
+    const canvas = { width: project.settings?.width || 1080, height: project.settings?.height || 1920 };
+    // Without a studio style the burn-in must not inherit the 24 px preview default (unreadable on a
+    // 1920 px export) — it starts at the legibility floor instead.
+    const requestedStyle: Partial<CaptionStyleConfig> = { ...(options.style ?? {}) };
+    if (requestedStyle.fontSize === undefined) {
+      requestedStyle.fontSize = canvas.height * MIN_CAPTION_FONT_RATIO;
+    }
+    const canonicalStyle = toCaptionStyleConfig(requestedStyle, canvas.height);
+    const success = this.commandManager.executeCommand(
+      new ReplaceGeneratedCaptionsCommand(
+        `Titulky z prepisu (${transcript.segments.length} segmentov)`,
+        transcript,
+        captionTrack.id,
+        canonicalStyle,
+        canvas,
+        options.styleOutput
+      )
+    );
+
+    if (!success) {
+      return {
+        applied: false,
+        reason: 'COMMAND_REJECTED',
+        transcriptSegments: transcript.segments.length,
+        captionClips: 0,
+        captionTrackId: captionTrack.id,
+        noteSk: 'Príkaz na vytvorenie titulkov bol zamietnutý — projekt zostal nezmenený.',
+        noteEn: 'The command to create captions was rejected — the project was left unchanged.',
+      };
+    }
+
+    this.saveCurrentProject();
+    const status = this.getCaptionStatus();
+    return {
+      applied: true,
+      transcriptSegments: transcript.segments.length,
+      captionClips: status.captionClips,
+      captionTrackId: captionTrack.id,
+      noteSk: `Vypálených ${status.captionClips} titulkov z ${transcript.segments.length} segmentov prepisu.`,
+      noteEn: `Burned ${status.captionClips} captions from ${transcript.segments.length} transcript segments.`,
+    };
   }
 
   public compareUserAndAiEdits(plan?: DirectorPlan): EditComparison[] {

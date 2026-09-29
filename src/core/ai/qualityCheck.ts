@@ -1,4 +1,12 @@
 import { ProjectModel } from '../types/project';
+import {
+  evaluateCaptionPlacement,
+  placementInOutput,
+  projectToOutputMapping,
+  MIN_CAPTION_FONT_RATIO,
+  VERTICAL_SAFE_ZONE,
+  LANDSCAPE_SAFE_ZONE,
+} from '../captions/captionPlan';
 
 /**
  * Quality Check pred finálom.
@@ -13,7 +21,7 @@ import { ProjectModel } from '../types/project';
  */
 
 export type QcSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
-export type QcCategory = 'TIMELINE' | 'MEDIA' | 'CAPTION' | 'AUDIO' | 'PACING' | 'TRANSITION' | 'SUBJECT';
+export type QcCategory = 'TIMELINE' | 'MEDIA' | 'CAPTION' | 'AUDIO' | 'PACING' | 'TRANSITION' | 'SUBJECT' | 'SAFE_ZONE';
 
 export interface QcFinding {
   id: string;
@@ -53,6 +61,11 @@ export interface QualityCheckReport {
     longestShotSeconds: number;
     canvasWidth: number;
     canvasHeight: number;
+    /** Frame the size/placement findings were measured in (the export frame when one was given). */
+    measuredCanvasWidth: number;
+    measuredCanvasHeight: number;
+    /** True when the caller asked for an export frame (findings describe the exported file). */
+    measuredInExport: boolean;
     fps: number;
   };
   ranAt: number;
@@ -62,7 +75,9 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 /** A cut shorter than this is a jitter cut no professional timeline should contain. */
 const MICRO_CUT_SECONDS = 0.4;
 /** Caption legibility floor: 3 % of the canvas height. */
-const MIN_CAPTION_HEIGHT_RATIO = 0.03;
+// Shared with the caption burn-in (src/core/captions/captionPlan.ts) so the app never warns about
+// captions it wrote itself.
+const MIN_CAPTION_HEIGHT_RATIO = MIN_CAPTION_FONT_RATIO;
 /** Longest caption a viewer can read in one go on a 9:16 canvas. */
 const MAX_CAPTION_SECONDS = 6;
 /** Two adjacent audio clips further apart than this jump audibly at the cut. */
@@ -71,7 +86,14 @@ const MAX_LEVEL_JUMP_PERCENT = 25;
 const LONG_SHOT_SECONDS = 20;
 const TIMELINE_EPSILON = 0.05;
 
-export function runQualityCheck(project: ProjectModel): QualityCheckReport {
+export function runQualityCheck(
+  project: ProjectModel,
+  options: {
+    /** Export frame the project will be cropped to (a 9:16 Short). Safe-zone findings are then
+     *  measured in the exported file, not in the project composition. */
+    output?: { width: number; height: number };
+  } = {}
+): QualityCheckReport {
   const findings: QcFinding[] = [];
   const videoTracks = project.tracks.filter(t => t.type === 'video');
   const audioTracks = project.tracks.filter(t => t.type === 'audio');
@@ -83,6 +105,11 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
   const canvasWidth = project.settings?.width || 1080;
   const canvasHeight = project.settings?.height || 1920;
   const fps = project.settings?.fps || 30;
+  // An export may use a different frame (9:16 Short): findings about the picture the viewer gets are
+  // then measured in that frame — the project composition is only the master.
+  const outputMapping = options.output
+    ? projectToOutputMapping({ width: canvasWidth, height: canvasHeight }, options.output)
+    : null;
 
   const videoClips = videoTracks
     .flatMap(t => t.clips.map(clip => ({ clip, trackId: t.id })))
@@ -207,6 +234,10 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
 
   // ---------------------------------------------------------------- CAPTIONS
   const minCaptionFontSize = canvasHeight * MIN_CAPTION_HEIGHT_RATIO;
+  // A caption is read in the file the viewer gets: when an export frame is given, the legibility of
+  // the caption is measured there (the same caption is bigger in a vertical export).
+  const sizeFrameHeight = outputMapping ? outputMapping.outputHeight : canvasHeight;
+  const minCaptionFontSizeInFrame = sizeFrameHeight * MIN_CAPTION_HEIGHT_RATIO;
   const sortedCaptions = captionClips.slice().sort((a, b) => clipStart(a) - clipStart(b));
   for (const clip of captionClips) {
     const text = clip.textConfig;
@@ -225,15 +256,19 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
       continue;
     }
 
-    if (text.fontSize < minCaptionFontSize) {
+    const fontSizeInFrame = outputMapping ? text.fontSize * outputMapping.scale : text.fontSize;
+    if (fontSizeInFrame < minCaptionFontSizeInFrame) {
+      const frameSize = outputMapping ? `${outputMapping.outputWidth}×${outputMapping.outputHeight}` : `${canvasWidth}×${canvasHeight}`;
+      const sizeFrameLabel = outputMapping ? `v exporte ${frameSize}` : `na plátne ${frameSize}`;
+      const sizeFrameLabelEn = outputMapping ? `in the ${frameSize} export` : `on the ${frameSize} canvas`;
       findings.push({
         id: `qc_caption_size_${clip.id}`,
         category: 'CAPTION',
         severity: 'WARNING',
         titleSk: 'Titulok je malý',
         titleEn: 'Caption is too small',
-        detailSk: `Titulok má ${round2(text.fontSize)} px na plátne ${canvasWidth}×${canvasHeight} (${round2((text.fontSize / canvasHeight) * 100)} %) — minimum pre čitateľnosť je ${Math.round(minCaptionFontSize)} px.`,
-        detailEn: `The caption is ${round2(text.fontSize)} px on a ${canvasWidth}×${canvasHeight} canvas (${round2((text.fontSize / canvasHeight) * 100)} %) — legibility needs at least ${Math.round(minCaptionFontSize)} px.`,
+        detailSk: `Titulok má ${round2(fontSizeInFrame)} px ${sizeFrameLabel} (${round2((fontSizeInFrame / sizeFrameHeight) * 100)} %) — minimum pre čitateľnosť je ${Math.round(minCaptionFontSizeInFrame)} px.`,
+        detailEn: `The caption is ${round2(fontSizeInFrame)} px ${sizeFrameLabelEn} (${round2((fontSizeInFrame / sizeFrameHeight) * 100)} %) — legibility needs at least ${Math.round(minCaptionFontSizeInFrame)} px.`,
         time: clipStart(clip),
         clipId: clip.id,
       });
@@ -285,6 +320,58 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
         detailEn: `Captions overlap by ${round2(clipEnd(current) - clipStart(next))}s around ${round2(clipStart(next))}s — the viewer tries to read both.`,
         time: clipStart(next),
         clipId: next.id,
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------- SAFE ZONE (platform UI)
+  // The renderer places captions at height/2 + positionY; the platform UI overlays of vertical
+  // apps sit in the lower part of the frame. The boundaries below are documented conventions of
+  // those apps, not a measurement of a specific app version — the finding says so.
+  const safeZoneClips = captionClips.filter(clip => Boolean(clip.textConfig?.content?.trim()));
+  // When an export frame is requested, the placement that matters is the one in the exported file.
+  const measuredIn = outputMapping ? `${outputMapping.outputWidth}×${outputMapping.outputHeight}` : `${canvasWidth}×${canvasHeight}`;
+  for (const clip of safeZoneClips) {
+    const projectPlacement = evaluateCaptionPlacement(clip, canvasWidth, canvasHeight);
+    if (!projectPlacement) continue;
+    const placement = outputMapping ? placementInOutput(projectPlacement, outputMapping) : projectPlacement;
+    if (placement.violations.length === 0) continue;
+
+    const zoneIsVertical = placement.verticalCanvas;
+    const coveredBy = zoneIsVertical
+      ? `UI prvky platforiem (popis, tlačidlá, lišta) zaberajú spodných ${Math.round((1 - VERTICAL_SAFE_ZONE.bottom) * 100)} % výšky`
+      : `bezpečná zóna pre 16:9 je konvencia (spodných ${Math.round((1 - LANDSCAPE_SAFE_ZONE.bottom) * 100)} % je mimo odporúčania)`;
+    const coveredByEn = zoneIsVertical
+      ? `platform UI (caption, buttons, bar) covers the bottom ${Math.round((1 - VERTICAL_SAFE_ZONE.bottom) * 100)} % of the height`
+      : `the 16:9 safe area is a convention (the bottom ${Math.round((1 - LANDSCAPE_SAFE_ZONE.bottom) * 100)} % is outside the recommendation)`;
+    const frameLabelSk = outputMapping ? `v exporte ${measuredIn}` : `na plátne ${measuredIn}`;
+    const frameLabelEn = outputMapping ? `in the ${measuredIn} export` : `on the ${measuredIn} canvas`;
+    const measuredFrameHeight = outputMapping ? outputMapping.outputHeight : canvasHeight;
+
+    if (placement.violations.includes('BELOW_UI_ZONE')) {
+      findings.push({
+        id: `qc_caption_ui_zone_${clip.id}`,
+        category: 'SAFE_ZONE',
+        severity: 'WARNING',
+        titleSk: 'Titulok zasahuje do spodnej UI zóny',
+        titleEn: 'Caption reaches into the bottom UI zone',
+        detailSk: `Titulok „${placement.text.slice(0, 30)}" má spodnú hranu na ${placement.boxBottom} px (hranica ${placement.safeBottom} px z ${measuredFrameHeight} px) ${frameLabelSk} — ${coveredBy}.`,
+        detailEn: `Caption "${placement.text.slice(0, 30)}" has its bottom edge at ${placement.boxBottom} px (limit ${placement.safeBottom} px of ${measuredFrameHeight} px) ${frameLabelEn} — ${coveredByEn}.`,
+        time: clipStart(clip),
+        clipId: clip.id,
+      });
+    }
+    if (placement.violations.includes('ABOVE_SAFE_TOP')) {
+      findings.push({
+        id: `qc_caption_top_zone_${clip.id}`,
+        category: 'SAFE_ZONE',
+        severity: 'INFO',
+        titleSk: 'Titulok je pri hornom okraji',
+        titleEn: 'Caption sits at the top edge',
+        detailSk: `Horná hrana titulku je na ${placement.boxTop} px (odporúčané minimum ${placement.safeTop} px) ${frameLabelSk} — pri platformách s hornou lištou sa text môže prekryť.`,
+        detailEn: `The caption top edge is at ${placement.boxTop} px (recommended minimum ${placement.safeTop} px) ${frameLabelEn} — apps with a top bar may cover it.`,
+        time: clipStart(clip),
+        clipId: clip.id,
       });
     }
   }
@@ -555,6 +642,9 @@ export function runQualityCheck(project: ProjectModel): QualityCheckReport {
       longestShotSeconds: round2(longestShot),
       canvasWidth,
       canvasHeight,
+      measuredCanvasWidth: outputMapping ? outputMapping.outputWidth : canvasWidth,
+      measuredCanvasHeight: outputMapping ? outputMapping.outputHeight : canvasHeight,
+      measuredInExport: Boolean(outputMapping),
       fps,
     },
     ranAt: Date.now(),

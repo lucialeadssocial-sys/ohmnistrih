@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import React, { useMemo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { AdaptiveDeviceExperienceProvider, useAdaptiveDeviceExperience } from "./contexts/AdaptiveDeviceExperienceContext";
 import { Header } from "./components/Header";
 import { VideoPlayer } from "./components/VideoPlayer";
@@ -18,8 +18,11 @@ import { PipelineExecutor } from "./utils/pipelineExecutor";
 import { ToolSuspenseFallback } from "./components/ToolSuspenseFallback";
 import { RenderEngineManager } from "./utils/renderEngineManager";
 import { ShortsEnginePanel } from "./components/ShortsEnginePanel";
+import type { ShortsCaptionState } from "./components/ShortsEnginePanel";
 import { ShortsEngineResult, ShortsProposal, buildShortsProposals } from "./core/ai/shortsEngine";
 import { QualityCheckReport, runQualityCheck } from "./core/ai/qualityCheck";
+import { captionClipsInWindow, captionPlacementsInOutput } from "./core/captions/captionPlan";
+import { EXPORT_PRESETS } from "./utils/renderEngineManager";
 import { detectFacesInVideo, faceDetectionAvailable } from "./core/vision/subjectTrack";
 import type { DirectorDecisionItem } from "./core/ai/analysisTypes";
 import { RenderBackendSelector } from "./render/RenderBackendSelector";
@@ -1168,6 +1171,23 @@ function MainApp() {
     setShortsFailures([]);
     let produced = 0;
     const failures: string[] = [];
+    const captionSummary: { window: string; captions: number; coverage: number; unsafe?: number }[] = [];
+
+    // Captions first: the renderer burns the caption clips of the canonical project, so the clips
+    // have to exist before the first frame. Without a real transcript nothing is burned — and the
+    // export says so instead of shipping a Short that pretends to have subtitles.
+    let captionsBurned = false;
+    if (burnCaptions) {
+      captionsBurned = await handleApplyCaptions({ silent: true });
+      if (!captionsBurned) {
+        const status = coreEngine.getCaptionStatus();
+        failures.push(
+          isSk
+            ? `Titulky sa nevypálili: projekt nemá prepis reči (${status.transcriptSegments} segmentov) — Short vyjde bez titulkov.`
+            : `Captions were not burned: the project has no transcript (${status.transcriptSegments} segments) — the Short exports without subtitles.`
+        );
+      }
+    }
 
     for (let i = 0; i < proposals.length; i++) {
       const proposal = proposals[i];
@@ -1190,6 +1210,37 @@ function MainApp() {
         );
         const backend = await RenderBackendSelector.selectBackend(plan);
         await backend.prepare(plan, () => {});
+        // What really ends up on screen in this window (measured from the canonical caption track).
+        if (burnCaptions && captionsBurned) {
+          const windowCaptions = captionClipsInWindow(coreEngine.getProject(), proposal.start, proposal.end);
+          captionSummary.push({
+            window: `${proposal.start}s\u2013${proposal.end}s`,
+            captions: windowCaptions.items.length,
+            coverage: windowCaptions.coverage,
+          });
+          if (windowCaptions.items.length === 0) {
+            failures.push(
+              isSk
+                ? `${proposal.start}s\u2013${proposal.end}s: v tomto okne nie je žiadny titulok — Short vyjde bez titulkov.`
+                : `${proposal.start}s\u2013${proposal.end}s: no caption falls inside this window — the Short exports without subtitles.`
+            );
+          } else {
+            // The exported frame is the vertical preset — measure the captions in THAT frame.
+            const unsafe = captionPlacementsInOutput(
+              coreEngine.getProject(),
+              { width: plan.outputWidth, height: plan.outputHeight },
+              windowCaptions.items.map(item => item.id)
+            ).filter(placement => placement.violations.length > 0);
+            captionSummary[captionSummary.length - 1].unsafe = unsafe.length;
+            for (const placement of unsafe) {
+              failures.push(
+                isSk
+                  ? `${proposal.start}s\u2013${proposal.end}s: titulok „${placement.text.slice(0, 30)}" je v exporte ${placement.outputWidth}\u00d7${placement.outputHeight} mimo bezpečnej zóny (spodná hrana ${placement.boxBottom} px, hranica ${placement.safeBottom} px).`
+                  : `${proposal.start}s\u2013${proposal.end}s: caption "${placement.text.slice(0, 30)}" leaves the safe area in the ${placement.outputWidth}\u00d7${placement.outputHeight} export (bottom edge ${placement.boxBottom} px, limit ${placement.safeBottom} px).`
+              );
+            }
+          }
+        }
         // Honest report of what the render actually had to draw (never assumed).
         const linkReport = typeof (backend as any).getMediaLinkReport === "function" ? (backend as any).getMediaLinkReport() : null;
         if (linkReport && linkReport.failed.length > 0) {
@@ -1224,6 +1275,8 @@ function MainApp() {
     }
 
     setShortsFailures(failures);
+    setCaptionStatus(coreEngine.getCaptionStatus());
+    setShortsCaptionWindows(captionSummary);
     setIsExportingShorts(false);
     showToast(
       isSk
@@ -2869,6 +2922,18 @@ function MainApp() {
           segments: data.segments,
           language: language,
         });
+        // The canonical project gets the same real transcript, so captions, the Director and the
+        // QC all work on the material the editor actually sees.
+        coreEngine.saveTranscript({
+          id: `transcript_${coreEngine.getProject().id}`,
+          language,
+          segments: data.segments.map((segment: any, index: number) => ({
+            id: segment.id ?? `seg_${index + 1}`,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text,
+          })),
+        });
 
         setIsTranscribing(false);
         setActiveTab("captions");
@@ -3015,12 +3080,33 @@ function MainApp() {
   const [isExportingShorts, setIsExportingShorts] = useState(false);
   const [shortsProgress, setShortsProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [shortsFailures, setShortsFailures] = useState<string[]>([]);
+  // Captions burned into the export — clips on the canonical caption track, from the real transcript.
+  const [captionStatus, setCaptionStatus] = useState(() => coreEngine.getCaptionStatus());
+  const [burnCaptions, setBurnCaptions] = useState(true);
+  const [isApplyingCaptions, setIsApplyingCaptions] = useState(false);
+  // Real per-window caption measurements from the last Shorts export run.
+  const [shortsCaptionWindows, setShortsCaptionWindows] = useState<{ window: string; captions: number; coverage: number; unsafe?: number }[]>([]);
+  // Live measurement of every caption in the vertical export frame (nothing measured, nothing shown).
+  const captionSafeZone = useMemo(() => {
+    if (captionStatus.captionClips === 0) return undefined;
+    const placements = captionPlacementsInOutput(coreEngine.getProject(), {
+      width: EXPORT_PRESETS.SOCIAL_VERTICAL.width,
+      height: EXPORT_PRESETS.SOCIAL_VERTICAL.height,
+    });
+    return {
+      measured: placements.length,
+      unsafe: placements.filter(placement => placement.violations.length > 0).length,
+      frameWidth: EXPORT_PRESETS.SOCIAL_VERTICAL.width,
+      frameHeight: EXPORT_PRESETS.SOCIAL_VERTICAL.height,
+    };
+  }, [captionStatus.captionClips, captionProject]);
 
   useEffect(() => {
     const syncMeasured = () => {
       setVirality(buildViralityAnalysis(coreEngine.getProject()));
       setSmartClips(buildSmartClips(coreEngine.getProject()) as unknown as SmartClipHighlight[]);
       setShortsResult(buildShortsProposals(coreEngine.getProject()));
+      setCaptionStatus(coreEngine.getCaptionStatus());
       setQcReport(prev => (prev ? runQualityCheck(coreEngine.getProject()) : prev));
     };
     syncMeasured();
@@ -3034,6 +3120,54 @@ function MainApp() {
   };
 
   /** Quality Check before final — runs the measured checks over the canonical project. */
+  /**
+   * Materialises the editor's captions (from the real transcript) as caption clips on the canonical
+   * caption track — those are what the renderer burns into the exported Short. Nothing is invented:
+   * without real segments the run says so and the project stays exactly as it was.
+   */
+  const handleApplyCaptions = useCallback(async (options: { silent?: boolean } = {}): Promise<boolean> => {
+    setIsApplyingCaptions(true);
+    try {
+      const globalStyle = captionProject.globalStyle;
+      const report = coreEngine.applyCaptionsFromTranscript({
+        segments: captionProject.segments.map(segment => ({
+          id: segment.id,
+          start: segment.start,
+          end: segment.end,
+          text: segment.text,
+        })),
+        language: captionProject.language === "mixed" ? undefined : captionProject.language,
+        // The Shorts preset is 9:16: the placement is chosen so it stays inside the safe area of the
+        // master composition AND of the exported vertical file (measured, not assumed).
+        styleOutput: {
+          width: EXPORT_PRESETS.SOCIAL_VERTICAL.width,
+          height: EXPORT_PRESETS.SOCIAL_VERTICAL.height,
+        },
+        style: {
+          font: globalStyle.fontFamily,
+          fontSize: globalStyle.fontSize,
+          color: globalStyle.color,
+          backgroundColor: globalStyle.backgroundOpacity > 0 ? globalStyle.backgroundColor : undefined,
+          alignment: "center",
+          position: globalStyle.position === "top" ? "top" : globalStyle.position === "center" ? "middle" : "bottom",
+          maxCharsPerLine: 42,
+          maxLines: globalStyle.maxLines,
+          uppercase: globalStyle.case === "uppercase",
+          preset: "social",
+        },
+      });
+
+      setCaptionStatus(coreEngine.getCaptionStatus());
+
+      if (!options.silent) {
+        showToast(isSk ? (report.applied ? `✅ ${report.noteSk}` : `⚠️ ${report.noteSk}`) : (report.applied ? `✅ ${report.noteEn}` : `⚠️ ${report.noteEn}`));
+      }
+      return report.applied;
+    } finally {
+      setIsApplyingCaptions(false);
+    }
+  }, [captionProject, isSk, showToast]);
+
   const handleRunQualityCheck = useCallback(() => {
     const next = runQualityCheck(coreEngine.getProject());
     setQcReport(next);
@@ -4717,6 +4851,16 @@ function MainApp() {
                           onExport={handleExportShorts}
                           onSeek={(start) => handleSeek(start)}
                           language={language}
+                          captions={{
+                            transcriptSegments: captionStatus.transcriptSegments,
+                            captionClips: captionStatus.captionClips,
+                            burnCaptions,
+                            isApplying: isApplyingCaptions,
+                            onToggleBurn: setBurnCaptions,
+                            onApply: () => { void handleApplyCaptions(); },
+                            lastWindows: shortsCaptionWindows,
+                            safeZone: captionSafeZone,
+                          }}
                         />
                       </div>
                     )}

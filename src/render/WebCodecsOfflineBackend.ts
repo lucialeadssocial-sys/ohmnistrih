@@ -374,6 +374,9 @@ export class WebCodecsOfflineBackend implements RenderBackend {
       renderEngine.renderFrame(project, timelineTime, canvas, {
         reframe: plan.reframe ?? 'FIT',
         trackSubject: plan.trackSubject !== false,
+        // The export frame may differ from the project composition (9:16 Short): the compositor
+        // maps the project into it instead of silently resizing it to the project settings.
+        output: { width: plan.outputWidth, height: plan.outputHeight },
       });
 
       if (this.videoEncoder) {

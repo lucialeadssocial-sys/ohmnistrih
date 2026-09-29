@@ -4,6 +4,7 @@
  */
 
 import { ProjectModel, ClipModel, TrackModel, Keyframe, TranscriptModel, CaptionStyleConfig, createCanonicalClip } from '../types/project';
+import { captionPositionYFor } from '../captions/captionPlan';
 
 export interface SnappingPoint {
   time: number;
@@ -883,7 +884,11 @@ export class TimelineEngine {
   public static generateCaptionsFromTranscript(
     transcript: TranscriptModel,
     trackId: string,
-    styleConfig?: Partial<CaptionStyleConfig>
+    styleConfig?: Partial<CaptionStyleConfig>,
+    /** Output canvas — when given, the requested position becomes a real, safe Y offset. */
+    canvas?: { width: number; height: number },
+    /** Export canvas the project is cropped to; the placement is kept safe in both frames. */
+    outputCanvas?: { width: number; height: number }
   ): ClipModel[] {
     const captionClips: ClipModel[] = [];
     const defaultConfig: CaptionStyleConfig = {
@@ -901,6 +906,20 @@ export class TimelineEngine {
 
     for (const seg of transcript.segments) {
       const duration = Math.max(0.5, seg.end - seg.start);
+      // The renderer draws text centred at height/2 + positionY. Without a canvas we leave the
+      // offset untouched (previous behaviour); with one, the requested position is placed inside
+      // the safe area of the output frame instead of being silently dropped.
+      const positionY = canvas && Number.isFinite(canvas.height) && canvas.height > 0
+        ? captionPositionYFor(
+            defaultConfig.position,
+            canvas.height,
+            defaultConfig.fontSize,
+            Boolean(defaultConfig.backgroundColor),
+            canvas.width,
+            outputCanvas
+          )
+        : undefined;
+
       const captionClip = createCanonicalClip({
         id: `caption_${crypto.randomUUID()}`,
         trackId,
@@ -910,6 +929,7 @@ export class TimelineEngine {
         sourceStart: 0,
         sourceEnd: duration,
         duration,
+        ...(positionY !== undefined ? { positionY } : {}),
         textConfig: {
           content: seg.text,
           fontFamily: defaultConfig.font,

@@ -1,4 +1,5 @@
 import { RenderPlan } from "../types/renderEngine";
+import { projectToOutputMapping, mapXToOutput, mapYToOutput, OutputMapping } from "../core/captions/captionPlan";
 import { RenderArtifact, RenderProgressInfo } from "./renderCapabilities";
 import { RenderBackend } from "./RenderBackend";
 import { RenderEngineManager } from "../utils/renderEngineManager";
@@ -40,14 +41,23 @@ export class RealtimeCanvasBackend implements RenderBackend {
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, w, h);
 
+        // Same geometry as the offline compositor: the project frame is mapped into the export
+        // canvas with COVER, so a vertical export is filled instead of letterboxed and the caption
+        // placement stays the measured one.
+        const projectSettings = coreEngine.getProject().settings;
+        const mapping = projectToOutputMapping(
+          { width: projectSettings.width, height: projectSettings.height },
+          { width: w, height: h }
+        );
+
         const vw = video.videoWidth || w;
         const vh = video.videoHeight || h;
-        const scale = Math.min(w / vw, h / vh);
+        const scale = Math.max(w / vw, h / vh);
         const dw = vw * scale;
         const dh = vh * scale;
         ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
 
-        this.drawActiveTextClips(ctx, video.currentTime, w, h);
+        this.drawActiveTextClips(ctx, video.currentTime, mapping);
       } catch (err) {
         // A draw failure must not abort a recording that is otherwise producing frames.
         console.warn("[RealtimeBackend] frame draw skipped:", err);
@@ -59,8 +69,13 @@ export class RealtimeCanvasBackend implements RenderBackend {
     this.drawRaf = requestAnimationFrame(draw);
   }
 
-  /** Composites active caption/text clips from the canonical project onto the canvas. */
-  private drawActiveTextClips(ctx: CanvasRenderingContext2D, time: number, w: number, h: number): void {
+  /**
+   * Composites active caption/text clips from the canonical project onto the canvas.
+   *
+   * Clip geometry lives in project pixels; the mapping is the same one the compositor uses, so the
+   * fallback draws captions where the offline render puts them.
+   */
+  private drawActiveTextClips(ctx: CanvasRenderingContext2D, time: number, mapping: OutputMapping): void {
     const project = coreEngine.getProject();
     // Text/caption clips can live on caption tracks or on video tracks — take them by clip type.
     const clips = project.tracks
@@ -75,9 +90,10 @@ export class RealtimeCanvasBackend implements RenderBackend {
       const cfg = clip.textConfig;
       if (!cfg?.content) continue;
 
-      const fontSize = cfg.fontSize || Math.round(h * 0.06);
-      const x = w / 2 + (clip.positionX || 0);
-      const y = h / 2 + (clip.positionY || 0);
+      const h = mapping.outputHeight;
+      const fontSize = (cfg.fontSize || Math.round(h * 0.06)) * mapping.scale;
+      const x = mapXToOutput(mapping, (coreEngine.getProject().settings.width / 2) + (clip.positionX || 0));
+      const y = mapYToOutput(mapping, (coreEngine.getProject().settings.height / 2) + (clip.positionY || 0));
 
       ctx.save();
       ctx.font = `${cfg.fontWeight || "bold"} ${fontSize}px ${cfg.fontFamily || "Inter, sans-serif"}`;

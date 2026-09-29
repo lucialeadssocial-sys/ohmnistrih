@@ -1571,6 +1571,71 @@ export class GenerateCaptionsCommand implements Command {
 }
 
 /**
+ * Command: Replace generated captions
+ *
+ * The older GenerateCaptionsCommand APPENDS to the caption track, so generating twice duplicated
+ * every caption. This one replaces exactly the generated caption clips based on the given
+ * transcript and leaves text clips the editor placed by hand untouched. Undo restores the previous
+ * clips of the track.
+ */
+export class ReplaceGeneratedCaptionsCommand implements Command {
+  public id = crypto.randomUUID();
+  public timestamp = Date.now();
+  private prevTrackClips: ClipModel[] = [];
+  private captionTrackId: string = '';
+  private keptManualIds: string[] = [];
+
+  constructor(
+    public description: string,
+    private transcript: TranscriptModel,
+    private targetCaptionTrackId: string,
+    private styleConfig?: Partial<CaptionStyleConfig>,
+    /** Output canvas; keeps the requested caption position inside the safe area. */
+    private canvas?: { width: number; height: number },
+    /** Export canvas the project is cropped to (a vertical Short). */
+    private outputCanvas?: { width: number; height: number }
+  ) {}
+
+  execute(project: ProjectModel): ProjectModel {
+    const track = project.tracks.find(t => t.id === this.targetCaptionTrackId);
+    if (!track) return project;
+
+    this.prevTrackClips = [...track.clips];
+    this.captionTrackId = track.id;
+
+    const generated = TimelineEngine.generateCaptionsFromTranscript(
+      this.transcript,
+      this.targetCaptionTrackId,
+      this.styleConfig,
+      this.canvas,
+      this.outputCanvas
+    );
+    // Caption clips that came from a transcript are replaced; hand-placed text clips stay.
+    const kept = track.clips.filter(clip => clip.type !== 'caption');
+    this.keptManualIds = kept.map(clip => clip.id);
+
+    const updatedTracks = project.tracks.map(t =>
+      t.id === this.captionTrackId ? { ...t, clips: [...kept, ...generated] } : t
+    );
+
+    return { ...project, tracks: updatedTracks };
+  }
+
+  undo(project: ProjectModel): ProjectModel {
+    if (!this.captionTrackId) return project;
+    const updatedTracks = project.tracks.map(t =>
+      t.id === this.captionTrackId ? { ...t, clips: [...this.prevTrackClips] } : t
+    );
+    return { ...project, tracks: updatedTracks };
+  }
+
+  /** Ids of the clips that were left in place (manual text clips). */
+  get preservedClipIds(): string[] {
+    return [...this.keptManualIds];
+  }
+}
+
+/**
  * Command: Set Transform (Position, Scale, Rotation, Opacity, Anchor)
  */
 export class SetTransformCommand implements Command {

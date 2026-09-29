@@ -119,7 +119,11 @@ section('§3 the render path really applies it');
   check('the manager decides by preset', manager.includes("reframe: presetId.startsWith('SOCIAL_') ? 'COVER' : 'FIT',"));
 
   const realtime = read('src/render/RealtimeCanvasBackend.ts');
-  check('the realtime fallback does not claim reframe support', !realtime.includes('COVER') && !realtime.includes('computeReframeTransform'));
+  // The fallback composes into the export frame (needed for a vertical Short) but still does no
+  // subject tracking of its own — the crop never follows a face there.
+  check('the fallback composes through the shared canvas mapping', realtime.includes('projectToOutputMapping('));
+  check('the realtime fallback does not claim subject-aware reframe', !realtime.includes('computeReframeTransform') && !realtime.includes('subjectAt(') && !realtime.includes('subjectTrack'));
+  check('the fallback fills the frame uniformly instead of letterboxing', realtime.includes('const scale = Math.max(w / vw, h / vh);'));
 
   const panel = read('src/components/ShortsEnginePanel.tsx');
   check('the Shorts panel states that the frame is filled', panel.includes('9:16 rám sa vyplní (cover)'));
@@ -210,7 +214,8 @@ section('§4 measured subject moves the crop — and nothing else does');
   const renderEngine = read('src/core/render/renderEngine.ts');
   check('the renderer only tracks clips the user has not framed by hand', renderEngine.includes('positionX === 0 && positionY === 0'));
   check('the renderer honours the switch before using the measured track', renderEngine.includes('this.activeTrackSubject && subjectSamples.length > 0'));
-  check('renderFrame accepts the switch', renderEngine.includes('options?: { reframe?: ReframeMode; trackSubject?: boolean }'));
+  check('renderFrame accepts the switch', renderEngine.includes('reframe?: ReframeMode') && renderEngine.includes('trackSubject?: boolean'));
+  check('renderFrame also accepts the export frame', renderEngine.includes('output?: { width: number; height: number }'));
   const backend = read('src/render/WebCodecsOfflineBackend.ts');
   check('the offline export passes the switch from the plan', backend.includes("trackSubject: plan.trackSubject !== false"));
   const app = read('src/App.tsx');

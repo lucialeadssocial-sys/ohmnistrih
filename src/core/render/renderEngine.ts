@@ -8,6 +8,7 @@ import { computeReframeTransform, ReframeMode } from './reframe';
 import { SubjectSample, subjectAt, subjectInMedia } from '../vision/subjectTrack';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { computeClipTransitionState } from './transitionMath';
+import { projectToOutputMapping } from '../captions/captionPlan';
 
 export class RenderEngine {
   private static instance: RenderEngine | null = null;
@@ -44,7 +45,12 @@ export class RenderEngine {
     project: ProjectModel,
     currentTime: number,
     canvas: HTMLCanvasElement,
-    options?: { reframe?: ReframeMode; trackSubject?: boolean }
+    options?: {
+      reframe?: ReframeMode;
+      trackSubject?: boolean;
+      /** Export frame. The project composition is mapped into it with COVER (used by 9:16 exports). */
+      output?: { width: number; height: number };
+    }
   ): void {
     // COVER fills the output frame (used by the social/vertical exports); FIT keeps the legacy
     // native-size drawing. Nothing here tracks a face — see core/render/reframe.ts.
@@ -56,15 +62,31 @@ export class RenderEngine {
 
     const { width, height, backgroundColor } = project.settings;
 
+    // The export may ask for a different frame (9:16 Short) than the project composition. In that
+    // case the canvas is the export size and the whole project frame is mapped into it with COVER —
+    // the same mapping the caption placement maths uses, so a measured placement is the real one.
+    const output = options?.output && options.output.width > 0 && options.output.height > 0
+      ? { width: options.output.width, height: options.output.height }
+      : null;
+    const mapping = output ? projectToOutputMapping({ width, height }, output) : null;
+    const targetWidth = output ? output.width : width;
+    const targetHeight = output ? output.height : height;
+
     // Synchronize canvas buffer resolution
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
     }
 
     // 1. Draw Background
     ctx.fillStyle = backgroundColor || '#000000';
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+    if (mapping) {
+      ctx.save();
+      ctx.translate(mapping.offsetX, mapping.offsetY);
+      ctx.scale(mapping.scale, mapping.scale);
+    }
 
     // 2. Get active clips at time `t` ordered by track z-index
     const activeLayers = TimelineEngine.getActiveClipsAtTime(project, currentTime);
@@ -153,6 +175,11 @@ export class RenderEngine {
         this.renderTextClip(ctx, clip, width, height);
       }
 
+      ctx.restore();
+    }
+
+    // Leave the canvas in the export frame (the composition transform was only for drawing).
+    if (mapping) {
       ctx.restore();
     }
   }
