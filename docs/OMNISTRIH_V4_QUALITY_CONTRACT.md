@@ -82,6 +82,31 @@ Ešte chýba:
 - Pozor na čestnosť: žiadne „garantované zhliadnutia“. Trendy sa menia, nástroj
   musí vedieť povedať „toto je princíp“ vs. „toto je dnešný trend“.
 
+### 5.1 Živé signály z platforiem (F5) — hotové
+
+Knižnica (vyššie) je **naučené princípy**. Vedľa toho appka od 29. 9. 2026 ťahá
+**reálne dáta z platforiem** (Trend Radar → záložka „📡 Živé signály"):
+
+- **Google Trends** (bez kľúča): čo ľudia práve hľadajú v SK/CZ/US — aj s približným
+  záujmom a správou, ktorá to spustila.
+- **YouTube kanálové RSS** (bez kľúča): čerstvé príspevky kanálov, ktoré si pridáš.
+  Počet zhliadnutí feed neposiela — appka to **prizná**, nevymýšľa.
+- **YouTube rebríček** (voliteľný bezplatný kľúč): oficiálny rebríček s počtami
+  zhliadnutí — jediný zdroj, ktorý hovorí „čo naozaj funguje".
+
+Mantinely, ktoré platia (a sú otestované):
+
+1. **Nič sa nespúšťa samo** — otvorenie appky ani panelu neposiela na platformy ani
+   jeden dotaz. Signály sa stiahnu len po kliknutí; cache má TTL 30 min.
+2. **Každé zlyhanie má dôvod** — aj „nemám kľúč" je vysvetlené s návodom, nie ticho.
+3. **Žiadne sľuby** — signál je surovina, nie záruka zhliadnutí. Zhrnutie to hovorí samo.
+4. **Signály do plánu idú len cez výber človeka** a panel ukazuje **presne ten text**,
+   ktorý ide AI (aby nič nešlo potichu).
+5. **TikTok a Instagram Reels nie sú napojené** — nemajú bezplatné verejné API na
+   trendy a neobchádzam to čítaním stránok. Dôvod je napísaný priamo v appke.
+
+Dokumentácia: `docs/LIVE_TRENDS.md`.
+
 ## 6. Popritom sa učím
 
 **Stav: Learning mode + Edit DNA v1 hotové.**

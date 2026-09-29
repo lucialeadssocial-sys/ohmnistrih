@@ -4,6 +4,22 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import {
+  buildBundle,
+  DEFAULT_GEOS,
+  GEO_OPTIONS,
+  geoLabelSk,
+  LIVE_SOURCES,
+  LIVE_SIGNALS_DISCLAIMER_SK,
+  parseGoogleTrendsRss,
+  parseYouTubeChart,
+  parseYouTubeFeed,
+  PLATFORM_LIMITS_SK,
+  YOUTUBE_API_COST,
+  type LiveSignalsBundle,
+  type SourceFetchResult,
+  type TrendSignal,
+} from "./src/core/trends/liveTrends";
 
 dotenv.config();
 
@@ -1275,6 +1291,7 @@ app.post("/api/director/plan", async (req, res) => {
       duration = 30,
       transcript = "",
       notes = "",
+      trendContext = "", // trendové signály vybrané používateľkou v Trend Radare
       qualityMode = "PORTFOLIO", // PORTFOLIO = menej, ale kvalitnejších zásahov
       useZeroTokenMode = false,
     } = req.body || {};
@@ -1353,6 +1370,11 @@ app.post("/api/director/plan", async (req, res) => {
             ? "\nPrepisy nie sú k dispozícii — navrhni plán na základe bežnej štruktúry takéhoto videa."
             : "\nNo transcript available — base the plan on the typical structure of such a video.",
         notes ? `\nPOZNÁMKY POUŽÍVATEĽA:\n"""${clampText(notes, 1500)}"""` : "",
+        // Reálne dáta z platforiem vybrané človekom. Sú to fakty s dátumom a
+        // zdrojom — preto ich AI nesmie vydávať za svoj odhad ani si ich domýšľať.
+        trendContext
+          ? `\n${clampText(trendContext, 2000)}\nAk sa vybrané signály k obsahu nehodia, v 'summary' to povedz a navrhni plán bez nich.`
+          : "",
         "",
         sk
           ? "Vráť VÝHRADNE JSON (bez markdownu, bez komentárov) v tomto tvare:"
@@ -2874,6 +2896,441 @@ process.on("uncaughtException", (err) => {
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[Server] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+
+// ===========================================================================
+// ŽIVÉ SIGNÁLY (F5) — reálne dáta z platforiem pre Trend Radar
+// ===========================================================================
+// Zásady, ktoré tu platia:
+//  - **Nič sa nespúšťa samo.** Načítanie signálov je vždy výslovná akcia
+//    používateľky (tlačidlo „Obnoviť"). Otvorenie appky len číta cache.
+//  - **Každé zlyhanie má dôvod** a ide do odpovede, nikdy sa nemlčí.
+//  - **Kľúč k YouTube (ak je) nikdy neopustí server** — von ide len to,
+//    či je nastavený.
+//  - Cache má TTL, aby sa zbytočne nebúchalo na zdroje.
+
+const TREND_SETTINGS_FILE = path.join(DATA_DIR, "trend-sources.json");
+const TREND_CACHE_FILE = path.join(DATA_DIR, "trends-cache.json");
+const TREND_CACHE_TTL_MIN = 30;
+const TREND_FETCH_TIMEOUT_MS = 15000;
+const TREND_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
+
+interface TrendSettings {
+  youtubeApiKey?: string;
+  channels: string[];
+  geos: string[];
+}
+
+function readTrendSettings(): TrendSettings {
+  try {
+    if (!fs.existsSync(TREND_SETTINGS_FILE)) return { channels: [], geos: DEFAULT_GEOS };
+    const raw = JSON.parse(fs.readFileSync(TREND_SETTINGS_FILE, "utf-8"));
+    return {
+      youtubeApiKey: typeof raw.youtubeApiKey === "string" && raw.youtubeApiKey.trim() ? raw.youtubeApiKey.trim() : undefined,
+      channels: Array.isArray(raw.channels) ? raw.channels.filter((c: unknown) => typeof c === "string").slice(0, 30) : [],
+      geos:
+        Array.isArray(raw.geos) && raw.geos.length
+          ? raw.geos.filter((g: unknown) => typeof g === "string").slice(0, 8)
+          : DEFAULT_GEOS,
+    };
+  } catch (err: any) {
+    console.warn("[Trends] Nepodarilo sa prečítať nastavenia:", err?.message);
+    return { channels: [], geos: DEFAULT_GEOS };
+  }
+}
+
+function writeTrendSettings(s: TrendSettings) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = `${TREND_SETTINGS_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, TREND_SETTINGS_FILE);
+}
+
+function readTrendCache(): LiveSignalsBundle | null {
+  try {
+    if (!fs.existsSync(TREND_CACHE_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(TREND_CACHE_FILE, "utf-8"));
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.results)) return null;
+    return raw as LiveSignalsBundle;
+  } catch {
+    return null;
+  }
+}
+
+function writeTrendCache(bundle: LiveSignalsBundle) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = `${TREND_CACHE_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(bundle, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, TREND_CACHE_FILE);
+  } catch (err: any) {
+    console.warn("[Trends] Cache sa nepodarilo uložiť:", err?.message);
+  }
+}
+
+function cacheAgeMinutes(bundle: LiveSignalsBundle | null): number | null {
+  if (!bundle?.fetchedAt) return null;
+  const t = Date.parse(bundle.fetchedAt);
+  if (!Number.isFinite(t)) return null;
+  return Math.round((Date.now() - t) / 60000);
+}
+
+async function fetchText(url: string): Promise<{ ok: boolean; status: number; text: string; errorSk?: string }> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": TREND_UA, Accept: "application/rss+xml, application/xml, text/xml, */*" },
+      signal: AbortSignal.timeout(TREND_FETCH_TIMEOUT_MS),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        text,
+        errorSk:
+          res.status === 403
+            ? "Zdroj nás odmietol (HTTP 403) — z tohto prostredia k nemu nie je prístup."
+            : `Zdroj odpovedal HTTP ${res.status}.`,
+      };
+    }
+    return { ok: true, status: res.status, text };
+  } catch (err: any) {
+    const timeout = err?.name === "TimeoutError" || err?.name === "AbortError";
+    return {
+      ok: false,
+      status: 0,
+      text: "",
+      errorSk: timeout
+        ? `Zdroj neodpovedal do ${Math.round(TREND_FETCH_TIMEOUT_MS / 1000)} s.`
+        : `Zdroj sa nedá spojiť (${err?.message || "neznáma chyba"}).`,
+    };
+  }
+}
+
+/** Google Trends RSS — bez kľúča, po krajinách. */
+async function fetchGoogleTrends(geo: string): Promise<SourceFetchResult> {
+  const fetchedAt = new Date().toISOString();
+  const r = await fetchText(`https://trends.google.com/trending/rss?geo=${encodeURIComponent(geo.toUpperCase())}`);
+  if (!r.ok) {
+    return {
+      source: "GOOGLE_TRENDS",
+      ok: false,
+      fetchedAt,
+      signals: [],
+      errorSk: `${geoLabelSk(geo)}: ${r.errorSk}`,
+      detailSk: `Krajina ${geoLabelSk(geo)}`,
+    };
+  }
+  const signals = parseGoogleTrendsRss(r.text, geo);
+  if (!signals.length) {
+    return {
+      source: "GOOGLE_TRENDS",
+      ok: false,
+      fetchedAt,
+      signals: [],
+      errorSk: `${geoLabelSk(geo)}: odpoveď prišla, ale bez použitelných položiek (formát sa mohol zmeniť).`,
+      detailSk: `Krajina ${geoLabelSk(geo)}`,
+    };
+  }
+  return {
+    source: "GOOGLE_TRENDS",
+    ok: true,
+    fetchedAt,
+    signals,
+    costSk: "bez kľúča, 0 nákladov",
+    detailSk: `${geoLabelSk(geo)} · ${signals.length} tém`,
+  };
+}
+
+/** YouTube kanálové RSS — bez kľúča. */
+async function fetchYouTubeFeeds(channelIds: string[]): Promise<SourceFetchResult> {
+  const fetchedAt = new Date().toISOString();
+  if (!channelIds.length) {
+    return {
+      source: "YOUTUBE_FEED",
+      ok: false,
+      fetchedAt,
+      signals: [],
+      errorSk: "Nemáš pridaný žiadny kanál.",
+      hintSk: "Pridaj kanál v nastaveniach signálov (stačí odkaz na kanál, napr. youtube.com/@meno).",
+    };
+  }
+
+  const signals: TrendSignal[] = [];
+  const failed: string[] = [];
+  for (const id of channelIds) {
+    const r = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`);
+    if (!r.ok) {
+      failed.push(id);
+      continue;
+    }
+    const feed = parseYouTubeFeed(r.text);
+    signals.push(...feed.signals);
+  }
+
+  if (!signals.length) {
+    return {
+      source: "YOUTUBE_FEED",
+      ok: false,
+      fetchedAt,
+      signals: [],
+      errorSk: `Ani jeden z ${channelIds.length} kanálov nevrátil príspevky${failed.length ? ` (${failed.length} zlyhalo)` : ""}.`,
+      hintSk: "Skontroluj, či sú ID kanálov správne (začínajú na UC).",
+    };
+  }
+
+  return {
+    source: "YOUTUBE_FEED",
+    ok: true,
+    fetchedAt,
+    signals,
+    costSk: "bez kľúča, 0 nákladov",
+    detailSk: `${channelIds.length} kanálov · ${signals.length} príspevkov${failed.length ? ` · ${failed.length} zlyhalo` : ""}`,
+    errorSk: failed.length ? `${failed.length} kanálov sa nedalo načítať — ostatné sú v zozname.` : undefined,
+  };
+}
+
+/** YouTube Data API — voliteľný kľúč, oficiálny rebríček s počtami zhliadnutí. */
+async function fetchYouTubeChart(geo: string, apiKey: string): Promise<SourceFetchResult> {
+  const fetchedAt = new Date().toISOString();
+  const url =
+    `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular` +
+    `&regionCode=${encodeURIComponent(geo.toUpperCase())}&maxResults=25&key=${encodeURIComponent(apiKey)}`;
+
+  let json: unknown = null;
+  let errorSk: string | undefined;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(TREND_FETCH_TIMEOUT_MS) });
+    json = await res.json().catch(() => null);
+    if (!res.ok) {
+      const apiMsg = (json as any)?.error?.message || `HTTP ${res.status}`;
+      const reason = (json as any)?.error?.errors?.[0]?.reason;
+      errorSk =
+        reason === "quotaExceeded"
+          ? "Denná kvóta YouTube API je vyčerpaná (10 000 jednotiek). Skús to zajtra."
+          : reason === "keyInvalid" || res.status === 400
+            ? `Kľúč YouTube API nefunguje (${apiMsg}). Skontroluj, či je v Google Cloud zapnuté „YouTube Data API v3“ a či kľúč nie je obmedzený na inú službu.`
+            : `YouTube API: ${apiMsg}`;
+    }
+  } catch (err: any) {
+    errorSk = err?.name === "TimeoutError" ? "YouTube API neodpovedalo včas." : `YouTube API: ${err?.message || "chyba spojenia"}`;
+  }
+
+  if (errorSk) {
+    return { source: "YOUTUBE_CHART", ok: false, fetchedAt, signals: [], errorSk };
+  }
+
+  const signals = parseYouTubeChart(json, geo);
+  if (!signals.length) {
+    return {
+      source: "YOUTUBE_CHART",
+      ok: false,
+      fetchedAt,
+      signals: [],
+      errorSk: `Rebríček pre ${geoLabelSk(geo)} nevrátil použiteľné videá.`,
+    };
+  }
+
+  return {
+    source: "YOUTUBE_CHART",
+    ok: true,
+    fetchedAt,
+    signals,
+    costSk: `${YOUTUBE_API_COST.chartPerCall} jednotka z ${YOUTUBE_API_COST.dailyLimit.toLocaleString("sk-SK")} na deň`,
+    detailSk: `${geoLabelSk(geo)} · ${signals.length} videí`,
+  };
+}
+
+/**
+ * Z „youtube.com/@meno" alebo z odkazu spraví kanonické ID kanála.
+ * Postup je zámerne overený: najprv priama zhoda (URL /channel/UC…), potom
+ * kanonický odkaz na stránke kanála a **spätná kontrola** cez RSS — aby sa
+ * nestalo, že pridáme iný kanál, než si človek myslí.
+ */
+async function resolveChannelId(input: string): Promise<{ id?: string; title?: string; errorSk?: string; hintSk?: string }> {
+  const raw = String(input || "").trim();
+  if (!raw) return { errorSk: "Prázdny vstup." };
+
+  const direct = raw.match(/UC[A-Za-z0-9_-]{22}/);
+  const fromChannelUrl = raw.match(/\/channel\/(UC[A-Za-z0-9_-]{22})/);
+  if (fromChannelUrl) return { id: fromChannelUrl[1] };
+  if (direct && !raw.includes("/")) return { id: direct[0] };
+
+  // Zvyšok: odkaz na kanál alebo @meno → pozrieme sa na stránku
+  const url = /^https?:\/\//i.test(raw)
+    ? raw
+    : `https://www.youtube.com/${raw.startsWith("@") ? raw : `@${raw}`}`;
+  const page = await fetchText(url);
+  if (!page.ok) {
+    return {
+      errorSk: `Kanál sa nedá načítať: ${page.errorSk}`,
+      hintSk: "Skús vložiť priamo odkaz typu youtube.com/channel/UC… (v kanáli: Zdieľať kanál).",
+    };
+  }
+  const m =
+    page.text.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})"/) ||
+    page.text.match(/<meta property="og:url" content="https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})"/) ||
+    page.text.match(/<meta itemprop="identifier" content="(UC[A-Za-z0-9_-]{22})"/);
+  const id = m?.[1];
+  if (!id) {
+    return {
+      errorSk: "Na stránke sa nepodarilo nájsť ID kanála.",
+      hintSk: "Vlož priamo odkaz youtube.com/channel/UC… (v kanáli → Zdieľať kanál → Kopírovať).",
+    };
+  }
+
+  // Spätná kontrola: overíme, že RSS pre toto ID naozaj existuje a nesie titulok.
+  const feed = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${id}`);
+  if (!feed.ok) {
+    return {
+      errorSk: "ID kanála sa našlo, ale jeho RSS sa nedá načítať.",
+      hintSk: "Skús to znova neskôr alebo použi iný kanál.",
+    };
+  }
+  const title = parseYouTubeFeed(feed.text).channelTitle;
+  return { id, title };
+}
+
+// --- Endpointy ------------------------------------------------------------
+
+app.get("/api/trends/status", (_req, res) => {
+  const s = readTrendSettings();
+  const cache = readTrendCache();
+  res.json({
+    success: true,
+    sources: LIVE_SOURCES,
+    platformLimits: PLATFORM_LIMITS_SK,
+    disclaimerSk: LIVE_SIGNALS_DISCLAIMER_SK,
+    settings: {
+      geos: s.geos,
+      channels: s.channels,
+      channelCount: s.channels.length,
+      hasYouTubeKey: Boolean(s.youtubeApiKey),
+      youtubeKeyHint: s.youtubeApiKey ? `nastavený (…${s.youtubeApiKey.slice(-4)})` : null,
+    },
+    geoOptions: GEO_OPTIONS,
+    cache: cache
+      ? { fetchedAt: cache.fetchedAt, ageMinutes: cacheAgeMinutes(cache), count: cache.signals.length }
+      : null,
+    cacheTtlMinutes: TREND_CACHE_TTL_MIN,
+    youtubeApiCost: YOUTUBE_API_COST,
+  });
+});
+
+app.get("/api/trends/signals", (_req, res) => {
+  const cache = readTrendCache();
+  if (!cache) {
+    return res.json({
+      success: true,
+      bundle: null,
+      ageMinutes: null,
+      messageSk: "Zatiaľ nemám uložené signály. Obnovenie spustíš tlačidlom — samo sa to nespúšťa.",
+    });
+  }
+  res.json({ success: true, bundle: cache, ageMinutes: cacheAgeMinutes(cache) });
+});
+
+app.post("/api/trends/refresh", async (req, res) => {
+  try {
+    const s = readTrendSettings();
+    const geos: string[] = Array.isArray(req.body?.geos) && req.body.geos.length ? req.body.geos : s.geos;
+    const channelIds: string[] = Array.isArray(req.body?.channels) ? req.body.channels : s.channels;
+    const includeChart = req.body?.includeYouTubeChart !== false;
+    const force = req.body?.force === true;
+
+    const cached = readTrendCache();
+    const age = cacheAgeMinutes(cached);
+    if (!force && cached && age !== null && age < TREND_CACHE_TTL_MIN) {
+      return res.json({
+        success: true,
+        fromCache: true,
+        ageMinutes: age,
+        bundle: cached,
+        messageSk: `Signály mám spred ${age} min (čerstvé do ${TREND_CACHE_TTL_MIN} min), takže som nič nestahoval. Ak chceš naozaj obnoviť, daj „obnoviť aj tak".`,
+      });
+    }
+
+    telemetryStats.totalRequestsToday++;
+
+    const results: SourceFetchResult[] = [];
+    for (const geo of geos) results.push(await fetchGoogleTrends(String(geo)));
+    if (channelIds.length) results.push(await fetchYouTubeFeeds(channelIds.map(String)));
+
+    if (includeChart) {
+      if (s.youtubeApiKey) {
+        for (const geo of geos.slice(0, 2)) results.push(await fetchYouTubeChart(String(geo), s.youtubeApiKey));
+      } else {
+        results.push({
+          source: "YOUTUBE_CHART",
+          ok: false,
+          fetchedAt: new Date().toISOString(),
+          signals: [],
+          errorSk: "Nemáš nastavený kľúč k YouTube Data API, takže rebríček (to, čo naozaj funguje) zatiaľ nemám.",
+          hintSk: "Nastav kľúč nižšie — je zdarma (Google Cloud → YouTube Data API v3 → API kľúč) a denný limit 10 000 jednotiek ti pri tomto používaní vydrží.",
+        });
+      }
+    }
+
+    const bundle = buildBundle(results);
+    writeTrendCache(bundle);
+    res.json({ success: true, fromCache: false, bundle, ageMinutes: 0 });
+  } catch (err: any) {
+    console.error("[Trends] Obnovenie zlyhalo:", err);
+    res.status(500).json({
+      success: false,
+      errorSk: `Obnovenie signálov zlyhalo: ${err?.message || "neznáma chyba"}`,
+    });
+  }
+});
+
+app.post("/api/trends/settings", async (req, res) => {
+  try {
+    const s = readTrendSettings();
+    const body = req.body || {};
+
+    if (Array.isArray(body.geos)) {
+      const clean = body.geos
+        .map((g: unknown) => String(g).toUpperCase())
+        .filter((g: string) => GEO_OPTIONS.some((o) => o.code === g))
+        .slice(0, 8);
+      s.geos = clean.length ? clean : DEFAULT_GEOS;
+    }
+
+    // Kľúč: nastav / vymaž. Nikdy ho neposielame späť.
+    if (typeof body.youtubeApiKey === "string") {
+      const k = body.youtubeApiKey.trim();
+      s.youtubeApiKey = k ? k : undefined;
+    }
+
+    // Kanály: pridanie (odkaz/@meno/ID) alebo odobranie.
+    if (typeof body.addChannel === "string" && body.addChannel.trim()) {
+      const resolved = await resolveChannelId(body.addChannel);
+      if (!resolved.id) {
+        return res.status(400).json({ success: false, errorSk: resolved.errorSk, hintSk: resolved.hintSk });
+      }
+      if (!s.channels.includes(resolved.id)) s.channels.push(resolved.id);
+      writeTrendSettings(s);
+      return res.json({
+        success: true,
+        added: { id: resolved.id, title: resolved.title || null },
+        channels: s.channels,
+        messageSk: resolved.title
+          ? `Pridal som kanál „${resolved.title}".`
+          : "Kanál pridaný.",
+      });
+    }
+
+    if (typeof body.removeChannel === "string") {
+      s.channels = s.channels.filter((c) => c !== body.removeChannel);
+    }
+
+    writeTrendSettings(s);
+    res.json({ success: true, geos: s.geos, channelCount: s.channels.length, hasYouTubeKey: Boolean(s.youtubeApiKey) });
+  } catch (err: any) {
+    res.status(500).json({ success: false, errorSk: `Nastavenia sa nepodarilo uložiť: ${err?.message || "chyba"}` });
+  }
 });
 
 async function startServer() {
