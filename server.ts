@@ -3798,6 +3798,37 @@ app.post("/api/export/burn-captions", (req, res) => {
   fs.writeFileSync(assPath, built.ass, "utf8");
 
   const outputPath = path.join(EXPORT_DIR, spec.outputName);
+
+  // --- Obrazové vrstvy (b-roll / fotky) z canonical osi ---------------------
+  // Každá vrstva musí byť naozaj na disku. Keď nie je, render sa **nezastaví
+  // potichu**: vrstva sa vynechá a používateľ dostane dôvod (nie prázdne miesto).
+  const overlayNotesSk: string[] = [];
+  const overlayInputs: { path: string; kind: "image" | "video"; startSec: number; endSec: number; scalePercent: number; positionX: number; positionY: number; nameSk?: string }[] = [];
+  for (const overlay of spec.overlays) {
+    const overlayPath = path.join(UPLOAD_DIR, overlay.uploadId);
+    if (!fs.existsSync(overlayPath)) {
+      overlayNotesSk.push(
+        `Obrazová vrstva „${overlay.name}“ sa nenašla ako súbor na serveri — vo videu nebude (v projekte zostáva).`,
+      );
+      continue;
+    }
+    overlayInputs.push({
+      path: overlayPath,
+      kind: overlay.kind,
+      startSec: overlay.startSec,
+      endSec: overlay.endSec,
+      scalePercent: overlay.scalePercent,
+      positionX: overlay.positionX,
+      positionY: overlay.positionY,
+      nameSk: overlay.name,
+    });
+  }
+  if (overlayInputs.length > 0) {
+    overlayNotesSk.push(
+      `${overlayInputs.length} obrazových vrstiev sa skladá do obrazu (b-roll/fotky z canonical osi).`,
+    );
+  }
+
   const args = [
     "-progress",
     "pipe:1",
@@ -3808,9 +3839,22 @@ app.post("/api/export/burn-captions", (req, res) => {
       assPath,
       ...(font ? { fontsDir: font.fontsDir } : {}),
       keepSegments: spec.keepRanges,
+      ...(spec.zoom.length > 0
+        ? {
+            zoomWindows: spec.zoom.map((z) => ({
+              clipId: z.clipId,
+              startSec: z.startSec,
+              endSec: z.endSec,
+              scalePercent: z.scale,
+            })),
+          }
+        : {}),
+      ...(overlayInputs.length > 0 ? { overlays: overlayInputs } : {}),
+      ...(built.clipDurationSec > 0 ? { outputDurationSec: built.clipDurationSec } : {}),
       ...(probe?.fps ? { sourceFps: probe.fps } : {}),
-      // Zámerne NEPOSIELAME width/height → obraz sa neorezáva na iný formát.
-      // Vypálenie titulkov nesmie potichu zmeniť rám videa.
+      // Rozmery rámu idú do linky LEN pre priblíženie (aby orezalo na presne tie
+      // isté čísla). Rám videa sa nemení — `width`/`height` pre scale sa neposiela.
+      ...(probe?.width && probe?.height ? { frameSize: { width: probe.width, height: probe.height } } : {}),
     }),
   ];
 
@@ -3820,9 +3864,12 @@ app.post("/api/export/burn-captions", (req, res) => {
     height: spec.height,
     keepCount: spec.keepRanges.length,
   });
+  const extraParts: string[] = [];
+  if (overlayInputs.length > 0) extraParts.push(`${overlayInputs.length} vrstiev`);
+  if (spec.zoom.length > 0) extraParts.push(`${spec.zoom.length} priblížení`);
   burnJobs.patch(job.id, {
     state: "rendering",
-    messageSk: `Vypaľujem ${built.eventCount} titulkov a prekódujem ${built.clipDurationSec.toFixed(1)} s videa…`,
+    messageSk: `Vypaľujem ${built.eventCount} titulkov${extraParts.length > 0 ? `, skladám ${extraParts.join(" a ")}` : ""} a prekódujem ${built.clipDurationSec.toFixed(1)} s videa…`,
   });
 
   const child = spawn(found.path, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -3876,7 +3923,7 @@ app.post("/api/export/burn-captions", (req, res) => {
     }
 
     const sizeBytes = fs.statSync(outputPath).size;
-    const notesSk = [...probeNotesSk, ...built.notesSk];
+    const notesSk = [...probeNotesSk, ...built.notesSk, ...overlayNotesSk];
     if (!font) {
       notesSk.push(
         "Nenašiel som písmo s úplnou diakritikou na serveri — použil som písmo, ktoré má libass. Skontroluj v klipе, či sedia háčky a dĺžne.",

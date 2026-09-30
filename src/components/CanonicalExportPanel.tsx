@@ -3,7 +3,7 @@ import { Eye, Play, Download, Loader2, AlertTriangle, CheckCircle2 } from "lucid
 import type { ProjectModel } from "../core/types/project";
 import { buildCanonicalFramePlan, canonicalFrameSummarySk, projectContentEndSec } from "../core/render/canonicalFrame";
 import { renderEngine } from "../core/render/renderEngine";
-import { buildCanonicalExportPlan, canonicalExportSummarySk, type CanonicalExportPlan } from "../core/export/canonicalExport";
+import { buildCanonicalExportPlan, canonicalExportSummarySk, canonicalOverlayAssets, type CanonicalExportPlan } from "../core/export/canonicalExport";
 
 /**
  * CANONICAL NÁHĽAD + EXPORT (krok 7).
@@ -37,6 +37,11 @@ export interface CanonicalExportPanelProps {
   mediaUrl?: string | null;
   /** Zdrojový súbor pre upload na server (render prebieha na serveri). */
   getSourceBlob?: () => Promise<Blob | null>;
+  /**
+   * Súbor pre ľubovoľné médium projektu (b-roll / fotky). Bez neho obrazové
+   * vrstvy vo videu nebudú — a panel to povie, nie zamlčí.
+   */
+  getAssetBlob?: (assetId: string, name: string) => Promise<Blob | null>;
   showToast?: (message: string) => void;
   /** Predvolene zapnutý náhľad — používateľ má vidieť, čo sa exportuje. */
   defaultPreviewOn?: boolean;
@@ -58,6 +63,7 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   currentTime = 0,
   mediaUrl,
   getSourceBlob,
+  getAssetBlob,
   showToast,
   defaultPreviewOn = true,
 }) => {
@@ -84,6 +90,11 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   const [status, setStatus] = useState<BurnStatusLike | null>(null);
   const [errorSk, setErrorSk] = useState<string | null>(null);
   const jobRef = useRef<string | null>(null);
+  /** Nahraté obrazové médiá: assetId → súbor na serveri. */
+  const [assetUploads, setAssetUploads] = useState<Record<string, string>>({});
+  /** Čo sa podarilo/ nepodarilo pripraviť pre render (vidí to používateľ). */
+  const [overlayPrepNotesSk, setOverlayPrepNotesSk] = useState<string[]>([]);
+  const prepKeyRef = useRef<string>("");
 
   /** Aktivované médium: hlavné video z canonical osi (na kreslenie náhľadu). */
   const mainVideoAssetId = useMemo(() => {
@@ -133,15 +144,93 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
     return buildCanonicalFramePlan(project, currentTime, { availableMedia: available, reportEmptyText: false });
   }, [project, currentTime, mainVideoAssetId]);
 
+  /** Médiá, ktoré canonical os potrebuje ako obrazové vrstvy. */
+  const neededAssets = useMemo(() => (project ? canonicalOverlayAssets(project) : []), [project]);
+  const neededKey = useMemo(() => neededAssets.map((a) => a.assetId).sort().join("|"), [neededAssets]);
+
+  /** Upload jedného overlay média (rovnaké percentá ako pri hlavnom videu). */
+  const uploadAsset = (blob: Blob, name: string) =>
+    new Promise<{ uploadId: string; uploadName: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/export/upload?name=${encodeURIComponent(name)}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300 && data.success) resolve(data);
+          else reject(new Error(data.errorSk || `Nahrávanie vrstvy zlyhalo (${xhr.status}).`));
+        } catch {
+          reject(new Error(isSk ? "Server nevrátil zrozumiteľnú odpoveď pri nahrávaní vrstvy." : "Unreadable response."));
+        }
+      };
+      xhr.onerror = () => reject(new Error(isSk ? "Vrstvu sa nepodarilo nahrať (spojenie spadlo)." : "Upload failed."));
+      xhr.send(blob);
+    });
+
+  /**
+   * Pripraví obrazové vrstvy vopred (aby používateľ videl už pred renderom,
+   * čo vo videu naozaj bude). Nikdy nič nepredstiera: čo sa nedá získať, povie.
+   */
+  const prepareOverlays = useCallback(async (): Promise<Record<string, string>> => {
+    if (!project || neededAssets.length === 0) return {};
+    if (!getAssetBlob) {
+      setOverlayPrepNotesSk([
+        isSk
+          ? `${neededAssets.length} obrazových vrstiev sa nedá pripraviť — médiá nie sú v tomto náhľade pripojené. Vo videu nebudú.`
+          : `${neededAssets.length} overlays cannot be prepared — media not wired in this preview.`,
+      ]);
+      return {};
+    }
+
+    const uploads: Record<string, string> = {};
+    const notes: string[] = [];
+    for (const asset of neededAssets) {
+      try {
+        const blob = await getAssetBlob(asset.assetId, asset.name);
+        if (!blob) {
+          notes.push(
+            isSk
+              ? `Médium „${asset.name}“ sa nepodarilo načítať — táto vrstva vo videu nebude (v projekte zostáva).`
+              : `Could not read “${asset.name}”.`,
+          );
+          continue;
+        }
+        const uploaded = await uploadAsset(blob, asset.name);
+        uploads[asset.assetId] = uploaded.uploadId;
+        notes.push(
+          isSk
+            ? `Vrstva „${asset.name}“ je pripravená (${(blob.size / 1024).toFixed(0)} kB).`
+            : `Overlay “${asset.name}” ready.`,
+        );
+      } catch (err: any) {
+        notes.push(isSk ? `Vrstvu „${asset.name}“ sa nepodarilo nahrať: ${err?.message ?? "chyba"}.` : `Overlay upload failed.`);
+      }
+    }
+    setAssetUploads(uploads);
+    setOverlayPrepNotesSk(notes);
+    return uploads;
+  }, [project, neededAssets, getAssetBlob, isSk]);
+
+  useEffect(() => {
+    if (!project || neededAssets.length === 0 || !getAssetBlob) return;
+    if (prepKeyRef.current === neededKey) return;
+    prepKeyRef.current = neededKey;
+    void prepareOverlays();
+  }, [neededKey, neededAssets.length, project, getAssetBlob, prepareOverlays]);
+
   const exportPlan: CanonicalExportPlan | null = useMemo(() => {
     if (!project) return null;
-    return buildCanonicalExportPlan(project, {
-      uploadId: "", // dozvieme sa ho až po nahratí — zámerne: bez uploadu sa nedá renderovať
-      uploadName: "video.mp4",
-      width: targetWidth,
-      height: targetHeight,
-    });
-  }, [project, targetWidth, targetHeight]);
+    return buildCanonicalExportPlan(
+      project,
+      {
+        uploadId: "", // dozvieme sa ho až po nahratí — zámerne: bez uploadu sa nedá renderovať
+        uploadName: "video.mp4",
+        width: targetWidth,
+        height: targetHeight,
+      },
+      { assetUploads },
+    );
+  }, [project, targetWidth, targetHeight, assetUploads]);
 
   /** Upload so skutočným percentom (fetch to nevie — preto XHR). */
   const uploadVideo = (blob: Blob, name: string, onProgress: (p: number) => void) =>
@@ -186,13 +275,20 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
       setMessageSk(isSk ? `Nahrávam video na server (${(blob.size / (1024 * 1024)).toFixed(1)} MB)…` : "Uploading…");
       const uploaded = await uploadVideo(blob, "klip.mp4", setPercent);
 
+      // Obrazové vrstvy pripravíme (ak ešte nie sú) — bez nich by vo videu neboli.
+      const overlayUploads = Object.keys(assetUploads).length > 0 ? assetUploads : await prepareOverlays();
+
       // Zadanie sa skladá z canonical osi **až teraz**, s reálnym uploadId.
-      const freshPlan = buildCanonicalExportPlan(project, {
-        uploadId: uploaded.uploadId,
-        uploadName: uploaded.uploadName ?? "klip.mp4",
-        width: targetWidth,
-        height: targetHeight,
-      });
+      const freshPlan = buildCanonicalExportPlan(
+        project,
+        {
+          uploadId: uploaded.uploadId,
+          uploadName: uploaded.uploadName ?? "klip.mp4",
+          width: targetWidth,
+          height: targetHeight,
+        },
+        { assetUploads: overlayUploads },
+      );
       if (!freshPlan.canExport) {
         throw new Error(freshPlan.blockersSk.join(" "));
       }
@@ -329,6 +425,18 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
                 </li>
               ))}
             </ul>
+            {overlayPrepNotesSk.length > 0 && (
+              <ul className="space-y-1">
+                {overlayPrepNotesSk.map((n, i) => (
+                  <li
+                    key={`prep-${i}`}
+                    className={`text-[10px] ${n.includes("nepodarilo") || n.includes("nemá") || n.includes("nedá") ? "text-amber-300" : "text-neutral-400"}`}
+                  >
+                    • {n}
+                  </li>
+                ))}
+              </ul>
+            )}
             {activePlan.unsupportedSk.length > 0 && (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 space-y-1">
                 <p className="text-[10px] font-bold text-amber-300 flex items-center gap-1.5">

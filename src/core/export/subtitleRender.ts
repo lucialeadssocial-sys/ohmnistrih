@@ -1019,13 +1019,52 @@ export function buildAssForCut(options: AssForCutOptions): AssForCutResult {
 // Argumenty pre ffmpeg
 // ---------------------------------------------------------------------------
 
+/**
+ * Priblíženie jedného klipu (statické, na stred) — presne ako v canonical pláne snímky.
+ * `scalePercent` 112 = obraz je 1,12× väčší a orezaný na stred (žiadny posun).
+ */
+export interface BurnZoomWindow {
+  /** Identifikátor klipu (len do poznámok/reportu). */
+  clipId?: string;
+  startSec: number;
+  endSec: number;
+  scalePercent: number;
+}
+
+/**
+ * Obrazová vrstva (b-roll / fotka) z canonical osi.
+ * `scalePercent` 100 = prirodzená veľkosť média; poloha je posun od stredu plátna.
+ */
+export interface BurnOverlay {
+  path: string;
+  kind: "image" | "video";
+  startSec: number;
+  endSec: number;
+  scalePercent: number;
+  positionX: number;
+  positionY: number;
+  /** Meno pre poznámky a report (nikdy nie cesta na disku). */
+  nameSk?: string;
+}
+
 export interface BurnArgsOptions {
   inputPath: string;
   outputPath: string;
   assPath: string;
   fontsDir?: string;
   /** Klipy, ktoré sa majú vystrihnúť (rovnaký EDL ako v náhľade). Prázdne = celé video. */
-  keepSegments?: { start: number; end: number }[];
+  keepSegments?: { start: number; end: number; scalePercent?: number }[];
+  /** Priblíženia na časovej osi (len keď sa nič nestrihá — čas videа sa nemení). */
+  zoomWindows?: BurnZoomWindow[];
+  /** Obrazové vrstvy z canonical osi (b-roll, fotky). */
+  overlays?: BurnOverlay[];
+  /** Dĺžka výsledku — potrebná, keď sa skladá z viacerých častí alebo s vrstvami. */
+  outputDurationSec?: number;
+  /**
+   * Skutočné rozmery rámu (zo sondy servera) — používajú sa **výhradne** na to,
+   * aby priblíženie orezávalo na presne tie isté rozmery. Rám videa sa NEMENÍ.
+   */
+  frameSize?: { width: number; height: number };
   width?: number;
   height?: number;
   /**
@@ -1046,45 +1085,127 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
   const args: string[] = ["-y", "-hide_banner", "-loglevel", "error", "-i", o.inputPath];
 
   const keep = (o.keepSegments ?? []).filter((s) => s.end - s.start > 0.02);
+  const overlays = (o.overlays ?? []).filter((v) => v.endSec - v.startSec > 0.02);
+  const zoomWindows = (o.zoomWindows ?? []).filter(
+    (z) => Math.abs(z.scalePercent - 100) > 0.01 && z.endSec - z.startSec > 0.02,
+  );
+
+  // Vstupy pre obrazové vrstvy: obrázok aj video idú ako samostatný vstup.
+  for (const overlay of overlays) {
+    // Pozor: `-loop 1` na obrázok by spravil nekonečný vstup (a render by nikdy
+    // neskončil). Obrázok preto čítame raz a v overlay filtri použijeme
+    // `eof_action=repeat` — posledná snímka sa opakuje len v rámci svojho okna.
+    args.push("-i", overlay.path);
+  }
+
   const filters: string[] = [];
+  const fpsFilter = o.sourceFps && o.sourceFps > 0 ? `,fps=${o.sourceFps}` : "";
+  const scaleFilter =
+    o.width && o.height
+      ? `scale=${o.width}:${o.height}:force_original_aspect_ratio=increase,crop=${o.width}:${o.height},`
+      : "";
+
+  let baseLabel: string;
+  let audioFromConcat = false;
 
   if (keep.length > 0) {
-    // Strih: každý úsek orežeme a spojíme. `concat` vyžaduje rovnaké parametre
-    // (sú, lebo je to ten istý zdroj), takže obraz aj zvuk sa dajú spájať naraz.
-    // Pozor: časti sa spájajú `;` — takže NESMÚ končiť `;`, inak vznikne
-    // prázdny filter a ffmpeg spadne na „No such filter: ''“ (odhalené testom).
-    // `fps=` drží pôvodnú snímkovú frekvenciu zdroja — bez neho `concat` ticho
-    // prepne na 25 fps a snímky sa stratia (odhalené live testom).
-    const fpsFilter = o.sourceFps && o.sourceFps > 0 ? `,fps=${o.sourceFps}` : "";
+    // Strih: každý úsek orežeme a spojíme (aj s priblížením daného úseku).
+    // `fps=` drží snímkovú frekvenciu zdroja — bez neho `concat` ticho prepne na 25 fps.
     const parts = keep.map((k, i) => {
+      const zoom = zoomFilterForPercent(k.scalePercent, o.frameSize?.width, o.frameSize?.height);
       return (
-        `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}[v${i}]` +
+        `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}${zoom}[v${i}]` +
         `;[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
       );
     });
     const inputs = keep.map((_, i) => `[v${i}][a${i}]`).join("");
-    const scale = o.width && o.height
-      ? `scale=${o.width}:${o.height}:force_original_aspect_ratio=increase,crop=${o.width}:${o.height},`
-      : "";
-    filters.push(
-      ...parts,
-      `${inputs}concat=n=${keep.length}:v=1:a=1[vc][ac]`,
-      `[vc]${scale}ass=${escapeFilterPath(o.assPath)}${o.fontsDir ? `:fontsdir=${escapeFilterPath(o.fontsDir)}` : ""}[vout]`,
-    );
+    filters.push(...parts, `${inputs}concat=n=${keep.length}:v=1:a=1[vc][ac]`);
+    baseLabel = "[vc]";
+    audioFromConcat = true;
+  } else if (zoomWindows.length > 0) {
+    // Bez strihu sa čas videа nemení → zvuk sa dá **kopírovať** (pôvodné audio
+    // zostáva bajtovo nedotknuté). Obraz sa však musí rozdeliť na okná, aby
+    // priblíženie sedelo len na svojom úseku.
+    const windows = zoomWindows
+      .slice()
+      .sort((a, b) => a.startSec - b.startSec)
+      .map((z) => ({
+        startSec: Math.max(0, z.startSec),
+        endSec: z.endSec,
+        scalePercent: z.scalePercent,
+      }));
+    const parts: string[] = [];
+    let cursor = 0;
+    let index = 0;
+    for (const w of windows) {
+      if (w.startSec > cursor + 0.02) {
+        parts.push(
+          `[0:v]trim=start=${cursor.toFixed(3)}:end=${w.startSec.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}[v${index}]`,
+        );
+        index++;
+      }
+      parts.push(
+        `[0:v]trim=start=${w.startSec.toFixed(3)}:end=${w.endSec.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}${zoomFilterForPercent(w.scalePercent, o.frameSize?.width, o.frameSize?.height)}[v${index}]`,
+      );
+      index++;
+      cursor = w.endSec;
+    }
+    const end = o.outputDurationSec && o.outputDurationSec > cursor ? o.outputDurationSec : cursor;
+    if (end > cursor + 0.02) {
+      parts.push(`[0:v]trim=start=${cursor.toFixed(3)}:end=${end.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}[v${index}]`);
+      index++;
+    }
+    const labelInputs = Array.from({ length: index }, (_, i) => `[v${i}]`).join("");
+    filters.push(...parts, `${labelInputs}concat=n=${index}:v=1:a=0[vc]`);
+    baseLabel = "[vc]";
   } else {
-    const scale = o.width && o.height ? `scale=${o.width}:${o.height}:force_original_aspect_ratio=increase,crop=${o.width}:${o.height},` : "";
-    filters.push(
-      `[0:v]${scale}ass=${escapeFilterPath(o.assPath)}${o.fontsDir ? `:fontsdir=${escapeFilterPath(o.fontsDir)}` : ""}[vout]`,
-    );
+    baseLabel = "[0:v]";
   }
+
+  // Rozmer výstupu (server ho zámerne neposiela — vypálenie nesmie zmeniť rám videa).
+  let videoLabel = baseLabel;
+  if (scaleFilter) {
+    filters.push(`${baseLabel}${scaleFilter.slice(0, -1)}[vscaled]`);
+    videoLabel = "[vscaled]";
+  }
+
+  // Obrazové vrstvy (b-roll / fotky) — v poradí zdola nahor, každá vo svojom čase.
+  overlays.forEach((overlay, i) => {
+    const inputIndex = 1 + i;
+    const scale = overlay.scalePercent && Math.abs(overlay.scalePercent - 100) > 0.01
+      ? overlay.scalePercent / 100
+      : 1;
+    const imgScale = scale !== 1 ? `scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},` : "";
+    const overlayLabel = `[ov${i}]`;
+    if (overlay.kind === "video") {
+      const dur = Math.max(0.02, overlay.endSec - overlay.startSec);
+      filters.push(
+        `[${inputIndex}:v]${imgScale}format=rgba,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS+${overlay.startSec.toFixed(3)}/TB${overlayLabel}`,
+      );
+    } else {
+      filters.push(`[${inputIndex}:v]${imgScale}format=rgba,setpts=PTS-STARTPTS${overlayLabel}`);
+    }
+    const nextLabel = `[vov${i}]`;
+    // Poloha presne ako v canonical kompozitore: stred plátna + posun klipu.
+    // `enable` zaručí, že vrstva je vidieť len vo svojom čase (nič „navyše“).
+    filters.push(
+      `${videoLabel}${overlayLabel}overlay=x=${
+        overlay.positionX !== 0 ? `(W-w)/2+${overlay.positionX.toFixed(1)}` : "(W-w)/2"
+      }:y=${
+        overlay.positionY !== 0 ? `(H-h)/2+${overlay.positionY.toFixed(1)}` : "(H-h)/2"
+      }:enable='between(t,${overlay.startSec.toFixed(3)},${overlay.endSec.toFixed(3)})':eof_action=repeat${nextLabel}`,
+    );
+    videoLabel = nextLabel;
+  });
+
+  filters.push(
+    `${videoLabel}ass=${escapeFilterPath(o.assPath)}${o.fontsDir ? `:fontsdir=${escapeFilterPath(o.fontsDir)}` : ""}[vout]`,
+  );
 
   args.push("-filter_complex", filters.join(";"));
   args.push("-map", "[vout]");
-  if (keep.length > 0) {
-    args.push("-map", "[ac]");
-  } else {
-    args.push("-map", "0:a?");
-  }
+  if (audioFromConcat) args.push("-map", "[ac]");
+  else args.push("-map", "0:a?");
 
   args.push(
     "-c:v", "libx264",
@@ -1093,11 +1214,32 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
   );
-  if (keep.length > 0) args.push("-c:a", "aac", "-b:a", "192k");
+  if (audioFromConcat) args.push("-c:a", "aac", "-b:a", "192k");
   else args.push("-c:a", "copy");
   args.push(o.outputPath);
 
   return args;
+}
+
+/**
+ * Priblíženie ako **statický stredový orez** — presne to, čo robí canonical kompozitor
+ * (`ctx.scale` okolo stredu).
+ *
+ * Keď poznáme rozmery rámu, orežeme na **presné čísla**. Prečo je to dôležité:
+ * výrazové orezanie (`trunc(iw/s/2)*2`) pri 1080 px a priblížení 112 % vyrobí
+ * 1078 px — rám sa potichu zmenší o dva pixely (odhalené meraním výstupu, nie testom).
+ * Rám videa sa meniť nesmie.
+ */
+export function zoomFilterForPercent(scalePercent?: number, frameWidth?: number, frameHeight?: number): string {
+  const p = Number(scalePercent ?? 100);
+  if (!Number.isFinite(p) || Math.abs(p - 100) <= 0.01) return "";
+  const scale = p / 100;
+  if (frameWidth && frameHeight && frameWidth > 0 && frameHeight > 0) {
+    const w = Math.round(frameWidth);
+    const h = Math.round(frameHeight);
+    return `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},crop=${w}:${h}`;
+  }
+  return `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},crop=trunc(iw/${scale.toFixed(4)}/2)*2:trunc(ih/${scale.toFixed(4)}/2)*2`;
 }
 
 /** Cesty vo filtroch: `:` a `\` majú vo ffmpeg filtri špeciálny význam. */

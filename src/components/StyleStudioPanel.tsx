@@ -104,6 +104,7 @@ export interface StyleStudioPanelProps {
     currentTime: number;
     mediaUrl?: string | null;
     getSourceBlob?: () => Promise<Blob | null>;
+    getAssetBlob?: (assetId: string, name: string) => Promise<Blob | null>;
   } | null;
 }
 
@@ -873,6 +874,7 @@ export function StyleStudioPanel({
                 currentTime={canonicalPreviewProps.currentTime}
                 mediaUrl={canonicalPreviewProps.mediaUrl}
                 getSourceBlob={canonicalPreviewProps.getSourceBlob}
+                getAssetBlob={canonicalPreviewProps.getAssetBlob}
                 showToast={showToast}
               />
             )}
