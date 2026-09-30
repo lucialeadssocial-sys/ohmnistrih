@@ -1,0 +1,75 @@
+==============================================================================
+REAL-MEDIA EXPORT Z CANONICAL ČASOVEJ OSI
+==============================================================================
+médium........................................ real_speech.mp4 (345651 B)
+dĺžka média (meraná).......................... 20.27 s
+appka......................................... http://127.0.0.1:3000
+prepis (segmenty / slová)..................... 11 / 51
+recept........................................ AI kinematografický záber (merané) (AI_CINEMATIC_TAKE)
+rozhodnutí v pláne............................ 13
+apply: aplikované / dodržané / nevykonané..... 9 / 1 / 3
+časová os zmenená............................. true
+animované priblíženie v canonical osi (cez CommandManager) áno — klip „/home/user/real-media/real_speech.mp4“: 100 % → 145 % za 14.19 s
+titulkov v canonical osi...................... 6
+nahrané do appky.............................. 57b5d4eb-fd3d-46e5-98d6-85ffeefbd8e6__real_speech.mp4 (real_speech.mp4)
+obrazová vrstva (reálna snímka)............... overlay-frame.png @1s → 96c5efa9-c8e6-4f3a-8d8a-d316f0bd9293__broll-snimka.png
+
+── ZADANIE Z CANONICAL OSI ──────────────────────────────────────────────
+  • 6 titulkov pôjde do videa priamo z canonical časovej osi (štýl PODCAST podľa canonical presetov).
+  • Poznámka k titulkom: canonical vrstva pozná 5 predvolieb (bold/kinetic/social/clean/minimal), appka 9 štýlov — vypáli sa najbližšia predvoľba, nie vždy doslovný názov štýlu z receptu.
+  • Strih: žiadny — ide celé video. Zvuk sa kopíruje bez prekódovania (bajtovo rovnaký ako zdroj).
+  • 3 obrazových vrstiev (b-roll/fotky) pôjde do videa z canonical časovej osi.
+  • Priblíženie (motion) sa vykreslí na 1 klipoch (1 z toho animovaných, postupné priblíženie podľa keyframov; ostatné statický stredový orez).
+animované priblíženie ide do linky............ 1× (0.00s=100% → 14.19s=145%)
+filter pre animované priblíženie.............. obsahuje zoompan= (mení mierku v čase)
+  priebeh (výraz)............................. if(lt(in_time,14.190),1.0000+(1.4500-1.0000)*(in_time-0.000)/14.190,1.4500)
+zhoda canonical ↔ zadanie..................... áno (nič nechýba, nič navyše)
+  Filter graf, ktorý server naozaj použije (z canonical osi):
+    vidím v ňom: priblíženie=áno · vrstvy=áno · otočenie=nie · priesvitnosť=nie · farebný filter=nie · titulky=áno
+render spustený (jobId)....................... 6a098471-a10c-43d9-9c76-ba8e801f3f74
+titulkov spracoval server..................... 6
+  • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+  • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+stav renderu.................................. done
+súbor z reportu............................... omnistrih-titulky-real_speech-1790762697347.mp4
+dĺžka klipu podľa servera..................... 19.00 s
+veľkosť podľa servera......................... 410897 B
+  • server: Vypálim 6 titulkov v štýle „Podcast (pokojne, mäkký obrys)“ bez zvýrazňovania (nemám časovanie slov). Prekódovanie: 19 s videa, kvalita CRF 20.
+
+── MERANIE HOTOVÉHO SÚBORU ──────────────────────────────────────────────
+uložené....................................... /home/user/export-krok12-aktivista.mp4 (410897 B)
+stopa video / audio........................... áno / áno
+rozmer rámu zdroj → výstup.................... 1080×1920 → 1080×1920 (rovnaký)
+dĺžka výstupu................................. 20.27 s
+zvuk rovnaký ako v zdroji..................... áno (obsahovo)
+hash zvuku zdroj → výstup..................... 511feee27c325b3d → 511feee27c325b3d
+zmena obrazu (dole, kde sú titulky) v 2.6 s... 5.29
+vypálené titulky v obraze..................... áno (obraz sa na tom mieste líši)
+vrstva v okne 5.0–8.0 s: zmena obrazu (hore).. 6.56
+mimo okna (4.5 s): zmena obrazu (hore)........ 0.00
+priblíženie 145 % v 10.1 s: zhoda s plánom (SSIM) 0.9999
+  (kontrola: zhoda bez priblíženia)........... 1.0000
+priblíženie — merateľnosť na tomto médiu...... nedá sa zmerať (zdroj je jednofarebná plocha) — skúšam syntetický podklad nižšie
+
+── SKÚŠKA LINKY NA SYNTETICKOM PODKLADE (nie je to video používateľa) ──
+rám výstupu................................... 1080×1920 (zachovaný)
+rozdiel mimo zoomu (2 s okno) v 1 s........... 1.48
+rozdiel v zoom okne v 3 s..................... 24.98
+animované priblíženie v 5,15 / 6,00 / 6,85 s.. 7.28 → 21.56 → 37.31 (má rásť)
+vrstva: rozdiel HORE mimo okna (4,0 s)........ 0.18
+vrstva: rozdiel HORE v okne (4,55 s).......... 6.53
+otočenie 90°: zmena v zvislom pásme (kde má lišta byť) 96.03
+otočenie 90°: zmena vo vodorovnom pásme (kde byť nemá) 0.02
+priesvitnosť 50 %: zmena oproti zdroju voči nepriehľadnej 2.80 / 4.24 = 0.66 (má byť ~0,5)
+farebný filter BW: odchýlka farby od sivej.... 0.04 (bez filtra 146.45)
+titulky v obraze (dole) na syntetickom podklade 25.50
+VÝSLEDOK SKÚŠKY LINKY......................... PASS (priblíženie statické aj animované, vrstva, otočenie, priesvitnosť, filter aj titulky idú do obrazu)
+
+==============================================================================
+VÝSLEDOK: REAL EXPORT Z CANONICAL OSI PASS (súbor vznikol, má obraz aj zvuk, titulky z canonical osi sú v obraze)
+Čo tento výsledok NEznamená:
+  • nie je to dôkaz o prehliadači (runner obchádza UI a volá API appky)
+  • farebný filter je aproximácia (CSS filtre sú percepčné, ffmpeg lineárne — jas je pripočítanie, nie násobenie)
+  • easing medzi krokmi animovaného priblíženia sa nezohľadňuje (priebeh je lineárny)
+  • zvuk sa porovnáva obsahovo (PCM 16 kHz mono), nie bajtovo vo formáte AAC
+==============================================================================

@@ -40,6 +40,7 @@ export type StylePresetId =
   | "AI_CARD_DEMO"
   | "FILM_MONTAGE"
   | "EXPERT_COLLAGE_TALK"
+  | "AI_CINEMATIC_TAKE"
   | "CUSTOM";
 
 export interface StyleAnimationSpec {
@@ -713,7 +714,85 @@ const EXPERT_COLLAGE_TALK: StyleRecipe = makeRecipe({
   requiresSk: "Potrebuje fotky/diagramy pre koláž; bez nich zostane rečník a appka to napíše.",
 });
 
-/** Všetkých 13 receptov v poradí, v akom sa ponúkajú v UI. */
+/**
+ * **AI KINEMATOGRAFICKÝ ZÁBER** — recept nameraný z 6 reálnych klipov
+ * `instagram.com/ai_ktivista` (Tomáš Jevčik), spolu 194,7 s.
+ *
+ * Čo bolo **NAMERANÉ** (medián cez 6 klipov, nie z jedného):
+ *  - 0,14 rezu/s · 9,25 s na záber · 62–100 % času v záberoch ≥ 2,5 s (jeden klip
+ *    je 25 s bez jediného strihu) → dlhý záber, strih je výnimka;
+ *  - dynamika v obraze 11,7–83,0 (medián 24,5) → obraz sa hýbe **vnútri** záberu
+ *    (kamera letí, kráča), nie strihom;
+ *  - jas 37,9–162,0 (medián 73,4), kontrast medián 55,7, sýtosť medián 22 % →
+ *    stredne tmavý, stredne kontrastný obraz, mierne sýte farby;
+ *  - svetlý spodok (možné titulky) aspoň v polovici vzoriek len v **1 zo 6** klipov;
+ *  - 5 zo 6 klipov je 720×1280 (9:16), 30 fps (jeden 24 fps), jeden 1280×720.
+ *
+ * Čo **NEbolo** namerané a recept to nepredstiera:
+ *  - **paletu** — ani jedna farba sa neobjavila vo väčšine klipov (klipy zdieľajú
+ *    tempo a svetlo, nie farbu). Štyri farby nižšie sú **namerané odtiene z jeho
+ *    klipov** (dve tmavé základne, teplý hnedý stred, studený bridlicový), nie
+ *    „jeho paleta";
+ *  - **podiel rečníka** — bez detektora tvárí sa nedá zmerať. Pomer 30/70 je
+ *    z jeho **zverejneného workflow** (Flow/Omni na aiktivista.sk), nie z videa.
+ */
+const AI_CINEMATIC_TAKE: StyleRecipe = makeRecipe({
+  id: "AI_CINEMATIC_TAKE",
+  name: "AI Cinematic Take",
+  labelSk: "AI kinematografický záber (merané)",
+  purposeSk:
+    "Dlhý kinematografický záber s pomalou kamerou a minimom strihov — atmosféra nesie obsah, nie efekty ani titulky.",
+  whySk:
+    "Merané na 6 klipoch: medián 0,14 rezu/s a 9,25 s na záber, pohyb je vnútri záberu (dynamika 24,5/s). Pozornosť teda drží obraz a pomalý pohyb kamery, nie strih.",
+  animation: { kind: "smooth", fpsLook: null, motionBlur: false, easingSk: "pomalý nábeh kamery, žiadne švihy ani skoky" },
+  typography: {
+    character: "clean-sans",
+    kinetic: false,
+    staggerMs: 160,
+    scaleHint: 96,
+    uppercase: false,
+    maxElementsPerScene: 1,
+    roles: ["label", "headline", "quote"],
+  },
+  camera: { punchIn: false, punchInScale: 1, fastZoom: false, whipPan: "none" },
+  movement: {
+    paperCutout: false,
+    layering: false,
+    subtleZoom: true,
+    depthLayers: 1,
+    noteSk: "pohyb je v zábere (kamera letí alebo kráča) — appka pridá len jemné priblíženie, nič nevyrezáva",
+  },
+  aesthetic: {
+    labelSk: "reálny alebo AI záber, žiadna koláž",
+    elementPool: ["b_roll", "existing_media"],
+    halftone: false,
+    visibleShadows: false,
+    tornEdges: false,
+    asymmetric: false,
+    illustrationBodies: false,
+  },
+  // Namerané odtiene z jeho klipov (nie „jeho paleta" — pozri komentár vyššie).
+  colorPalette: ["#0A070B", "#4A3123", "#6F869D", "#E8E3DD"],
+  composition: { primary: "full_screen", allowed: ["full_screen", "picture_in_picture"], layersMax: 1 },
+  texture: { level: "subtle", kinds: ["filmová zrnitosť", "jemná hmla v obraze"] },
+  visualStructure: { elementAnimation: "together", transitionsBetweenPanels: false },
+  captionStyle: {
+    styleId: "MINIMAL",
+    rationaleSk:
+      "Svetlý spodok (možné titulky) bol aspoň v polovici vzoriek len v 1 zo 6 klipov — titulky teda len potichu, obraz nesie obsah.",
+  },
+  transitionStyle: {
+    base: "cut",
+    accent: "none",
+    noteSk: "Strih je výnimka (nameraných 0–0,39 rezu/s); prechody appka nemeria, preto žiadne nepredstiera.",
+  },
+  talkingHeadRatio: 0.3,
+  motionPool: ["subtle_zoom"],
+  requiresSk:
+    "Potrebuje dlhé zábery — vlastné b-roll alebo AI klipy vyrobené mimo appky (appka video negeneruje). Pomer 30/70 je z jeho zverejneného workflow, nie z merania videa; podiel rečníka sa bez detektora tvárí zmerať nedá.",
+});
+
+/** Všetkých 14 receptov v poradí, v akom sa ponúkajú v UI. */
 export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   EDITORIAL_COLLAGE,
   DOCUMENTARY,
@@ -727,6 +806,7 @@ export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   AI_CARD_DEMO,
   FILM_MONTAGE,
   EXPERT_COLLAGE_TALK,
+  AI_CINEMATIC_TAKE,
   CUSTOM,
 };
 
@@ -743,6 +823,7 @@ export const STYLE_PRESET_IDS: StylePresetId[] = [
   "AI_CARD_DEMO",
   "FILM_MONTAGE",
   "EXPERT_COLLAGE_TALK",
+  "AI_CINEMATIC_TAKE",
   "CUSTOM",
 ];
 
