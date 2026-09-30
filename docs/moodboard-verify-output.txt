@@ -1,0 +1,38 @@
+==============================================================================
+MOODBOARD / GRID — REÁLNE MERANIE PANELOV
+==============================================================================
+vstup......................................... /home/user/referencie/aikt-DcdveR6u5Ow.mp4 (snímky v 2, 8, 14, 20 s)
+grid.......................................... /home/user/kontrola-krok14-moodboard.png — 1098×480 px, 1×4 panelov
+POCTIVO....................................... grid som poskladal ja z jeho reálnych snímok; jeho vlastný moodboard nemám
+
+panely nájdené samo (bez zadania)............. 4 (panely nájdené podľa medzier (0 vodorovných, 3 zvislých), vybrané rozdelenie najlepšie sedí na pomer strán 0.56)
+očakávaný pomer strán panelu.................. 0.563
+podiel medzier na ploche...................... 0.104
+
+── PANELY (panely nájdené podľa medzier (0 vodorovných, 3 zvislých), vybrané rozdelenie najlepšie sedí na pomer strán 0.56) ──────────────────────────────────────────
+  # 1   254×480   jas  46 · kontrast  61 · sýtosť  16 % · hrany 0.024 · paleta #030404 #93A1B3
+  # 2   238×480   jas  37 · kontrast  50 · sýtosť  17 % · hrany 0.019 · paleta #030505 #242C2F
+  # 3   238×480   jas  47 · kontrast  54 · sýtosť  16 % · hrany 0.018 · paleta #010202 #576673
+  # 4   254×480   jas  41 · kontrast  58 · sýtosť  36 % · hrany 0.021 · paleta #020505 #293236
+
+priemer cez panely (jas/kontrast)............. 42.88 / 55.825
+
+  Poznámky (čo appka sama píše k výsledku):
+   • Panely sa v jase líšia o 10 úrovní (37–47). Držia sa pri sebe, takže priemer dáva zmysel.
+
+  Farby naprieč panelmi (farba · v koľkých paneloch):
+   • #A3B4C4 · 2/4 panelov · pokrytie 0.3 %
+   • #020505 · 1/4 panelov · pokrytie 15.2 %
+   • #030404 · 1/4 panelov · pokrytie 14.4 %
+   • #030505 · 1/4 panelov · pokrytie 14.3 %
+   • #010202 · 1/4 panelov · pokrytie 12.1 %
+   • #576673 · 1/4 panelov · pokrytie 3.8 %
+   • #242C2F · 1/4 panelov · pokrytie 3.6 %
+   • #293236 · 1/4 panelov · pokrytie 3.3 %
+
+  Čo to NEtvrdí:
+   – nie je to jeho moodboard (grid je poskladaný z jeho snímok),
+   – appka obrázky ani video negeneruje, meria len to, čo dostane,
+   – či sú panely správne rozdelené, ukazuje počet a režim vyššie.
+
+Meranie zapísané: /home/user/kontrola-krok14-moodboard.json
