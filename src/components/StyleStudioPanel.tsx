@@ -1004,6 +1004,17 @@ export function StyleStudioPanel({
                 getSourceBlob={canonicalPreviewProps.getSourceBlob}
                 getAssetBlob={canonicalPreviewProps.getAssetBlob}
                 showToast={showToast}
+                // KROK 24 — z vybraného štýlu berieme NAMERANÉ svetlo jeho videa.
+                styleRecipeId={recipeId}
+                referenceLight={
+                  activeRecipe.measuredLight
+                    ? {
+                        brightness: activeRecipe.measuredLight.brightness,
+                        contrast: activeRecipe.measuredLight.contrast,
+                        sourceSk: activeRecipe.measuredLight.sourceSk,
+                      }
+                    : null
+                }
               />
             )}
 

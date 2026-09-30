@@ -1,0 +1,70 @@
+
+Zdroj:      /home/user/real-media/real_speech.mp4
+Referencia: /home/user/referencie/aikt-Db6EKCpOpLo.mp4
+
+================================================================================================
+1) MERANIE — referencia (jeho video) a zdroj (moje video)
+================================================================================================
+referencia: jas / kontrast .......................... 142.27 / 57.6 (86 vzoriek)
+zdroj:      jas / kontrast .......................... 22.03 / 0.23 (41 vzoriek)
+
+================================================================================================
+2) VÝPOČET KOREKCIE (čistá funkcia, žiadny odhad)
+================================================================================================
+jas (ffmpeg eq, sčítanie) ........................... 0.35
+kontrast (ffmpeg eq, násobiteľ) ..................... 0.75
+filter pre render ................................... eq=brightness=…:contrast=…
+poznámka ............................................ Svetlo: zdroj 22.03 / 0.23 → referencia 142.27 / 57.60; korekcia jas +0.350 (sčítanie), kontrast ×0.750 (kontrast je mimo bezpečných limitov — ostáva najbližšia povolená hodnota; jas narazil na bezpečný limit (viac svetla by už vybielilo obraz) (hľadal som najbližší dosiahnuteľný výsledok v rámci limitov)).
+
+================================================================================================
+3) CANONICAL OS — štýl z jeho videa cez CommandManager
+================================================================================================
+recept podľa referencie ............................. AI_CINEMATIC_TAKE
+dĺžka zdroja ........................................ 20.27 s
+rozhodnutí aplikovaných ............................. 10
+canonical os sa zmenila ............................. true
+
+================================================================================================
+4) REAL EXPORT — existujúca linka appky, s korekciou svetla
+================================================================================================
+zdroj nahraný v appke ............................... bf0fd68e-3e2a-4664-84a4-051a00da581f__real_speech.mp4
+titulkov v zadaní ................................... 6
+dá sa exportovať .................................... áno
+blokery ............................................. žiadne
+
+  ▸ A) KONTROLNÝ BEH — bez korekcie svetla (aby bolo vidno, čo robí svetlo a čo titulky)
+    jobId ........................................... b20fb7c9-4b98-4311-bce8-b98d38a0c6a3
+      • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+      • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+    stav renderu .................................... done
+    uložené ......................................... /home/user/kontrola-svetlo/kontrola-bez-korekcie.mp4 (411568 B)
+
+  ▸ B) BEH S MERANOU KOREKCIOU SVETLA (rovnaká canonical os aj titulky)
+    jobId ........................................... 32b71a80-bd9e-428f-9a8f-4db056c05e88
+      • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+      • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+    stav renderu .................................... done
+    uložené ......................................... /home/user/export-svetlo-aktivista.mp4 (429086 B)
+
+================================================================================================
+5) MERANIE — ako blízko sme k jeho videu (a čo z toho spravilo svetlo)
+================================================================================================
+referencia (jeho video) ............................. jas 142.27 / kontrast 57.6
+zdroj (pred) ........................................ jas 22.03 (odchýlka -120.24) / kontrast 0.23 (odchýlka -57.37)
+kontrolný beh (titulky, bez svetla) ................. jas 23.58 (odchýlka -118.69) / kontrast 15.35 (odchýlka -42.25)
+výsledok (titulky + svetlo) ......................... jas 148.86 (odchýlka 6.59) / kontrast 6.9 (odchýlka -50.7)
+
+svetlo samo posunulo jas smerom k referencii ........ ÁNO
+svetlo samo posunulo kontrast smerom k referencii ... NIE
+rozdiel medzi behmi (jas) ........................... 125.28
+rozdiel medzi behmi (kontrast) ...................... -8.45
+
+================================================================================================
+6) VERDIKT
+================================================================================================
+Namerané svetlo z jeho videa sa dostalo do renderu: oproti kontrolnému behu (tie isté titulky aj strih) sa obraz posunul k jeho videu — čísla vyššie.
+Klasifikácia:
+  • meranie jasu/kontrastu z reálnych videí ................. REAL MEDIA (tento beh)
+  • korekcia svetla v renderi (ffmpeg eq) .................. REAL EXPORT VERIFIED (tento beh, s kontrolným behom)
+  • náhľad v prehliadači ................................... NOT VERIFIED (v prostredí nie je DOM)
+dôkaz uložený ...................................... /home/user/kontrola-svetlo/svetlo-zo-referencie.json

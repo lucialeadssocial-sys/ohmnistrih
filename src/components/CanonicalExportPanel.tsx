@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, Play, Download, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Eye, Play, Download, Loader2, AlertTriangle, CheckCircle2, Sun } from "lucide-react";
 import type { ProjectModel } from "../core/types/project";
 import { buildCanonicalFramePlan, canonicalFrameSummarySk, projectContentEndSec } from "../core/render/canonicalFrame";
 import { renderEngine } from "../core/render/renderEngine";
+import type { LightCorrection } from "../core/export/lightMatch";
 import { buildCanonicalExportPlan, canonicalExportSummarySk, canonicalOverlayAssets, type CanonicalExportPlan } from "../core/export/canonicalExport";
 
 /**
@@ -45,6 +46,20 @@ export interface CanonicalExportPanelProps {
   showToast?: (message: string) => void;
   /** Predvolene zapnutý náhľad — používateľ má vidieť, čo sa exportuje. */
   defaultPreviewOn?: boolean;
+  /** Vybraný štýl z ich videa — z neho sa berie NAMERANÉ svetlo (referencia). */
+  styleRecipeId?: string | null;
+  /** Namerené svetlo referencie priamo (keď neprichádza z receptu). */
+  referenceLight?: { brightness: number; contrast: number; sourceSk?: string } | null;
+}
+
+/** Výsledok merania svetla (krok 24) — čo appka namerala a akú korekciu z toho počítala. */
+interface LightMatchState {
+  measured: { brightness: number; contrast: number; frames?: number };
+  reference: { brightness: number; contrast: number; sourceSk: string } | null;
+  correction: LightCorrection | null;
+  notesSk: string[];
+  /** Nahrané video, na ktorom sa meralo — export ho znovu použije (ak tam ešte je). */
+  uploadId: string;
 }
 
 interface BurnStatusLike {
@@ -66,6 +81,8 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   getAssetBlob,
   showToast,
   defaultPreviewOn = true,
+  styleRecipeId = null,
+  referenceLight = null,
 }) => {
   const isSk = language === "sk";
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -94,6 +111,10 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   const [assetUploads, setAssetUploads] = useState<Record<string, string>>({});
   /** Čo sa podarilo/ nepodarilo pripraviť pre render (vidí to používateľ). */
   const [overlayPrepNotesSk, setOverlayPrepNotesSk] = useState<string[]>([]);
+  // KROK 24 — merané svetlo: zmeriam TVOJE video a zosúladím ho s JEHO videom.
+  const [lightMatch, setLightMatch] = useState<LightMatchState | null>(null);
+  const [lightPhase, setLightPhase] = useState<"idle" | "measuring" | "done" | "error">("idle");
+  const [lightErrorSk, setLightErrorSk] = useState<string | null>(null);
   const prepKeyRef = useRef<string>("");
 
   /** Aktivované médium: hlavné video z canonical osi (na kreslenie náhľadu). */
@@ -125,12 +146,13 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
     const canvas = canvasRef.current;
     if (!canvas || !project || !previewOn) return;
     try {
-      renderEngine.renderFrame(project, currentTime, canvas);
+      // Náhľad kreslí s tou istou korekciou svetla, akú dostane export (krok 24).
+      renderEngine.renderFrame(project, currentTime, canvas, lightMatch?.correction ?? null);
       setPreviewErrorSk(null);
     } catch (err: any) {
       setPreviewErrorSk(err?.message ? String(err.message) : isSk ? "Náhľad sa nepodarilo vykresliť." : "Preview failed.");
     }
-  }, [project, currentTime, previewOn, isSk]);
+  }, [project, currentTime, previewOn, isSk, lightMatch?.correction]);
 
   useEffect(() => {
     draw();
@@ -147,6 +169,76 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   /** Médiá, ktoré canonical os potrebuje ako obrazové vrstvy. */
   const neededAssets = useMemo(() => (project ? canonicalOverlayAssets(project) : []), [project]);
   const neededKey = useMemo(() => neededAssets.map((a) => a.assetId).sort().join("|"), [neededAssets]);
+
+  /** Nahranie blobu na server (rovnaká linka, akú používa export). */
+  const uploadBlob = (blob: Blob, name: string) =>
+    new Promise<{ uploadId: string; uploadName: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/export/upload?name=${encodeURIComponent(name)}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300 && data.success) resolve(data);
+          else reject(new Error(data.errorSk || isSk ? `Nahrávanie zlyhalo (${xhr.status}).` : `Upload failed (${xhr.status}).`));
+        } catch {
+          reject(new Error(isSk ? "Server nevrátil zrozumiteľnú odpoveď pri nahrávaní." : "Unreadable response."));
+        }
+      };
+      xhr.onerror = () => reject(new Error(isSk ? "Video sa nepodarilo nahrať (spojenie spadlo)." : "Upload failed."));
+      xhr.send(blob);
+    });
+
+  /**
+   * KROK 24 — „napodobniť totožné“: zmeriam TVOJE video a vypočítam, čo treba
+   * zmeniť, aby sedelo s JEHO videom. Nič sa neodhaduje — meria server z pixelov
+   * a počíta sa to z nameraných čísel; keď sa merať nedá, panel to povie.
+   */
+  const measureLight = useCallback(async () => {
+    if (!getSourceBlob) {
+      setLightPhase("error");
+      setLightErrorSk(isSk ? "Neviem sa dostať k zdrojovému videu — meranie svetla sa nedá spraviť." : "Source video is not available.");
+      return;
+    }
+    setLightPhase("measuring");
+    setLightErrorSk(null);
+    try {
+      const blob = await getSourceBlob();
+      if (!blob) throw new Error(isSk ? "Zdrojové video už nie je načítané — otvor ho znova." : "Source video is not loaded.");
+      const uploaded = await uploadBlob(blob, "klip.mp4");
+      const resp = await fetch("/api/media/light-stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uploadId: uploaded.uploadId,
+          ...(styleRecipeId ? { recipeId: styleRecipeId } : {}),
+          ...(!styleRecipeId && referenceLight ? { reference: referenceLight } : {}),
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.errorSk || (isSk ? "Svetlo sa nepodarilo zmerať." : "Measuring failed."));
+      setLightMatch({
+        measured: data.measured,
+        reference: data.reference ?? null,
+        correction: data.correction ?? null,
+        notesSk: Array.isArray(data.notesSk) ? data.notesSk : [],
+        uploadId: uploaded.uploadId,
+      });
+      setLightPhase("done");
+      showToast?.(
+        data.correction
+          ? isSk
+            ? "Svetlo: zmerané a zosúladené s jeho videom — náhľad aj export použijú tie isté čísla."
+            : "Lighting measured and matched."
+          : isSk
+            ? "Svetlo: zmerané — korekcia nie je potrebná (rozdiel je v šume merania)."
+            : "Lighting measured — no correction needed.",
+      );
+    } catch (err) {
+      setLightPhase("error");
+      setLightErrorSk((err as Error).message);
+    }
+  }, [getSourceBlob, styleRecipeId, referenceLight, isSk, showToast]);
 
   /** Upload jedného overlay média (rovnaké percentá ako pri hlavnom videu). */
   const uploadAsset = (blob: Blob, name: string) =>
@@ -297,16 +389,25 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
       setPercent(0);
       setMessageSk(isSk ? "Spúšťam ffmpeg na serveri…" : "Starting ffmpeg…");
 
+      // Merané svetlo (krok 24) ide do renderu — tie isté čísla, aké ukazuje náhľad.
+      const requestBody = {
+        ...freshPlan.request,
+        ...(lightMatch?.correction ? { lightCorrection: lightMatch.correction } : {}),
+      };
       const resp = await fetch("/api/export/burn-captions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(freshPlan.request),
+        body: JSON.stringify(requestBody),
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.errorSk || (isSk ? "Render sa nepodarilo spustiť." : "Render failed to start."));
 
       jobRef.current = data.jobId;
-      setNotesSk([...(Array.isArray(data.notesSk) ? data.notesSk : []), ...freshPlan.notesSk]);
+      setNotesSk([
+        ...(Array.isArray(data.notesSk) ? data.notesSk : []),
+        ...freshPlan.notesSk,
+        ...(lightMatch?.correction ? [lightMatch.correction.noteSk, ...(lightMatch.notesSk ?? [])] : []),
+      ]);
       setPercent(0);
       setMessageSk(
         isSk
@@ -460,6 +561,66 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
             )}
           </>
         )}
+
+        {/* KROK 24 — svetlo z ich videí: meranie a zosúladenie (viditeľne, nie potichu) */}
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2.5 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={measureLight}
+              disabled={lightPhase === "measuring" || !getSourceBlob}
+              data-testid="measure-light-button"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-bold transition-colors"
+            >
+              {lightPhase === "measuring" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sun className="w-3.5 h-3.5" />}
+              {lightPhase === "measuring"
+                ? isSk
+                  ? "Meriame svetlo…"
+                  : "Measuring light…"
+                : isSk
+                  ? "Zmerať svetlo môjho videa a zosúladiť s jeho videom"
+                  : "Measure my video's light and match it"}
+            </button>
+            {lightMatch?.correction && (
+              <span className="text-[10px] text-violet-200 bg-violet-500/10 border border-violet-500/30 rounded-md px-2 py-1">
+                {isSk
+                  ? `Korekcia: jas ${lightMatch.correction.ffmpegBrightness >= 0 ? "+" : ""}${lightMatch.correction.ffmpegBrightness.toFixed(3)}, kontrast ×${lightMatch.correction.ffmpegContrast.toFixed(3)} — ide do náhľadu aj do exportu`
+                  : `Correction: brightness ${lightMatch.correction.ffmpegBrightness.toFixed(3)}, contrast ×${lightMatch.correction.ffmpegContrast.toFixed(3)}`}
+              </span>
+            )}
+          </div>
+          {lightMatch && (
+            <div className="space-y-0.5">
+              <p className="text-[10px] text-neutral-300">
+                {isSk ? "Tvoje video: " : "Your video: "}
+                <b>
+                  jas {lightMatch.measured.brightness.toFixed(2)} / kontrast {lightMatch.measured.contrast.toFixed(2)}
+                </b>
+                {lightMatch.reference && (
+                  <>
+                    {" · "}
+                    {isSk ? "jeho video: " : "their video: "}
+                    <b>
+                      jas {lightMatch.reference.brightness.toFixed(2)} / kontrast {lightMatch.reference.contrast.toFixed(2)}
+                    </b>
+                  </>
+                )}
+              </p>
+              {lightMatch.notesSk.map((n, i) => (
+                <p key={`lm-${i}`} className="text-[10px] text-neutral-500">
+                  – {n}
+                </p>
+              ))}
+            </div>
+          )}
+          {lightPhase === "error" && lightErrorSk && <p className="text-[10px] text-rose-300">⚠️ {lightErrorSk}</p>}
+          {!lightMatch && lightPhase === "idle" && (
+            <p className="text-[10px] text-neutral-500">
+              {isSk
+                ? "Zatiaľ nemerané — export pôjde s pôvodným svetlom tvojho videa. (Nič sa nerobí potichu.)"
+                : "Not measured yet — export keeps your original lighting."}
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button

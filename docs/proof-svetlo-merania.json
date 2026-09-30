@@ -1,0 +1,62 @@
+{
+  "krok": 24,
+  "zdroj": "/home/user/real-media/real_speech.mp4",
+  "referencia": "/home/user/referencie/aikt-Db6EKCpOpLo.mp4",
+  "recept": "AI_CINEMATIC_TAKE",
+  "meranie": {
+    "referencia": {
+      "brightness": 142.27,
+      "contrast": 57.6,
+      "samples": 86
+    },
+    "zdroj": {
+      "brightness": 22.03,
+      "contrast": 0.23,
+      "samples": 41
+    },
+    "kontrolnyBeh": {
+      "brightness": 23.58,
+      "contrast": 15.35,
+      "samples": 41
+    },
+    "vysledok": {
+      "brightness": 148.86,
+      "contrast": 6.9,
+      "samples": 41
+    }
+  },
+  "korekcia": {
+    "source": {
+      "brightness": 22.03,
+      "contrast": 0.23
+    },
+    "target": {
+      "brightness": 142.27,
+      "contrast": 57.6
+    },
+    "strengthPercent": 100,
+    "ffmpegBrightness": 0.35,
+    "ffmpegContrast": 0.75,
+    "noteSk": "Svetlo: zdroj 22.03 / 0.23 → referencia 142.27 / 57.60; korekcia jas +0.350 (sčítanie), kontrast ×0.750 (kontrast je mimo bezpečných limitov — ostáva najbližšia povolená hodnota; jas narazil na bezpečný limit (viac svetla by už vybielilo obraz) (hľadal som najbližší dosiahnuteľný výsledok v rámci limitov))."
+  },
+  "exporty": {
+    "kontrolnyBeh": {
+      "subor": "/home/user/kontrola-svetlo/kontrola-bez-korekcie.mp4",
+      "bajty": 411568,
+      "jobId": "b20fb7c9-4b98-4311-bce8-b98d38a0c6a3",
+      "suborPodlaServera": "omnistrih-titulky-real_speech-1790782630129.mp4"
+    },
+    "sKorekciou": {
+      "subor": "/home/user/export-svetlo-aktivista.mp4",
+      "bajty": 429086,
+      "jobId": "32b71a80-bd9e-428f-9a8f-4db056c05e88",
+      "suborPodlaServera": "omnistrih-titulky-real_speech-1790782635052.mp4"
+    }
+  },
+  "poznámkyServera": [],
+  "verdikt": {
+    "svetlo_posunulo_jas_k_referencii": true,
+    "svetlo_posunulo_kontrast_k_referencii": false,
+    "korekcia_pouzita": true
+  }
+}
