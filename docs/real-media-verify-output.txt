@@ -1,0 +1,121 @@
+==============================================================================
+REAL-MEDIA VERIFIKÁCIA STYLE STUDIA (krok 5–6)
+==============================================================================
+médium........................................ real_speech.mp4
+veľkosť / dĺžka............................... 330049 B / 21.53 s
+ffmpeg........................................ ffmpeg-linux-x86_64-v7.0.2
+audio pre prepis.............................. 193833 B (16 kHz mono)
+prepis (HTTP)................................. 200 | success=true | hasSpeech=true
+segmenty uložené.............................. /tmp/verify-style-segments.json
+viet / slov................................... 16 / 51
+recept........................................ Editoriálna koláž (EDITORIAL_COLLAGE)
+rozhodnutí.................................... 17
+podiel rečníka................................ 30 % (recept 30 %)
+presnosť časov z dát.......................... words
+provider...................................... NONE
+audio policy.................................. ORIGINAL_VO_MASTER
+
+Prvé 3 rozhodnutia (WHAT / WHY / WHEN NOT):
+  • [motion] 0–5.2 s
+     ČO:       krátke priblíženie na rečníka (112 %)
+     PREČO:    Prvá veta (hook) — krátke priblíženie pridá dôraz.
+     KEDY NIE: Nepoužiť, ak je v zábere statický text alebo rozhranie, ktoré musí zostať čitateľné.
+     ISTOTA:   60 %
+  • [talking_head] 0–5.2 s
+     ČO:       Nechaj rečníka v plnom obraze a pridaj len krátky titulok (bez podporného vizuálu).
+     PREČO:    Prvá veta rozhoduje, či divák zostane — rečníka nezakrývam.
+     KEDY NIE: Nepoužiť, ak je rečník mimo záberu alebo ak ide o čisto textovú pasáž bez tváre v obraze.
+     ISTOTA:   55 %
+  • [typography] 0–5.2 s
+     ČO:       Text „Za 5 minút denne“ ako veľké číslo (objaví sa postupne).
+     PREČO:    Vo vete je číslo (5) — čísla si divák musí prečítať, nie dopočítať.
+     KEDY NIE: Nepoužiť, ak je text už v titulkoch na tom istom mieste alebo ak by prekryl tvár.
+     ISTOTA:   70 %
+reálny obrázok (snímka 1. s).................. 11190 B
+médiá v projekte.............................. video:asset_main_video, image:asset_real_shot
+klipy pred apply.............................. video=1 audio=1
+
+--- APPLY REPORT ---
+STYLE STUDIO — APPLY (2026-09-30T07:27:54.603Z)
+Plán: styleplan_editorial_collage_1t1dea | recept: EDITORIAL_COLLAGE
+Verzia pred zmenou: ver_ff22f238-f6a8-4c08-a9c1-dfdafd31b823 (Real-media verifikácia — Style Studio)
+Aplikované: 14 | dodržané: 1 | nevykonané: 2
+Zmenila sa časová os? áno
+Klipy (video / b-roll / titulky) pred: 1 / 0 / 0
+Klipy (video / b-roll / titulky) po:   1 / 2 / 6
+Markery pred/po: 0 / 0
+Rozhodnutia v projekte pred/po: 0 / 17
+Audio: NEDOTKNUTÉ
+
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 0–5.2 s.
+   cieľ: video clip clip_main_video
+• [HONORED] talking_head — Nechaj rečníka v plnom obraze a pridaj len krátky titulok (bez podporného vizuálu).
+   dôvod: V rozsahu 0–5.2 s som nepridal žiadny podporný vizuál ani text — rečník zostáva bez prekrytia.
+   v projekte je vedené ako aplikované (ochranné pravidlo dodržané — appka sem nič nepridala)
+   cieľ: video track (bez zmeny)
+• [APPLIED] typography — Pridal som text „Za 5 minút denne“ na stopu tituliek (0–5.2 s).
+   cieľ: caption track „track_caption“
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 5.2–8.7 s.
+   cieľ: video clip clip_main_video
+• [APPLIED] typography — Pridal som text „Najprv som robil“ na stopu tituliek (5.2–8.7 s).
+   cieľ: caption track „track_caption“
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 8.7–11.5 s.
+   cieľ: video clip clip_main_video
+• [APPLIED] typography — Pridal som text „Potom som zaviedol“ na stopu tituliek (8.7–11.5 s).
+   cieľ: caption track „track_caption“
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 11.5–14.1 s.
+   cieľ: video clip clip_main_video
+• [APPLIED] typography — Pridal som text „Ráno plán, večer“ na stopu tituliek (11.5–14.1 s).
+   cieľ: caption track „track_caption“
+• [APPLIED] supporting_visual — Vložil som existujúce médium „snímka-z-videa.png“ na b-roll stopu (14.1–18.2 s).
+   cieľ: b-roll track „track_broll“ + médium asset_real_shot
+• [SKIPPED] composition — Poskladaj vrstvy tak, aby rečník zostal viditeľný (vrstvená koláž).
+   dôvod: Kompozícia sa prejaví až s prvkami v obraze — sám záber nemám čím preložiť, preto som nič nemenil (zostáva zapísané ako pravidlo pre tento úsek).
+   cieľ: —
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 14.1–18.2 s.
+   cieľ: video clip clip_main_video
+• [APPLIED] typography — Pridal som text „strih o 70 percent.“ na stopu tituliek (14.1–18.2 s).
+   cieľ: caption track „track_caption“
+• [APPLIED] supporting_visual — Vložil som existujúce médium „snímka-z-videa.png“ na b-roll stopu (18.2–22.5 s).
+   cieľ: b-roll track „track_broll“ + médium asset_real_shot
+• [SKIPPED] composition — Poskladaj vrstvy tak, aby rečník zostal viditeľný (vrstvená koláž).
+   dôvod: Kompozícia sa prejaví až s prvkami v obraze — sám záber nemám čím preložiť, preto som nič nemenil (zostáva zapísané ako pravidlo pre tento úsek).
+   cieľ: —
+• [APPLIED] motion — Nastavil som priblíženie 112 % na klip v čase 18.2–22.5 s.
+   cieľ: video clip clip_main_video
+• [APPLIED] typography — Pridal som text „Klient zaplatil 3 000“ na stopu tituliek (18.2–22.5 s).
+   cieľ: caption track „track_caption“
+
+• PROVIDER UNAVAILABLE — generovanie vizuálov nie je dostupné (žiadny provider).
+• Provider: žiadny (deterministické, lokálne). AI sa na Apply nepoužíva.
+aplikované / dodržané / nevykonané............ 14 / 1 / 2
+časová os zmenená............................. true
+audio nedotknuté (bajty)...................... true
+klipy video/b-roll/titulky pred............... 1/0/0
+klipy video/b-roll/titulky po................. 1/2/6
+markery pred/po............................... 0/0
+rozhodnutia v projekte pred/po................ 0/17
+snapshot verzia............................... ver_ff22f238-f6a8-4c08-a9c1-dfdafd31b823
+
+Reálne klipy vytvorené Apply:
+  • caption @ 0s (5.2s) → Za 5 minút denne [asset: —]
+  • caption @ 5.2s (3.499999999999999s) → Najprv som robil [asset: —]
+  • caption @ 8.7s (2.8000000000000007s) → Potom som zaviedol [asset: —]
+  • caption @ 11.5s (2.5999999999999996s) → Ráno plán, večer [asset: —]
+  • caption @ 14.1s (4.1s) → strih o 70 percent. [asset: —]
+  • caption @ 18.2s (4.300000000000001s) → Klient zaplatil 3 000 [asset: —]
+  • image @ 14.1s (4.1s) → Style Studio: diagram [asset: asset_real_shot]
+  • image @ 18.2s (4.300000000000001s) → Style Studio: diagram [asset: asset_real_shot]
+
+--- ROLLBACK ---
+ok............................................ true
+obnovené presne (bajty)....................... true
+časová os späť................................ true
+audio späť.................................... true
+klipy po rollbacku (video/b-roll/titulky)..... 1/0/0
+
+==============================================================================
+VÝSLEDOK: REAL-MEDIA PIPELINE PASS (apply zmenil projekt, audio nedotknuté, rollback presný)
+Poznámka: toto overuje ENGINE a canonical mutáciu na reálnych dátach.
+Neznamená to, že je overený prehliadač ani že je hotový export/preview.
+==============================================================================
