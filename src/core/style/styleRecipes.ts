@@ -145,6 +145,18 @@ export interface StyleRecipe {
   supportingVisualRatio: number;
   /** Pohyby, ktoré recept pripúšťa (neskôr ich vyberá Director podľa obsahu). */
   motionPool: MotionKind[];
+  /**
+   * **Namerané svetlo** (krok 15) — iba ak recept stojí na reálnom meraní videa.
+   * Sú to čísla z `referencie/analyza-*.json`, nie odhad: bez nich by svetlo
+   * ostalo na domyslenie modelu (jeho pravidlo: „keď AI nepovieš, aké má byť
+   * svetlo… musí si to domyslieť").
+   */
+  measuredLight?: {
+    brightness: number;
+    contrast: number;
+    /** Konkrétny zdroj čísel (súbor + čo je to za číslo). */
+    sourceSk: string;
+  };
   /** Recept sám priznáva, že bez dát sa nič nevymýšľa. */
   requiresSk: string;
 }
@@ -789,6 +801,11 @@ const AI_CINEMATIC_TAKE: StyleRecipe = makeRecipe({
   },
   talkingHeadRatio: 0.3,
   motionPool: ["subtle_zoom"],
+  measuredLight: {
+    brightness: 87.51,
+    contrast: 55.92,
+    sourceSk: "analyza-videa.json, medián cez 6 jeho IG klipov (median_jas / median_kontrast)",
+  },
   requiresSk:
     "Potrebuje dlhé zábery — vlastné b-roll alebo AI klipy vyrobené mimo appky (appka video negeneruje). Pomer 30/70 je z jeho zverejneného workflow, nie z merania videa; podiel rečníka sa bez detektora tvárí zmerať nedá.",
 });
@@ -867,6 +884,11 @@ const EDU_WORD_TALK: StyleRecipe = makeRecipe({
   transitionStyle: { base: "cut", accent: "punch", noteSk: "Prechody appka nemeria — recept preto používa len strih a dôraz na vloženom prvku." },
   talkingHeadRatio: 0.6,
   motionPool: ["pop", "slide", "subtle_zoom"],
+  measuredLight: {
+    brightness: 114.04,
+    contrast: 55.8,
+    sourceSk: "analyza-tiktok.json, medián cez 12 jeho tiktokov (median_jas / median_kontrast)",
+  },
   requiresSk:
     "Potrebuje vložené ilustrácie, screenshoty alebo karty k tomu, čo hovoríš — appka ich negeneruje, len ich načasuje. Podiel rečníka (60/40) nie je meraný (bez detektora tvárí) a zvýrazňovanie titulkov po slovách musí potvrdiť real export.",
 });

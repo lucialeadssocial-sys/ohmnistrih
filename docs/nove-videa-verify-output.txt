@@ -1,0 +1,57 @@
+==============================================================================
+tiktok-7311061470731570465.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 108.60 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:0 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 19 → 0.17/s
+dĺžka záberu (medián / priemer)............. 3.00 s / 5.43 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 2 % / 84 %
+jas / kontrast / sýtosť..................... 53.3 / 49.5 / 47 %
+teplota (R−B)............................... 2.55
+hustota hrán (0–1).......................... 0.021
+tmavé / stredné / svetlé.................... 72 % / 20 % / 7 %
+jas pásov hore/stred/dole................... 36 / 69 / 55
+podiel svetlého spodku...................... 0.25
+dynamika (0–255 na s)....................... 23.46 · pokojné vzorky 18 %
+paleta...................................... #020002 6.6 % (v 10 % vzoriek) · #0F151B 4.1 % (v 7 % vzoriek) · #0E141A 3.6 % (v 6 % vzoriek) · #080508 3.4 % (v 4 % vzoriek) · #090608 2.5 % (v 3 % vzoriek) · #0F141A 2.2 % (v 3 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (72 % tmavých pixelov), neutrálna teplota, sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.17/s, medián záberu 3 s)
+podiel času v dlhých záberoch............... 84 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #020002 v 10 % · #0F151B v 7 % · #0E141A v 6 % · #080508 v 4 % · #090608 v 3 % · #0F141A v 3 %
+
+==============================================================================
+tiktok-7243866775601892634.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 13.95 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:0 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 9 → 0.65/s
+dĺžka záberu (medián / priemer)............. 1.30 s / 1.40 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 34 % / 19 %
+jas / kontrast / sýtosť..................... 71.19 / 47.28 / 27 %
+teplota (R−B)............................... 12.68
+hustota hrán (0–1).......................... 0.043
+tmavé / stredné / svetlé.................... 57 % / 40 % / 3 %
+jas pásov hore/stred/dole................... 86 / 79 / 49
+podiel svetlého spodku...................... 0.00
+dynamika (0–255 na s)....................... 31.58 · pokojné vzorky 59 %
+paleta...................................... #252127 6.4 % (v 11 % vzoriek) · #28262E 6.3 % (v 11 % vzoriek) · #2F2628 6.2 % (v 11 % vzoriek) · #26252D 5.7 % (v 11 % vzoriek) · #231F21 4.5 % (v 7 % vzoriek) · #281917 3.9 % (v 7 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (57 % tmavých pixelov), teplý podtón, mierne sýte farby, stredný kontrast, stredný detail.
+tempo....................................... rýchly strih (0.65/s, medián záberu 1.3 s)
+podiel času v dlhých záberoch............... 19 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #252127 v 11 % · #28262E v 11 % · #2F2628 v 11 % · #26252D v 11 % · #231F21 v 7 % · #281917 v 7 %
+
+==============================================================================
+SÚHRN CEZ 2 VIDEÍ (medián — jeden klip neprebije ostatné)
+==============================================================================
+celkové trvanie............................. 122.55 s
+strihy za sekundu (medián).................. 0.41
+dĺžka záberu (medián)....................... 2.15 s
+jas / kontrast / sýtosť (medián)............ 62.25 / 48.39 / 37 %
+hustota hrán / dynamika (medián)............ 0.032 / 27.52
+videá so svetlým spodkom.................... 0 % (0/2)
+stála paleta (≥ 50 % videí)................. #020002 · #252127 · #28262E · #2F2628 · #26252D · #231F21
+občasná paleta.............................. —
+
+Meranie zapísané: /home/user/referencie/analyza-nove.json
