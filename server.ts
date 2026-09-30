@@ -4203,19 +4203,13 @@ app.post("/api/visual/card", (req, res) => {
   const bg = spec.palette.background.replace("#", "0x");
 
   const filters: string[] = [];
-  // Vzor (halftone) — deterministická mriežka v akcentnej farbe.
-  if (spec.pattern.boxCount > 0) {
-    const cols = Math.ceil(Math.sqrt(spec.pattern.boxCount * (width / height)));
-    const rows = Math.ceil(spec.pattern.boxCount / cols);
-    const cellW = width / cols;
-    const cellH = height / rows;
-    const size = Math.max(2, Math.round(Math.min(cellW, cellH) * 0.34));
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const x = Math.round(c * cellW + cellW / 2 - size / 2);
-        const y = Math.round(r * cellH + cellH / 2 - size / 2);
-        filters.push(`drawbox=x=${x}:y=${y}:w=${size}:h=${size}:color=${spec.palette.accent}@0.18:t=fill`);
-      }
+  // Vzor (halftone) — server kreslí PRESNE to, čo vypočítal generátor
+  // (`spec.pattern.boxes`), vrátane vynechaného pásu textu. Nič nedopočítava.
+  if (spec.pattern.boxes.length > 0) {
+    for (const box of spec.pattern.boxes) {
+      filters.push(
+        `drawbox=x=${box.x}:y=${box.y}:w=${box.size}:h=${box.size}:color=${spec.palette.accent}@${spec.pattern.opacity}:t=fill`,
+      );
     }
   }
   if (spec.assContent) {

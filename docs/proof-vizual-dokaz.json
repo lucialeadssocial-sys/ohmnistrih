@@ -7,8 +7,8 @@
     "recipe": "AI_CARD_DEMO"
   },
   "generovany": {
-    "name": "karta-ai_card_demo-statistic-9df65ac4.png",
-    "bytes": 39139,
+    "name": "karta-ai_card_demo-statistic-688d2b4e.png",
+    "bytes": 36285,
     "spec": {
       "ok": true,
       "width": 1080,
@@ -27,14 +27,28 @@
       "uppercase": true,
       "pattern": {
         "boxCount": 0,
-        "reasonSk": "recept je čistý (clean) → bez vzoru"
+        "boxes": [],
+        "opacity": 0,
+        "reasonSk": "recept je čistý (clean) → bez vzoru",
+        "skippedForText": 0
+      },
+      "layout": {
+        "lines": [
+          "70%."
+        ],
+        "fontSize": 334,
+        "subFontSize": 65,
+        "maxCharsPerLine": 8,
+        "estimatedWidthPx": 908,
+        "fitsSk": "Text je dlhší, preto som ho zmenšil na 334 px (a zalomil na 1 riadkov) — inak by sa zrezal."
       },
       "assContent": "",
       "ffmpegArgs": [],
       "notesSk": [
         "Farby: paleta receptu „AI karta (zadaj → výsledok)“ (4 farieb): pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia.",
         "Typografia: bold-condensed → DejaVu Sans (VEĽKÉ PÍSMENÁ podľa receptu).",
-        "Vzor: recept je čistý (clean) → bez vzoru."
+        "Vzor: recept je čistý (clean) → bez vzoru.",
+        "Text je dlhší, preto som ho zmenšil na 334 px (a zalomil na 1 riadkov) — inak by sa zrezal."
       ]
     }
   },
@@ -67,14 +81,14 @@
   },
   "importovane": [
     {
-      "name": "karta-ai_card_demo-statistic-9df65ac4.png",
-      "clipId": "clip_23d8df6d-82ce-45b4-86e2-b2e40836f600",
-      "assetId": "asset_eaa6e5d3-ae26-4f7e-9d86-b272200aafc0"
+      "name": "karta-ai_card_demo-statistic-688d2b4e.png",
+      "clipId": "clip_71a8da74-4b41-4871-b677-b185625d586d",
+      "assetId": "asset_c96b0a3f-29e4-44ce-b4e9-0324e1aa77c5"
     },
     {
       "name": "kniznica-8131c6a2.jpg",
-      "clipId": "clip_1fc996c1-5899-409e-85f0-c61378d529d7",
-      "assetId": "asset_4fe76978-c2ba-4ad6-9167-6f55fcbb2769"
+      "clipId": "clip_8650a765-5a46-4f37-bc52-5aec7413fac5",
+      "assetId": "asset_36d9a921-fb12-439f-ad4f-9ca4dd07dd42"
     }
   ],
   "apply": {

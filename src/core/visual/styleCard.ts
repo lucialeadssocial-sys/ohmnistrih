@@ -65,8 +65,28 @@ export interface StyleCardSpec {
   fontName: string;
   fontFile: string;
   uppercase: boolean;
-  /** Vzor (halftone mriežka) — počet štvorcov je deterministický. */
-  pattern: { boxCount: number; reasonSk: string };
+  /** Vzor (halftone mriežka) — deterministický; vynecháva pás textu, aby text ostal čitateľný. */
+  pattern: {
+    boxCount: number;
+    /** Presné štvorce (x, y, veľkosť) — server ich len vykreslí, nič nedopočítava. */
+    boxes: { x: number; y: number; size: number }[];
+    /** Priehľadnosť vzoru (aby neprebil text). */
+    opacity: number;
+    reasonSk: string;
+    /** Koľko štvorcov vypadlo, aby nešli cez text. */
+    skippedForText: number;
+  };
+  /** Zalomenie a veľkosť textu — aby sa text NIKDY nezrezal. */
+  layout: {
+    lines: string[];
+    fontSize: number;
+    subFontSize: number;
+    /** Najdlhší riadok v znakoch (pre kontrolu, že sa zmestí). */
+    maxCharsPerLine: number;
+    /** Koľko pixelov zaberá najdlhší riadok (odhad konštantou šírky znaku). */
+    estimatedWidthPx: number;
+    fitsSk: string;
+  };
   /** Obsah ASS titulku karty (prázdny pri „pattern“). */
   assContent: string;
   /** Argumenty pre ffmpeg (PNG na konci). */
@@ -127,8 +147,19 @@ export function chooseCardPalette(colorPalette: string[]): { background: string;
 }
 
 /** ASS hlavička karty (PlayRes presne podľa veľkosti obrázka). */
-function assHeader(width: number, height: number, fontName: string, bg: string, text: string, accent: string): string {
-  const base = Math.round(height / 16);
+function assHeader(
+  width: number,
+  height: number,
+  fontName: string,
+  bg: string,
+  text: string,
+  accent: string,
+  mainFontSize?: number,
+  subFontSize?: number,
+): string {
+  // Veľkosti prichádzajú z výpočtu rozloženia (aby sa text nezrezal); základ je len náhrada.
+  const main = mainFontSize && mainFontSize > 0 ? mainFontSize : Math.round(height / 16) * 2;
+  const sub = subFontSize && subFontSize > 0 ? subFontSize : Math.round(main * 0.35);
   return [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -140,12 +171,24 @@ function assHeader(width: number, height: number, fontName: string, bg: string, 
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
     // Tiene a obrysy vypnuté: karta má byť plochá grafika, nie titulok do videa.
-    `Style: Card,${fontName},${Math.round(base * 2.6)},${hexToAssColor(text)},${hexToAssColor(text)},${hexToAssColor(bg, 255)},${hexToAssColor(bg, 255)},0,0,0,0,100,100,0,0,1,0,0,5,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.12)},1`,
-    `Style: Accent,${fontName},${Math.round(base * 0.95)},${hexToAssColor(accent)},${hexToAssColor(accent)},${hexToAssColor(bg, 255)},${hexToAssColor(bg, 255)},1,0,0,0,100,100,0,0,1,0,0,5,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.06)},1`,
+    `Style: Card,${fontName},${main},${hexToAssColor(text)},${hexToAssColor(text)},${hexToAssColor(bg, 255)},${hexToAssColor(bg, 255)},0,0,0,0,100,100,0,0,1,0,0,5,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.12)},1`,
+    `Style: Accent,${fontName},${sub},${hexToAssColor(accent)},${hexToAssColor(accent)},${hexToAssColor(bg, 255)},${hexToAssColor(bg, 255)},1,0,0,0,100,100,0,0,1,0,0,5,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${Math.round(height * 0.06)},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ].join("\n");
+}
+
+/** Prázdny layout (keď sa karta nedá vytvoriť) — aby tvar ostal rovnaký. */
+export function emptyLayout(pattern: StyleCardSpec["pattern"]): StyleCardSpec["layout"] {
+  return {
+    lines: [],
+    fontSize: 0,
+    subFontSize: 0,
+    maxCharsPerLine: 0,
+    estimatedWidthPx: 0,
+    fitsSk: pattern.boxCount > 0 ? "Karta nemá text — len vzor." : "Karta je prázdna (chýba text).",
+  };
 }
 
 /** Bezpečný text do ASS riadku (bez nových riadkov, bez zálomkov, ktoré rozbijú štýl). */
@@ -157,7 +200,53 @@ export function escapeCardText(text: string): string {
     .trim();
 }
 
-/** Vzor: koľko štvorcov halftone mriežky (deterministicky z textúry receptu). */
+/**
+ * Vzor (halftone mriežka). Deterministicky z textúry receptu:
+ *  hustota štvorcov + **vynechanie pásu textu**, aby text ostal čitateľný.
+ * Preto sa štvorce počítajú tu (nie až v serveri) — dajú sa otestovať.
+ */
+export function buildPattern(
+  recipe: StyleRecipe,
+  size: { width: number; height: number },
+  textBand: { top: number; bottom: number } | null,
+): StyleCardSpec["pattern"] {
+  const density = patternBoxCount(recipe);
+  if (density.boxCount === 0) {
+    return { boxCount: 0, boxes: [], opacity: 0, reasonSk: density.reasonSk, skippedForText: 0 };
+  }
+  const cols = Math.ceil(Math.sqrt(density.boxCount * (size.width / size.height)));
+  const rows = Math.ceil(density.boxCount / cols);
+  const cellW = size.width / cols;
+  const cellH = size.height / rows;
+  // Jemnosť: menšie štvorce a nižšia priehľadnosť, aby vzor nepobil text.
+  const square = Math.max(2, Math.round(Math.min(cellW, cellH) * 0.22));
+  const opacity = density.boxCount >= 120 ? 0.1 : 0.12;
+  const boxes: { x: number; y: number; size: number }[] = [];
+  let skipped = 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = Math.round(c * cellW + cellW / 2 - square / 2);
+      const y = Math.round(r * cellH + cellH / 2 - square / 2);
+      // Pás textu zostáva prázdny (text je dôležitejší než vzor).
+      if (textBand && y + square > textBand.top && y < textBand.bottom) {
+        skipped++;
+        continue;
+      }
+      boxes.push({ x, y, size: square });
+    }
+  }
+
+  return {
+    boxCount: boxes.length,
+    boxes,
+    opacity,
+    reasonSk: density.reasonSk,
+    skippedForText: skipped,
+  };
+}
+
+/** Koľko štvorcov by mriežka mala (bez vynechania pásu textu) — z textúry receptu. */
 export function patternBoxCount(recipe: StyleRecipe): { boxCount: number; reasonSk: string } {
   const isHalftone = recipe.aesthetic?.halftone === true;
   const level = recipe.texture?.level ?? "clean";
@@ -167,6 +256,56 @@ export function patternBoxCount(recipe: StyleRecipe): { boxCount: number; reason
   if (level === "editorial") return { boxCount: 80, reasonSk: "editorial textúra → stredná mriežka" };
   if (level === "subtle") return { boxCount: 40, reasonSk: "jemná textúra → riedka mriežka" };
   return { boxCount: 0, reasonSk: "recept je čistý (clean) → bez vzoru" };
+}
+
+/**
+ * Zalomenie textu na riadky a veľkosť písma tak, aby sa text **nikdy nezrezal**.
+ *
+ * Prečo ručné zalomenie: ASS s WrapStyle 2 text nezalomí; pri dlhej vete a veľkom
+ * fontsize vyjde text mimo obraz (toto bola reálna chyba prvej verzie — text „ZA PÄŤ
+ * MINÚT DENNE“ sa zrezal). Preto appka riadky zalomí sama a font zmenší tak, aby
+ * najdlhší riadok sedel do šírky karty.
+ */
+export function layoutCardText(
+  text: string,
+  options: { width: number; height: number; maxCharsPerLine: number; preferredFontRatio: number },
+): { lines: string[]; fontSize: number; maxCharsPerLine: number; estimatedWidthPx: number; fitsSk: string } {
+  // Šírka znaku pre DejaVu Sans Bold ≈ 0,68 × veľkosť písma (konzervatívny odhad).
+  const CHAR_WIDTH_RATIO = 0.68;
+  const margin = 0.08;
+  const usableWidth = options.width * (1 - 2 * margin);
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > options.maxCharsPerLine && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  if (lines.length === 0) lines.push("");
+
+  const longest = Math.max(...lines.map((line) => line.length), 1);
+  const preferred = options.height * options.preferredFontRatio;
+  const fitFont = usableWidth / (longest * CHAR_WIDTH_RATIO);
+  const fontSize = Math.max(18, Math.round(Math.min(preferred, fitFont)));
+  const estimatedWidthPx = Math.round(longest * fontSize * CHAR_WIDTH_RATIO);
+  const shrunk = fontSize < Math.round(preferred);
+
+  return {
+    lines,
+    fontSize,
+    maxCharsPerLine: options.maxCharsPerLine,
+    estimatedWidthPx,
+    fitsSk: shrunk
+      ? `Text je dlhší, preto som ho zmenšil na ${fontSize} px (a zalomil na ${lines.length} riadkov) — inak by sa zrezal.`
+      : `Text sa zmestí: ${lines.length} riadkov, najdlhší ${longest} znakov ≈ ${estimatedWidthPx} px z ${Math.round(usableWidth)} px.`,
+  };
 }
 
 /**
@@ -180,11 +319,14 @@ export function buildStyleCardSpec(req: StyleCardRequest): StyleCardSpec {
   const font = FONT_FILES[recipe.typography.character] ?? FONT_FILES["clean-sans"];
   const palette = chooseCardPalette(recipe.colorPalette);
   const notesSk: string[] = [];
-  const pattern = patternBoxCount(recipe);
 
   const kindInfo = STYLE_CARD_KINDS.find((k) => k.id === req.kind);
   const text = escapeCardText(req.text ?? "");
   const subText = escapeCardText(req.subText ?? "");
+
+  // Rozloženie textu potrebuje poznať druh karty — preto sa počíta až nižšie,
+  // ale tvar `pattern` musí existovať vo všetkých návratoch.
+  const emptyPattern: StyleCardSpec["pattern"] = { boxCount: 0, boxes: [], opacity: 0, reasonSk: "zatiaľ nevypočítané", skippedForText: 0 };
 
   if (!kindInfo) {
     return {
@@ -200,7 +342,8 @@ export function buildStyleCardSpec(req: StyleCardRequest): StyleCardSpec {
       fontName: font.name,
       fontFile: font.file,
       uppercase: recipe.typography.uppercase,
-      pattern,
+      pattern: emptyPattern,
+      layout: emptyLayout(emptyPattern),
       assContent: "",
       ffmpegArgs: [],
       notesSk: [],
@@ -222,7 +365,8 @@ export function buildStyleCardSpec(req: StyleCardRequest): StyleCardSpec {
       fontName: font.name,
       fontFile: font.file,
       uppercase: recipe.typography.uppercase,
-      pattern,
+      pattern: emptyPattern,
+      layout: emptyLayout(emptyPattern),
       assContent: "",
       ffmpegArgs: [],
       notesSk: [],
@@ -232,51 +376,87 @@ export function buildStyleCardSpec(req: StyleCardRequest): StyleCardSpec {
   const shownText = recipe.typography.uppercase ? text.toUpperCase() : text;
   const shownSub = recipe.typography.uppercase ? subText.toUpperCase() : subText;
 
+  // --- Rozloženie textu (aby sa NIKDY nezrezal) -----------------------------
+  const layoutSpec = {
+    headline: { maxCharsPerLine: 16, preferredFontRatio: 0.11 },
+    statistic: { maxCharsPerLine: 8, preferredFontRatio: 0.18 },
+    label: { maxCharsPerLine: 20, preferredFontRatio: 0.05 },
+    quote: { maxCharsPerLine: 22, preferredFontRatio: 0.07 },
+    pattern: { maxCharsPerLine: 1, preferredFontRatio: 0 },
+  }[req.kind as string] ?? { maxCharsPerLine: 16, preferredFontRatio: 0.11 };
+
+  const mainLayout = layoutCardText(req.kind === "quote" ? shownText : shownText, {
+    width,
+    height,
+    maxCharsPerLine: layoutSpec.maxCharsPerLine,
+    preferredFontRatio: layoutSpec.preferredFontRatio,
+  });
+  const subLayout = shownSub
+    ? layoutCardText(shownSub, { width, height, maxCharsPerLine: Math.max(12, layoutSpec.maxCharsPerLine), preferredFontRatio: 0.034 })
+    : null;
+
+  // Pás textu (kde nesmie byť vzor) — z výšky textu a jeho pozície v karte.
+  const textLines = (mainLayout.lines.length || 0) + (subLayout?.lines.length ?? 0);
+  const lineHeight = mainLayout.fontSize * 1.35;
+  const blockHeight = textLines * lineHeight + (subLayout ? subLayout.fontSize * 1.5 : 0);
+  const centerY = height / 2;
+  const textBand = kindInfo.needsText
+    ? { top: Math.round(centerY - blockHeight / 2 - 24), bottom: Math.round(centerY + blockHeight / 2 + 24) }
+    : null;
+  const patternComputed = kindInfo.needsText
+    ? buildPattern(recipe, { width, height }, textBand)
+    : buildPattern(recipe, { width, height }, null);
+
   // --- ASS obsah karty (žiadne animácie: statický vizuál) --------------------
   const lines: string[] = [];
+  const layout: StyleCardSpec["layout"] = {
+    lines: mainLayout.lines,
+    fontSize: mainLayout.fontSize,
+    subFontSize: subLayout?.fontSize ?? 0,
+    maxCharsPerLine: mainLayout.maxCharsPerLine,
+    estimatedWidthPx: mainLayout.estimatedWidthPx,
+    fitsSk: mainLayout.fitsSk,
+  };
+
   if (kindInfo.needsText) {
-    lines.push(assHeader(width, height, font.name, palette.background, palette.text, palette.accent));
+    lines.push(
+      assHeader(
+        width,
+        height,
+        font.name,
+        palette.background,
+        palette.text,
+        palette.accent,
+        mainLayout.fontSize,
+        subLayout?.fontSize ?? Math.round(mainLayout.fontSize * 0.35),
+      ),
+    );
     const t = "0:00:00.00";
     const end = "9:59:59.00";
+    const mainText = mainLayout.lines.join("\\N");
+    const subTextLines = subLayout ? subLayout.lines.join("\\N") : "";
     if (req.kind === "quote") {
-      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,{\\i1}„${shownText}“`);
+      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,{\\i1}„${mainText}“`);
       lines.push(`Dialogue: 0,${t},${end},Accent,,0,0,0,,—`);
     } else if (req.kind === "statistic") {
-      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,${shownText}`);
-      if (shownSub) lines.push(`Dialogue: 0,${t},${end},Accent,,0,0,0,,${shownSub}`);
+      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,${mainText}`);
+      if (subTextLines) lines.push(`Dialogue: 0,${t},${end},Accent,,0,0,0,,${subTextLines}`);
     } else if (req.kind === "label") {
-      lines.push(`Dialogue: 0,${t},${end},Accent,,0,0,0,,${shownText}`);
+      lines.push(`Dialogue: 0,${t},${end},Accent,,0,0,0,,${mainText}`);
     } else {
-      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,${shownText}`);
+      lines.push(`Dialogue: 0,${t},${end},Card,,0,0,0,,${mainText}`);
     }
-  }
-
-  // --- Vzor (halftone mriežka) ----------------------------------------------
-  const filters: string[] = [];
-  if (pattern.boxCount > 0) {
-    const cols = Math.ceil(Math.sqrt(pattern.boxCount * (width / height)));
-    const rows = Math.ceil(pattern.boxCount / cols);
-    const cellW = width / cols;
-    const cellH = height / rows;
-    const size = Math.max(2, Math.round(Math.min(cellW, cellH) * 0.34));
-    // Mriežka je v akcentnej farbe s priehľadnosťou — karta zostáva čitateľná.
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const x = Math.round(c * cellW + cellW / 2 - size / 2);
-        const y = Math.round(r * cellH + cellH / 2 - size / 2);
-        filters.push(`drawbox=x=${x}:y=${y}:w=${size}:h=${size}:color=${palette.accent}@0.18:t=fill`);
-      }
-    }
-  }
-  if (kindInfo.needsText) {
-    // ASS ide posledný, aby bol text vždy nad vzorom.
-    filters.push("ass=CARD_ASS_PATH");
   }
 
   const paletteSourceSk = `paleta receptu „${recipe.labelSk}“ (${recipe.colorPalette.length} farieb): pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia`;
   notesSk.push(`Farby: ${paletteSourceSk}.`);
   notesSk.push(`Typografia: ${recipe.typography.character} → ${font.name}${recipe.typography.uppercase ? " (VEĽKÉ PÍSMENÁ podľa receptu)" : ""}.`);
-  notesSk.push(`Vzor: ${pattern.reasonSk}.`);
+  notesSk.push(
+    patternComputed.boxCount > 0
+      ? `Vzor: ${patternComputed.reasonSk}${patternComputed.skippedForText > 0 ? ` — ${patternComputed.skippedForText} štvorcov som vynechal, aby nešli cez text (karta má ${patternComputed.boxCount})` : ` (${patternComputed.boxCount} štvorcov)`}.`
+      : `Vzor: ${patternComputed.reasonSk}.`,
+  );
+  notesSk.push(layout.fitsSk);
   if (req.measured) {
     notesSk.push(
       `Tvoje video má nameraný jas ${req.measured.brightness.toFixed(2)} a kontrast ${req.measured.contrast.toFixed(2)} — kartu som mu neprispôsoboval, aby ostala v palete receptu (dá sa zapnúť korekcia svetla pri exporte).`,
@@ -295,7 +475,8 @@ export function buildStyleCardSpec(req: StyleCardRequest): StyleCardSpec {
     fontName: font.name,
     fontFile: font.file,
     uppercase: recipe.typography.uppercase,
-    pattern,
+    pattern: patternComputed,
+    layout,
     assContent: lines.join("\n"),
     // Výsledný ffmpeg príkaz skladá server (doplní cestu k ASS súboru).
     ffmpegArgs: [],
