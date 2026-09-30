@@ -93,6 +93,7 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { mediaEngine } from "./core/media/mediaEngine";
 import { coreEngine } from "./core";
+import { applyStylePlan, rollbackStyleApply } from "./core/style/styleApply";
 import {
   VideoProjectSettings,
   CaptionSegment,
@@ -3999,6 +4000,8 @@ function MainApp() {
                         onSeek={handleSeek}
                         onOpenCaptions={() => setActiveTab("captions")}
                         showToast={showToast}
+                        onApplyStylePlan={(plan, decisionIds) => applyStylePlan(coreEngine, plan, { decisionIds })}
+                        onRollbackStyleApply={(report) => rollbackStyleApply(coreEngine, report)}
                       />
                     )}
                     {activeTab === "eraser" && <ObjectEraserSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} language={language} />}

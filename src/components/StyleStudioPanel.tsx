@@ -27,7 +27,14 @@ import { buildStylePlan, type StylePlan } from "../core/style/styleIntelligence"
 import { customRecipeFromBrief, getStyleRecipe, type StylePresetId, type StyleRecipe } from "../core/style/styleRecipes";
 import { DEFAULT_STYLE_CONTROLS, type StyleControls } from "../core/style/styleDecisionTypes";
 import {
+  styleApplyCanRunSk,
+  styleApplyReportTextSk,
+  type StyleApplyReport,
+  type StyleRollbackReport,
+} from "../core/style/styleApply";
+import {
   applyNoticeSk,
+  applySectionNoticeSk,
   confidenceViewSk,
   consideredRowsSk,
   controlValueLabelSk,
@@ -75,6 +82,15 @@ export interface StyleStudioPanelProps {
    * obrazovka si **nič nevymýšľa**, plán vznikne len kliknutím z reálneho prepisu.
    */
   initialPlan?: StylePlan | null;
+  /**
+   * APPLY (krok 5–6): skutočná zmena projektu cez existujúci CommandManager.
+   * Bez tohto callbacku obrazovka **neaplikuje nič** a len to povie (statický náhľad).
+   */
+  onApplyStylePlan?: (plan: StylePlan, decisionIds: string[]) => StyleApplyReport | null;
+  /** Rollback na verziu vytvorenú pred aplikovaním (presne pôvodný stav). */
+  onRollbackStyleApply?: (report: StyleApplyReport) => StyleRollbackReport | null;
+  /** Hotový report z aplikovania (pre statický náhľad a testy). */
+  initialApplyReport?: StyleApplyReport | null;
 }
 
 const TONE_CLASS: Record<string, string> = {
@@ -101,6 +117,9 @@ export function StyleStudioPanel({
   onOpenCaptions,
   showToast,
   initialPlan = null,
+  onApplyStylePlan,
+  onRollbackStyleApply,
+  initialApplyReport = null,
 }: StyleStudioPanelProps) {
   const isSk = language === "sk";
 
@@ -114,6 +133,10 @@ export function StyleStudioPanel({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showConsidered, setShowConsidered] = useState(false);
   const [computing, setComputing] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applyReport, setApplyReport] = useState<StyleApplyReport | null>(initialApplyReport);
+  const [rollbackReport, setRollbackReport] = useState<StyleRollbackReport | null>(null);
 
   const wordCount = useMemo(
     () => segments.reduce((sum, s) => sum + (Array.isArray(s.words) ? s.words.length : 0), 0),
@@ -169,6 +192,58 @@ export function StyleStudioPanel({
 
   const mark = (id: string, status: DecisionStatus) => {
     setMarks((prev) => ({ ...prev, [id]: prev[id] === status ? "proposed" : status }));
+  };
+
+  const selectedIds = useMemo(
+    () => rows.filter((r) => marks[r.id] === "accepted").map((r) => r.id),
+    [rows, marks],
+  );
+  const gateApply = useMemo(() => styleApplyCanRunSk(plan, selectedIds.length, consent), [plan, selectedIds.length, consent]);
+
+  const runApply = (ids: string[]) => {
+    if (!plan || !onApplyStylePlan) return;
+    setApplying(true);
+    try {
+      const report = onApplyStylePlan(plan, ids);
+      setApplyReport(report);
+      setRollbackReport(null);
+      if (report?.ok) {
+        showToast?.(
+          isSk
+            ? `✅ Aplikované: ${report.appliedCount} zmenené, ${report.honoredCount} dodržané, ${report.skippedCount} nevykonané. Verzia na vrátenie: ${report.snapshotVersionId?.slice(0, 10) ?? "—"}`
+            : `✅ Applied.`,
+        );
+      } else if (report) {
+        showToast?.(isSk ? `⛔ Neaplikované: ${report.errorSk}` : "⛔ Not applied.");
+      }
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const runRollback = () => {
+    if (!applyReport || !onRollbackStyleApply) return;
+    const res = onRollbackStyleApply(applyReport);
+    setRollbackReport(res);
+    showToast?.(
+      res?.ok
+        ? isSk
+          ? res.restoredExactly
+            ? "↩️ Vrátené presne do stavu pred aplikovaním."
+            : "↩️ Verzia obnovená, ale stav sa líši — skontroluj to."
+          : "↩️ Rollback zlyhal."
+        : "↩️ Rollback nedostupný.",
+    );
+  };
+
+  const copyApplyReport = async () => {
+    if (!applyReport) return;
+    try {
+      await navigator.clipboard.writeText(styleApplyReportTextSk(applyReport));
+      showToast?.(isSk ? "📋 Report z aplikovania skopírovaný." : "📋 Report copied.");
+    } catch {
+      showToast?.(isSk ? "Kopírovanie nedostupné." : "Clipboard unavailable.");
+    }
   };
 
   const copyPlan = async () => {
@@ -634,6 +709,145 @@ export function StyleStudioPanel({
               )}
             </div>
 
+            {/* 4. Apply (krok 5–6) */}
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-neutral-400" />
+                <h3 className="text-xs font-black text-white uppercase tracking-wide">
+                  {isSk ? "4. Aplikovať do projektu (snapshot → CommandManager)" : "4. Apply"}
+                </h3>
+              </div>
+
+              {!onApplyStylePlan ? (
+                <p className="text-[11px] text-amber-300/90">{applySectionNoticeSk(false)}</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => setMarks(Object.fromEntries(rows.map((r) => [r.id, "accepted" as DecisionStatus])))}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-[11px] font-bold"
+                    >
+                      {isSk ? `Vybrať všetky (${rows.length})` : "Select all"}
+                    </button>
+                    <button
+                      onClick={() => setMarks({})}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] font-bold"
+                    >
+                      {isSk ? "Zrušiť označenie" : "Clear"}
+                    </button>
+                    <span className="text-[10px] text-neutral-400">
+                      {isSk ? "Vybrané na aplikovanie" : "Selected"}: <b className="text-white">{selectedIds.length}</b> / {rows.length}
+                    </span>
+                  </div>
+
+                  <label className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={consent}
+                      onChange={(e) => setConsent(e.target.checked)}
+                      className="mt-0.5 accent-rose-500"
+                    />
+                    <span className="text-[11px] text-amber-100/90">
+                      {isSk
+                        ? "Rozumiem: aplikovaním sa zmení projekt (pribudnú klipy/markery a rozhodnutia). Najprv vznikne verzia, takže sa to dá vrátiť."
+                        : "I understand: applying changes the project."}
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => runApply(selectedIds)}
+                      disabled={!gateApply.ready || applying}
+                      className={`px-4 py-2 rounded-xl text-[11px] font-black flex items-center gap-2 ${
+                        gateApply.ready ? "bg-rose-500 hover:bg-rose-400 text-white" : "bg-neutral-800 text-neutral-500 cursor-not-allowed"
+                      }`}
+                    >
+                      {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      {isSk ? "Aplikovať vybrané" : "Apply selected"}
+                    </button>
+                    {applyReport && (
+                      <>
+                        <button
+                          onClick={copyApplyReport}
+                          className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-[11px] font-bold flex items-center gap-1.5"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          {isSk ? "Skopírovať report" : "Copy report"}
+                        </button>
+                        {onRollbackStyleApply && applyReport.snapshotVersionId && (
+                          <button
+                            onClick={runRollback}
+                            className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-amber-300 text-[11px] font-bold flex items-center gap-1.5"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            {isSk ? "Vrátiť späť (rollback)" : "Rollback"}
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {!gateApply.ready && (
+                      <span className="text-[10px] text-neutral-500">{gateApply.reasonSk}</span>
+                    )}
+                  </div>
+
+                  {applyReport && (
+                    <div className={`rounded-xl border p-3 space-y-2 ${applyReport.ok ? "border-emerald-500/30 bg-emerald-500/5" : "border-rose-500/40 bg-rose-500/10"}`}>
+                      <p className="text-[11px] font-bold text-white">
+                        {applyReport.ok
+                          ? isSk
+                            ? `Aplikované: ${applyReport.appliedCount} · dodržané: ${applyReport.honoredCount} · nevykonané: ${applyReport.skippedCount}`
+                            : "Applied"
+                          : `⛔ ${applyReport.errorSk}`}
+                      </p>
+                      {applyReport.ok && (
+                        <div className="grid gap-1 sm:grid-cols-2 text-[10px] text-neutral-300">
+                          <p>• {isSk ? "Časová os zmenená" : "Timeline changed"}: <b>{applyReport.timelineChanged ? (isSk ? "áno" : "yes") : isSk ? "nie" : "no"}</b></p>
+                          <p>• {isSk ? "Verzia pred zmenou" : "Snapshot"}: <b className="font-mono">{applyReport.snapshotVersionId?.slice(0, 14)}</b></p>
+                          <p>
+                            • {isSk ? "Klipy pred → po" : "Clips"}: {applyReport.before.videoClips}/{applyReport.before.brollClips}/{applyReport.before.captionClips} → {applyReport.after.videoClips}/{applyReport.after.brollClips}/{applyReport.after.captionClips}
+                          </p>
+                          <p>• {isSk ? "Markery" : "Markers"}: {applyReport.before.markers} → {applyReport.after.markers}</p>
+                          <p className={applyReport.audioPreserved ? "text-emerald-300" : "text-rose-300"}>
+                            • {isSk ? "Audio" : "Audio"}: {applyReport.audioPreserved ? "NEDOTKNUTÉ" : "ZMENA"}
+                          </p>
+                          <p>• {isSk ? "Provider" : "Provider"}: {applyReport.provider === "NONE" ? (isSk ? "žiadny (lokálne)" : "none") : applyReport.provider}</p>
+                        </div>
+                      )}
+                      {applyReport.ok && (
+                        <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar">
+                          {applyReport.steps.map((st) => (
+                            <div key={st.decisionId} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
+                              <p className="text-[10px] font-bold text-neutral-300">
+                                {st.status === "APPLIED" ? "✅" : st.status === "HONORED" ? "🛡️" : "⏭️"} {st.kind} — {st.statusLabelSk}
+                              </p>
+                              <p className="text-[10px] text-neutral-400">{st.whatSk}</p>
+                              {st.status !== "APPLIED" && <p className="text-[10px] text-neutral-500">{st.reasonSk}</p>}
+                              {st.alreadyApplied && <p className="text-[10px] text-emerald-300/80">{isSk ? "efekt v projekte už existoval z predošlého aplikovania" : "already applied"}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {rollbackReport && (
+                        <p className={`text-[11px] font-bold ${rollbackReport.restoredExactly ? "text-emerald-300" : "text-amber-300"}`}>
+                          {rollbackReport.ok
+                            ? rollbackReport.restoredExactly
+                              ? isSk
+                                ? "↩️ Vrátené presne do stavu pred aplikovaním (obrazy, markery aj rozhodnutia)."
+                                : "↩️ Restored exactly."
+                              : isSk
+                                ? "↩️ Verzia obnovená, ale stav sa líši — skontroluj to."
+                                : "↩️ Restored, but state differs."
+                            : `⛔ ${rollbackReport.errorSk}`}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-neutral-500">{applySectionNoticeSk(true)}</p>
+                </>
+              )}
+            </div>
+
             {/* Čo engine zvážil a nevybral */}
             {considered.length > 0 && (
               <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-2">
@@ -668,8 +882,8 @@ export function StyleStudioPanel({
             {isSk ? "Čo tu (zatiaľ) NIE JE" : "What is NOT here yet"}
           </p>
           <ul className="text-[10px] text-neutral-400 space-y-1">
-            <li>• {isSk ? "Apply do timeline, snapshot a rollback → krok 5–6." : "Apply / snapshot / rollback → steps 5–6."}</li>
-            <li>• {isSk ? "Prehliadka s aplikovaním a schvaľovaním → krok 7." : "Review with apply → step 7."}</li>
+            <li>• {isSk ? "Náhľad videa s aplikovanými zmenami a export z tej istej časovej osi → krok 7 (dnes neexistuje jeden render path pre preview aj export)." : "Preview/export from the same timeline → step 7."}</li>
+            <li>• {isSk ? "Hromadné schvaľovanie a review workflow pre klienta → krok 7." : "Review workflow → step 7."}</li>
             <li>• {isSk ? "Generované vizuály a analýza referenčného obrázka → PROVIDER UNAVAILABLE, kým nie je reálny provider." : "Generated visuals → PROVIDER UNAVAILABLE."}</li>
             <li>• {isSk ? "Ručné doladenie časov jednotlivých rozhodnutí → príde s napojením na timeline." : "Manual fine-tuning → with timeline wiring."}</li>
           </ul>

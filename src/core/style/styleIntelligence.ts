@@ -629,7 +629,12 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
             ...(s.emotionMarkers.length ? [`emocionálne slová: ${s.emotionMarkers.slice(0, 3).join(", ")}`] : []),
           ],
           signals: s.isEmotional ? ["emotion_marker", "sentence_boundary"] : ["position", "sentence_boundary"],
-          action: { targetTrackType: "video", noteSk: "rečník zostáva v plnom obraze" },
+          action: {
+            targetTrackType: "video",
+            // hook sám hovorí „pridaj len krátky titulok“ → text je povolený; emócia nie.
+            allowTypography: !s.isEmotional,
+            noteSk: "rečník zostáva v plnom obraze",
+          },
         }),
       );
       if (guardAgainstCovering) {
