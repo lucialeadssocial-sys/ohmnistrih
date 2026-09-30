@@ -1,13 +1,32 @@
 /**
  * Media Intelligence Index Engine
  * Provides incremental, DAG-based, cached, cancelable, and resumable local media analysis.
- * Analyzes metadata, waveforms, audio peaks, beats, VAD silence/speech, transcript,
- * scene boundaries, representative frames, brightness, blur, and duplicate shots.
+ *
+ * POCTIVOSŤ (krok 30b): tento index v minulosti obsahoval VYMYSLENÉ dáta —
+ * transcript z pevného zoznamu slov, scény pevne na 25 % a 65 % dĺžky a snímky
+ * s jasom/ostrosťou zo vzorcov (`brightness = 40 + (i * 45) % 185`). Director
+ * nástroje (`getScenes`, `getThumbnails`, `searchMedia`) z toho robili závery.
+ *
+ * Dnes platí:
+ *  • MEASURED = naozaj zmerané z média (metadata, waveform zo zvuku),
+ *  • DERIVED  = odvodené z meraného (beats z peakov, ticho z prahu na vlne,
+ *               strihy a snímky z REÁLNYCH pixelov cez `frameMetrics.ts`),
+ *  • NOT_AVAILABLE = nemáme dáta (napr. prepis, keď nie je poskytnutý) —
+ *    vtedy index vráti prázdno a DÔVOD, nikdy vymyslené čísla.
  */
 
 import { idbManager } from '../storage/idb';
 import { MediaAsset } from '../types/project';
 import { mediaEngineV1 } from '../media-engine';
+import {
+  FrameMetrics,
+  SceneBoundary,
+  detectSceneBoundaries,
+  frameDistance,
+  frameMetricsFromPixels,
+  sampleTimes,
+  scenesFromBoundaries,
+} from './frameMetrics';
 
 export interface DuplicateShot {
   shot1Timestamp: number;
@@ -18,9 +37,13 @@ export interface DuplicateShot {
 export interface RepresentativeFrame {
   timestamp: number;
   thumbnailUrl: string;
-  brightness: number; // 0 to 255
-  blurScore: number;   // Edge sharpness score
+  brightness: number; // 0 to 255 (namerané z pixelov)
+  blurScore: number;   // ostrosť = priemerná sila hrán (namerané z pixelov)
   colorVector: number[];
+  /** Histogram jasu (8 pásem) z nameraných pixelov — podklad pre porovnanie záberov. */
+  lumaHistogram?: number[];
+  /** Zmenšený raster jasu (32×18) — priestorové porovnanie záberov. */
+  grayThumb?: number[];
   isBestShot?: boolean;
   isDuplicate?: boolean;
   isBlurry?: boolean;
@@ -32,10 +55,20 @@ export interface RepresentativeFrame {
   similarFrameTimestamps?: number[];
 }
 
+/** Odkiaľ je daný údaj v indexe. */
+export type DataQuality = 'MEASURED' | 'DERIVED' | 'NOT_AVAILABLE';
+
 export interface MediaAnalysisIndex {
   assetId: string;
   assetHash: string;
   updatedAt: number;
+
+  /** Kvalita dát pre každý uzol — aby UI ani Director netvrdili viac, než vieme. */
+  dataQuality: Record<string, DataQuality>;
+  /** Prečo údaj chýba (slovensky), keď je `NOT_AVAILABLE`. */
+  unavailableSk: Record<string, string>;
+  /** Koľko snímok sa naozaj prečítalo (0 = obrazová analýza neprebehla). */
+  framesAnalysed: number;
 
   // Task Cache Manifest
   completedTasks: Record<string, { completedAt: number; version: number }>;
@@ -94,12 +127,15 @@ export interface DAGTaskNode {
 export const INITIAL_MEDIA_INDEX = (assetId: string): MediaAnalysisIndex => ({
   assetId,
   assetHash: '',
-  updatedAt: Date.now(),
+  updatedAt: 0,
+  dataQuality: {},
+  unavailableSk: {},
+  framesAnalysed: 0,
   completedTasks: {},
   duration: 0,
-  resolution: { width: 1920, height: 1080, aspectRatio: '16:9' },
-  fps: 30,
-  hasAudio: true,
+  resolution: { width: 0, height: 0, aspectRatio: '' },
+  fps: 0,
+  hasAudio: false,
   waveformPeaks: [],
   audioPeaks: [],
   beatPositions: [],
@@ -110,8 +146,9 @@ export const INITIAL_MEDIA_INDEX = (assetId: string): MediaAnalysisIndex => ({
   sceneBoundaries: [],
   scenes: [],
   representativeFrames: [],
-  averageBrightness: 128,
-  averageBlurScore: 80,
+  // Priemer sa počíta z nameraných snímok; 0 = ešte nič (predtým tu bolo falošných 128/80).
+  averageBrightness: 0,
+  averageBlurScore: 0,
   duplicateShots: []
 });
 
@@ -119,9 +156,103 @@ export class MediaIntelligenceEngine {
   private static instance: MediaIntelligenceEngine | null = null;
   private activeControllers: Map<string, AbortController> = new Map();
   private dagTasks: DAGTaskNode[] = [];
+  /**
+   * Skutočný prepis pre index. Keď nie je zaregistrovaný, index vráti prázdno
+   * a dôvod (žiadne vymyslené slová). Registruje ho appka s reálnymi dátami
+   * (projekt s titulkami alebo lokálny Whisper).
+   */
+  private transcriptProvider: ((asset: MediaAsset) => Promise<{ text: string; words: { word: string; start: number; end: number; confidence: number }[] } | null>) | null = null;
 
-  private constructor() {
-    this.initDAGTasks();
+  /** Registrácia reálneho zdroja prepisu (appka / lokálny Whisper). */
+  public setTranscriptProvider(
+    provider: ((asset: MediaAsset) => Promise<{ text: string; words: { word: string; start: number; end: number; confidence: number }[] } | null>) | null,
+  ): void {
+    this.transcriptProvider = provider;
+  }
+
+  /**
+   * Prečíta REÁLNE snímky z média a zmeria z nich obrazové metriky.
+   * Bez dekodéra vráti prázdne pole — volajúci musí dať `NOT_AVAILABLE`,
+   * nikdy nie vymyslené čísla.
+   */
+  private async sampleFrames(
+    asset: MediaAsset,
+    maxSamples: number,
+    progress?: (p: number) => void,
+  ): Promise<FrameMetrics[]> {
+    const duration = asset.duration || 0;
+    if (!(duration > 0)) return [];
+    const source = asset.url || asset.opfsPath;
+    if (!source) return [];
+
+    // Hustota vzorkovania: pri krátkych klipoch (do 90 s) ~2 vzorky za sekundu
+    // (aby sme strih nezmeškali), inak rozložíme maxSamples po celej dĺžke.
+    const desired = duration <= 90 ? Math.min(maxSamples * 2, Math.round(duration * 2) + 1) : maxSamples;
+    const times = sampleTimes(duration, Math.max(2, desired));
+    const out: FrameMetrics[] = [];
+    for (let i = 0; i < times.length; i += 1) {
+      try {
+        const bitmap = await mediaEngineV1.getFrameAtTime(source, times[i]);
+        if (!bitmap) continue;
+        const metrics = this.metricsFromBitmap(bitmap, times[i]);
+        if (metrics) out.push(metrics);
+        // Snímky sa hneď uvoľňujú — nedržíme full-res v pamäti (2 GB RAM).
+        (bitmap as any).close?.();
+      } catch {
+        // Jedna snímka zlyhá → pokračujeme; ak zlyhajú všetky, vrátime prázdno.
+      }
+      if (progress && i % 10 === 0) progress(30 + Math.round((i / times.length) * 60));
+    }
+    return out;
+  }
+
+  /**
+   * Z `ImageBitmap` (čo vracia mediálny engine v prehliadači) spočíta metriky.
+   * V prostredí bez canvasu (napr. testy v Node) vráti `null` — a to je správne:
+   * lepšie nič, než vymyslené číslo.
+   */
+  private metricsFromBitmap(bitmap: ImageBitmap, t: number): FrameMetrics | null {
+    const width = Math.min(320, (bitmap as any).width || 0);
+    const height = Math.min(180, (bitmap as any).height || 0);
+    if (!(width > 0) || !(height > 0)) return null;
+
+    const anyGlobal = globalThis as any;
+
+    // 1) OffscreenCanvas (worker / moderné prehliadače)
+    try {
+      const OffscreenCanvasCtor = anyGlobal.OffscreenCanvas;
+      if (typeof OffscreenCanvasCtor === 'function') {
+        const canvas = new OffscreenCanvasCtor(width, height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(bitmap as any, 0, 0, width, height);
+          const data = ctx.getImageData(0, 0, width, height).data as Uint8ClampedArray;
+          return frameMetricsFromPixels(data, width, height, t);
+        }
+      }
+    } catch {
+      // pokračujeme na <canvas>
+    }
+
+    // 2) Klasický <canvas> (hlavné vlákno)
+    try {
+      const doc = anyGlobal.document;
+      if (doc?.createElement) {
+        const canvas = doc.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(bitmap as any, 0, 0, width, height);
+        const data = ctx.getImageData(0, 0, width, height).data as Uint8ClampedArray;
+        return frameMetricsFromPixels(data, width, height, t);
+      }
+    } catch {
+      return null;
+    }
+
+    // 3) Bez canvasu sa nič nemeria.
+    return null;
   }
 
   public static getInstance(): MediaIntelligenceEngine {
@@ -187,7 +318,15 @@ export class MediaIntelligenceEngine {
             }
           }
           progress(100);
-          return { waveformPeaks: peaks, audioPeaks };
+          if (peaks.length === 0) {
+            return {
+              waveformPeaks: [],
+              audioPeaks: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason: 'Zvukovú vlnu sa nepodarilo prečítať — bez nej sa ticho ani beaty nedajú určiť.',
+            };
+          }
+          return { waveformPeaks: peaks, audioPeaks, __quality: 'MEASURED' as const, __reason: '' };
         }
       },
 
@@ -212,7 +351,7 @@ export class MediaIntelligenceEngine {
             }
           }
           progress(100);
-          return { beatPositions: beats };
+          return { beatPositions: beats, __quality: 'DERIVED' as const, __reason: '' };
         }
       },
 
@@ -257,7 +396,12 @@ export class MediaIntelligenceEngine {
           }
 
           progress(100);
-          return { silentRanges, speechRanges };
+          return {
+            silentRanges,
+            speechRanges,
+            __quality: 'DERIVED' as const,
+            __reason: '',
+          };
         }
       },
 
@@ -266,180 +410,234 @@ export class MediaIntelligenceEngine {
         id: 'transcript',
         name: 'Speech Transcript',
         deps: ['silence_speech_vad'],
-        version: 1,
+        version: 2,
         invalidatesOn: ['file', 'transcript'],
-        execute: async (asset, _, currentIndex, progress) => {
+        execute: async (asset, _, __, progress) => {
           progress(50);
-          const duration = asset.duration || 10;
-          const sampleWords = ['Vytvárame', 'inteligentný', 'index', 'média', 'bez', 'cloudu', 'v', 'OmniStrihu'];
-          const timePerWord = duration / sampleWords.length;
-
-          const wordTimestamps = sampleWords.map((word, i) => ({
-            word,
-            start: Number((i * timePerWord).toFixed(2)),
-            end: Number(((i + 1) * timePerWord).toFixed(2)),
-            confidence: 0.96
-          }));
-
+          // POCTIVOSŤ: predtým tu bol pevný zoznam slov
+          // (['Vytvárame','inteligentný','index',…]) rovnomerne rozložený na dĺžku.
+          // To nebol prepis — bol to vymyslený text. Dnes sa použije LEN skutočný
+          // prepis, ktorý poskytne appka (projekt / lokálny Whisper). Ak nič
+          // nepríde, index vráti prázdno a dôvod — žiadne vymyslené slová.
+          const provided = this.transcriptProvider ? await this.transcriptProvider(asset) : null;
+          progress(85);
+          if (!provided || provided.words.length === 0) {
+            return {
+              transcriptText: '',
+              wordTimestamps: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason:
+                'Automatický prepis sa pri analýze média nespúšťa (v prehliadači je to dlhý beh). ' +
+                'Použite prepis v projekte (titulky) alebo zapnite lokálny Whisper — potom sa slová načítajú sem.',
+            };
+          }
           progress(100);
           return {
-            transcriptText: sampleWords.join(' '),
-            wordTimestamps
+            transcriptText: provided.text,
+            wordTimestamps: provided.words,
+            __quality: 'MEASURED' as const,
+            __reason: '',
           };
         }
       },
 
-      // Node 6: Scene Boundaries & Cuts
+      // Node 6: Scene Cut Detection (z REÁLNYCH snímok)
       {
         id: 'scene_boundaries',
-        name: 'Scene Cut Detection',
+        name: 'Scene Cut Detection (measured frames)',
         deps: ['metadata'],
-        version: 1,
+        version: 2,
         invalidatesOn: ['file', 'crop'],
         execute: async (asset, _, __, progress) => {
-          progress(30);
-          const duration = asset.duration || 10;
-          const boundaries: { timestamp: number; score: number }[] = [
-            { timestamp: Number((duration * 0.25).toFixed(2)), score: 0.88 },
-            { timestamp: Number((duration * 0.65).toFixed(2)), score: 0.94 }
-          ];
-
-          const scenes = [
-            { id: 'sc_1', start: 0, end: boundaries[0].timestamp, duration: boundaries[0].timestamp },
-            { id: 'sc_2', start: boundaries[0].timestamp, end: boundaries[1].timestamp, duration: boundaries[1].timestamp - boundaries[0].timestamp },
-            { id: 'sc_3', start: boundaries[1].timestamp, end: duration, duration: duration - boundaries[1].timestamp }
-          ];
-
+          progress(20);
+          // POCTIVOSŤ: predtým tu boli hranice pevne na 25 % a 65 % dĺžky
+          // so skóre 0,88 / 0,94 — teda vymyslené „scény“, ktoré nikto nevidel.
+          // Dnes: vzorky REÁLNYCH snímok z média (max 120), rozdiel jasu/farby
+          // a ostré zmeny = strihy. Bez snímok = prázdno + dôvod.
+          const samples = await this.sampleFrames(asset, 120, progress);
+          if (samples.length === 0) {
+            return {
+              sceneBoundaries: [] as SceneBoundary[],
+              scenes: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason:
+                'Snímky sa z tohto média nepodarilo prečítať (v tomto prostredí nie je dekodér obrázkov), ' +
+                'preto sa strihy NEMERALI. Žiadne scény sa nevymýšľajú.',
+            };
+          }
+          const duration = samples[samples.length - 1].t || asset.duration || 0;
+          const boundaries = detectSceneBoundaries(samples);
+          const scenes = scenesFromBoundaries(boundaries, duration);
           progress(100);
-          return { sceneBoundaries: boundaries, scenes };
+          return {
+            sceneBoundaries: boundaries,
+            scenes,
+            __quality: 'DERIVED' as const,
+            __reason: '',
+            __framesAnalysed: samples.length,
+          };
         }
       },
 
-      // Node 7: Representative Frames, Brightness & Blur
+      // Node 7: Representative Frames — LEN z REÁLNYCH pixelov
       {
         id: 'representative_frames',
-        name: 'Frame Sampling (Brightness/Blur)',
+        name: 'Frame Metrics (Brightness / Sharpness)',
         deps: ['scene_boundaries', 'silence_speech_vad'],
-        version: 2,
+        version: 3,
         invalidatesOn: ['file', 'crop'],
         execute: async (asset, _, currentIndex, progress) => {
-          progress(40);
-          const speechRanges = currentIndex.speechRanges || [];
-          const frames: RepresentativeFrame[] = currentIndex.scenes.map((sc, i) => {
-            const timestamp = Number(((sc.start + sc.end) / 2).toFixed(2));
-            const brightness = 40 + (i * 45) % 185; // Heuristic to simulate varying light conditions
-            const blurScore = 30 + (i * 25) % 90;   // Heuristic to simulate varying focus / motion blur
-            const isVeryDark = brightness < 50;
-            const isBlurry = blurScore < 50;
-            const isStatic = sc.duration > 4;       // Scene of more than 4 seconds without major cuts
-            const isSceneChange = true;             // This frame represents a scene segment change
-            
-            // A B-roll candidate is beautiful (not dark/blurry) and has no speech/voice activity
-            const isBRollCandidate = !isVeryDark && !isBlurry && !speechRanges.some(
-              (sr) => timestamp >= sr.start && timestamp <= sr.end
-            );
-
-            // Hook candidates are engaging visual frames within the first 5 seconds
-            const isHookCandidate = timestamp <= 5 && !isVeryDark && !isBlurry && blurScore > 65;
-
+          progress(30);
+          // POCTIVOSŤ: predtým tu boli jas a ostrosť zo vzorcov
+          // (`brightness = 40 + (i * 45) % 185`, `blurScore = 30 + (i * 25) % 90`)
+          // a farebný vektor pevný. Dnes sa merajú REÁLNE pixely.
+          const samples = await this.sampleFrames(asset, 120, progress);
+          if (samples.length === 0) {
             return {
-              timestamp,
-              thumbnailUrl: (asset as any).thumbnailUrl || '',
-              brightness,
-              blurScore,
-              colorVector: [Number((0.15 + (i * 0.12) % 0.8).toFixed(2)), 0.4, 0.35, 0.1],
-              isVeryDark,
-              isBlurry,
-              isStatic,
-              isSceneChange,
-              isBRollCandidate,
-              isHookCandidate,
-              similarFrameTimestamps: []
+              representativeFrames: [],
+              averageBrightness: 0,
+              averageBlurScore: 0,
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason:
+                'Obrazové metriky sa nemerajú — snímky z média sa nepodarilo prečítať ' +
+                '(chýba dekodér obrázkov v tomto prostredí). Jas, ostrosť ani „najlepší záber“ sa nevymýšľajú.',
+            };
+          }
+
+          const speechRanges = currentIndex.speechRanges || [];
+          const frames: RepresentativeFrame[] = samples.map((m) => {
+            const hasSpeech = speechRanges.some((sr) => m.t >= sr.start && m.t <= sr.end);
+            return {
+              timestamp: m.t,
+              thumbnailUrl: '',
+              brightness: Math.round(m.luma),
+              // Ostrosť = rozptyl gradientu (čím viac hrán/detailov, tým vyššie).
+              blurScore: Number(m.sharpness.toFixed(2)),
+              colorVector: [
+                Number((m.rgb[0] / 255).toFixed(3)),
+                Number((m.rgb[1] / 255).toFixed(3)),
+                Number((m.rgb[2] / 255).toFixed(3)),
+                Number(m.darkShare.toFixed(3)),
+              ],
+              lumaHistogram: m.lumaHistogram,
+              grayThumb: m.grayThumb,
+              isVeryDark: m.luma < 50,
+              isBlurry: m.sharpness < 2.5,
+              isStatic: false, // statickosť bez porovnania susedných snímok netvrdíme
+              isSceneChange: false, // vyplní sa nižšie z nameraných hraníc
+              // B-roll kandidát = objektívne kritérium: obraz nie je tmavý ani rozmazaný a v čase nehovorí reč.
+              isBRollCandidate: m.luma >= 50 && m.sharpness >= 2.5 && !hasSpeech,
             };
           });
 
-          // Identify the best shot based on highest clarity & balanced brightness
-          if (frames.length > 0) {
-            let bestIndex = 0;
-            let bestScore = -1;
-            frames.forEach((frame, idx) => {
-              if (!frame.isVeryDark && !frame.isBlurry) {
-                const score = frame.blurScore * (1 - Math.abs(frame.brightness - 128) / 128);
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestIndex = idx;
-                }
-              }
-            });
-            frames[bestIndex].isBestShot = true;
+          const boundaries = currentIndex.sceneBoundaries || [];
+          for (const b of boundaries) {
+            const nearest = frames.reduce<RepresentativeFrame | null>((best, f) => {
+              if (Math.abs(f.timestamp - b.timestamp) > 0.75) return best;
+              if (!best) return f;
+              return Math.abs(f.timestamp - b.timestamp) < Math.abs(best.timestamp - b.timestamp) ? f : best;
+            }, null);
+            if (nearest) nearest.isSceneChange = true;
           }
 
-          const avgBrightness = Math.round(frames.reduce((a, b) => a + b.brightness, 0) / (frames.length || 1));
-          const avgBlur = Math.round(frames.reduce((a, b) => a + b.blurScore, 0) / (frames.length || 1));
+          if (frames.length > 0) {
+            // „Najjasnejší a najostrejší záber“ = merané kritérium, nie model.
+            let bestIndex = 0;
+            let bestScore = -1;
+            frames.forEach((f, idx) => {
+              if (f.isVeryDark || f.isBlurry) return;
+              const score = (f.blurScore || 0) * (1 - Math.abs((f.brightness || 0) - 128) / 128);
+              if (score > bestScore) {
+                bestScore = score;
+                bestIndex = idx;
+              }
+            });
+            if (bestScore > 0) frames[bestIndex].isBestShot = true;
+          }
+
+          const avgBrightness = Math.round(frames.reduce((a, b) => a + (b.brightness || 0), 0) / frames.length);
+          const avgBlur = Number((frames.reduce((a, b) => a + (b.blurScore || 0), 0) / frames.length).toFixed(2));
 
           progress(100);
           return {
             representativeFrames: frames,
             averageBrightness: avgBrightness,
-            averageBlurScore: avgBlur
+            averageBlurScore: avgBlur,
+            __quality: 'MEASURED' as const,
+            __reason: '',
+            __framesAnalysed: frames.length,
           };
         }
       },
 
-      // Node 8: Visual Similarity & Duplicate Shots
+      // Node 8: Visual Similarity & Duplicate Shots (z NAMERANÝCH snímok)
       {
         id: 'duplicate_shots',
-        name: 'Duplicate Shot Detection',
+        name: 'Duplicate Shot Detection (measured frames)',
         deps: ['representative_frames'],
-        version: 2,
+        version: 3,
         invalidatesOn: ['file', 'crop'],
         execute: async (_, __, currentIndex, progress) => {
-          progress(50);
-          const frames = [...currentIndex.representativeFrames];
+          progress(40);
+          const frames = currentIndex.representativeFrames || [];
+          if (frames.length < 2) {
+            return {
+              duplicateShots: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason:
+                'Podobnosť záberov sa nedá určiť — v indexe nie sú namerané snímky (obrazová analýza neprebehla).',
+            };
+          }
+
+          // POCTIVOSŤ: predtým sa tu počítal kosínus farebného vektora s prahom 0,88.
+          // Pri nezáporných zložkách (R, G, B ≥ 0) je kosínus takmer vždy vysoký,
+          // takže index hlásil „duplicity“ aj medzi úplne odlišnými zábermi.
+          // Dnes používame vzdialenosť nameraných metrík (jas + farba) a označíme
+          // len zábery, ktoré sú si naozaj podobné (vzdialenosť < 0,06).
+          const toMetrics = (f: RepresentativeFrame): FrameMetrics => ({
+            t: f.timestamp,
+            luma: f.brightness,
+            rgb: [
+              (f.colorVector?.[0] ?? 0) * 255,
+              (f.colorVector?.[1] ?? 0) * 255,
+              (f.colorVector?.[2] ?? 0) * 255,
+            ],
+            darkShare: f.colorVector?.[3] ?? 0,
+            lightShare: 0,
+            sharpness: f.blurScore,
+            lumaHistogram: f.lumaHistogram ?? [],
+            grayThumb: f.grayThumb ?? [],
+          });
+
+          const metrics = frames.map(toMetrics);
           const duplicates: DuplicateShot[] = [];
+          const DUPLICATE_DISTANCE = 0.06;
 
-          for (let i = 0; i < frames.length; i++) {
-            for (let j = i + 1; j < frames.length; j++) {
-              // Heuristic visual vector similarity check
-              const v1 = frames[i].colorVector;
-              const v2 = frames[j].colorVector;
-              // Cosine-like distance simulation
-              const dotProduct = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
-              const mag1 = Math.sqrt(v1[0]**2 + v1[1]**2 + v1[2]**2);
-              const mag2 = Math.sqrt(v2[0]**2 + v2[1]**2 + v2[2]**2);
-              const simScore = mag1 && mag2 ? dotProduct / (mag1 * mag2) : 0;
-
-              if (simScore > 0.88) {
-                duplicates.push({
-                  shot1Timestamp: frames[i].timestamp,
-                  shot2Timestamp: frames[j].timestamp,
-                  similarityScore: Number(simScore.toFixed(2))
-                });
-
-                // Tag frames as duplicates and append similarities
-                frames[i].isDuplicate = true;
-                frames[j].isDuplicate = true;
-                
-                if (!frames[i].similarFrameTimestamps) frames[i].similarFrameTimestamps = [];
-                if (!frames[j].similarFrameTimestamps) frames[j].similarFrameTimestamps = [];
-                
-                if (!frames[i].similarFrameTimestamps!.includes(frames[j].timestamp)) {
-                  frames[i].similarFrameTimestamps!.push(frames[j].timestamp);
-                }
-                if (!frames[j].similarFrameTimestamps!.includes(frames[i].timestamp)) {
-                  frames[j].similarFrameTimestamps!.push(frames[i].timestamp);
-                }
-              }
+          for (let i = 0; i < metrics.length; i += 1) {
+            for (let j = i + 1; j < metrics.length; j += 1) {
+              const distance = frameDistance(metrics[i], metrics[j]);
+              if (distance >= DUPLICATE_DISTANCE) continue;
+              duplicates.push({
+                shot1Timestamp: metrics[i].t,
+                shot2Timestamp: metrics[j].t,
+                similarityScore: Number((1 - distance).toFixed(2)),
+              });
+              frames[i].isDuplicate = true;
+              frames[j].isDuplicate = true;
+              (frames[i].similarFrameTimestamps ||= []).push(metrics[j].t);
+              (frames[j].similarFrameTimestamps ||= []).push(metrics[i].t);
             }
           }
 
           progress(100);
-          return { 
+          return {
+            representativeFrames: frames,
             duplicateShots: duplicates,
-            representativeFrames: frames
+            __quality: 'DERIVED' as const,
+            __reason: '',
           };
         }
-      }
+      },
     ];
   }
 
@@ -586,9 +784,24 @@ export class MediaIntelligenceEngine {
           controller.signal
         );
 
+        // Uzly vracajú aj `__quality` / `__reason` / `__framesAnalysed` — tie sa
+        // nesmú rozliať do indexu ako polia, ale zapíšu sa do mapy kvality dát.
+        const { __quality, __reason, __framesAnalysed, ...fields } = (partialData || {}) as any;
+
         index = {
           ...index,
-          ...partialData,
+          ...fields,
+          dataQuality: {
+            ...(index.dataQuality || {}),
+            [task.id]: (__quality as DataQuality) || 'MEASURED',
+          },
+          unavailableSk: {
+            ...(index.unavailableSk || {}),
+            ...(__reason ? { [task.id]: String(__reason) } : {}),
+          },
+          framesAnalysed:
+            typeof __framesAnalysed === 'number' ? Math.max(index.framesAnalysed || 0, __framesAnalysed) : index.framesAnalysed || 0,
+          updatedAt: Date.now(),
           completedTasks: {
             ...index.completedTasks,
             [task.id]: { completedAt: Date.now(), version: task.version }

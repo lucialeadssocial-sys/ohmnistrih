@@ -104,14 +104,27 @@ export class DirectorToolRegistry {
 
     this.registerTool({
       name: 'getScenes',
-      description: 'Vráti zoznam detegovaných scén a strihových hraníc.',
+      description: 'Vráti NAMERANÉ scény a strihové hranice (alebo dôvod, prečo ich nemám).',
       permissions: ['READ_MEDIA_INDEX'],
       undoBehavior: 'Žiadny vplyv na dáta (Read-only)',
       inputSchema: {},
-      outputSchema: { scenes: 'array' },
+      outputSchema: { scenes: 'array', quality: 'string', reasonSk: 'string' },
       validate: () => true,
       execute: (_, __, mediaIndex) => {
-        return { success: true, result: { scenes: mediaIndex?.scenes || [] } };
+        const quality = mediaIndex?.dataQuality?.scene_boundaries ?? 'NOT_AVAILABLE';
+        return {
+          success: true,
+          result: {
+            scenes: mediaIndex?.scenes || [],
+            quality,
+            // Director musí vedieť, že scény nemá — nesmie si ich domyslieť.
+            reasonSk:
+              quality === 'NOT_AVAILABLE'
+                ? mediaIndex?.unavailableSk?.scene_boundaries ||
+                  'Scény nie sú namerané (chýba obrazová analýza).'
+                : `Namerané z ${mediaIndex?.framesAnalysed ?? 0} snímok média.`,
+          },
+        };
       }
     });
 
@@ -143,17 +156,31 @@ export class DirectorToolRegistry {
 
     this.registerTool({
       name: 'getThumbnails',
-      description: 'Získa reprezentatívne náhľady frames z videa.',
+      description: 'Získa reprezentatívne snímky videa (alebo dôvod, prečo ich nemám).',
       permissions: ['READ_MEDIA_INDEX'],
       undoBehavior: 'Žiadny vplyv na dáta (Read-only)',
       inputSchema: {},
-      outputSchema: { thumbnails: 'array' },
+      outputSchema: { thumbnails: 'array', quality: 'string', reasonSk: 'string' },
       validate: () => true,
       execute: (_, __, mediaIndex) => {
         const frames = mediaIndex?.representativeFrames || [];
+        const quality = mediaIndex?.dataQuality?.representative_frames ?? 'NOT_AVAILABLE';
         return {
           success: true,
-          result: { thumbnails: frames.map(f => ({ timestamp: f.timestamp, url: f.thumbnailUrl })) }
+          result: {
+            thumbnails: frames.map((f) => ({
+              timestamp: f.timestamp,
+              url: f.thumbnailUrl,
+              brightness: f.brightness,
+              sharpness: f.blurScore,
+            })),
+            quality,
+            reasonSk:
+              frames.length === 0
+                ? mediaIndex?.unavailableSk?.representative_frames ||
+                  'Snímky nie sú k dispozícii — jas ani ostrosť nie sú zmerané.'
+                : `Namerané z ${frames.length} skutočných snímok.`,
+          },
         };
       }
     });
@@ -169,8 +196,20 @@ export class DirectorToolRegistry {
       execute: (args, __, mediaIndex) => {
         const query = (args.query || '').toLowerCase();
         const words = mediaIndex?.wordTimestamps || [];
-        const matches = words.filter(w => w.word.toLowerCase().includes(query));
-        return { success: true, result: { matches } };
+        const matches = words.filter((w) => w.word.toLowerCase().includes(query));
+        const quality = mediaIndex?.dataQuality?.transcript ?? 'NOT_AVAILABLE';
+        return {
+          success: true,
+          result: {
+            matches,
+            quality,
+            reasonSk:
+              words.length === 0
+                ? mediaIndex?.unavailableSk?.transcript ||
+                  'V indexe nie je žiadny prepis — hľadať v slovách sa nedá.'
+                : `Prehľadaných ${words.length} slov z reálneho prepisu.`,
+          },
+        };
       }
     });
 

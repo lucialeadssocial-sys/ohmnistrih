@@ -101,3 +101,45 @@ chýbajúce médiá. Žiadny `Date.now()`, žiadny `Math.random()`, žiadne odha
 7. **`RawToReadyPipeline`** — predvolené `virality: { score: 92, … }` (zobrazuje sa v náhľade) treba zosúladiť s poctivým stavom.
 
 Každý z týchto bodov patrí do ďalšieho kroku; nič z toho nie je skryté.
+
+---
+
+## 5. Krok 30b — Media Intelligence Index už nemeria „čísla z hlavy“
+
+**Bod 1 zoznamu vyššie (analyzačný index) bol doriešený.** Index médií
+(`src/core/media/mediaIntelligenceIndex.ts`) predtým vyrábal hodnoty, ktoré vyzerali ako meranie:
+
+| Uzol indexu | Predtým (vymyslené) | Teraz |
+|---|---|---|
+| `transcript` | pevný zoznam slov („Vytvárame, inteligentný, index, média…“) s falošnými časmi | **`NOT_AVAILABLE`**, kým nie je pripojený reálny prepis (`setTranscriptProvider`); v appke je pripojený Whisper cez `captionEngine` |
+| `scene_boundaries` | strihy natvrdo na 25 % a 65 % dĺžky | hranice z **nameraných pixelov** (`frameMetrics`, prah 0,12 kalibrovaný na reálnom videe) |
+| `representative_frames` | `brightness = 40 + (i*45) % 185`, `blurScore = 30 + (i*25) % 90`, pevný farebný vektor | jas, ostrosť, farba a histogram z **reálnych pixelov** (`OffscreenCanvas` v prehliadači; v Node teste vlastný PNG dekodér) |
+| `duplicate_shots` | kosínus farebných vektorov (falošné duplicity) | vzdialenosť nameraných metrík (`frameDistance`, prah 0,06) |
+| `avgBrightness`, `avgBlur` v `INITIAL_MEDIA_INDEX` | 128 / 80 (pevné čísla vyzerajúce ako meranie) | **0** + `dataQuality: NOT_AVAILABLE`, kým sa nemeria |
+
+**Čo je teraz v indexe poctivo pomenované:** každý uzol nesie `dataQuality`
+(`MEASURED` / `DERIVED` / `NOT_AVAILABLE`) a pri nedostupných dátach aj dôvod po slovensky.
+Inspektor (`MediaIntelligenceInspector`) to zobrazuje ako oranžové „NEMÁ DÁTA“ boxy,
+a `directorTools` (ktoré používa Director Studio) vracia k scénam/snímkam/hľadaniu `quality` + `reasonSk`.
+Director tak nemôže tvrdiť, že scény pozná, keď ich nemá zmerané.
+
+### Namerané dôkazy (real-media)
+
+| Čo | Ako to bolo overené | Výsledok |
+|---|---|---|
+| Metriky snímok | `tools/verify-media-index.ts` — vlastný PNG dekodér, ten istý modul ako v appke, na `aikt-DdRcznCusBh.mp4` (71,28 s, 144 vzoriek po 0,50 s) | jas 1,5 / 82,4 / 109,0 · ostrosť 0,44 / 2,97 / 7,69 → metrika **reaguje na obraz** |
+| Detekcia strihov | nezávislé meranie ffmpeg `select='gt(scene,0.3)'` (plné rozlíšenie, 16 strihov) vs. naše vzorky | **14/16 nájdených**, 4 zmeny naviac (pohyb v zábere), 2 minuté = rýchly strih v rozostupe < 0,6 s (zlúčené `minGap`) → `docs/proof-media-index.txt` |
+| Kalibrácia prahu | 5 prahov na reálnych dátach | 0,08 → 16/16 (+17 falošných) · **0,12 → 16/16, 6 naviac** · 0,25 → 4/16, 0 naviac |
+| Statické médium | `real_speech.mp4` (obraz YMIN=YAVG=YMAX=35) | index **nepredstiera** strihy ani ostrosť: 0 hraníc, ostrosť 0, „jas sa nemení“ → `docs/proof-media-index-static.txt` |
+
+### Dve reálne chyby, ktoré odhalili až dáta (nie testy)
+
+1. **Vzorkovanie na presnom konci média** vracalo prázdny obraz → falošná hranica na poslednej
+   vzorke. Opravené: vzorky sú **stredy intervalov**, vždy vnútri média.
+2. **Priemer jasu ako detektor strihu nefunguje** — v tom istom zábere (rovnaká miestnosť,
+   rovnaký človek) je priemer takmer rovnaký. Doplnené: kumulatívny histogram jasu (CDF)
+   a **zmenšený raster 32×18** (priestorové porovnanie). Až potom detekcia funguje (0/16 → 14/16).
+
+**Čo týmto krokom NIE JE overené:** detekcia strihov nebežala v prehliadači (BROWSER VERIFIED
+to nie je) a `verify-media-index.ts` číta snímky cez ffmpeg + vlastný PNG dekodér, kým appka
+cez `OffscreenCanvas` — ten istý matematický modul, ale iná cesta k pixelom.

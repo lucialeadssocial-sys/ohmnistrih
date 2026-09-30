@@ -1,16 +1,16 @@
 ==============================================================================
 KROK 29 — REAL-MEDIA DÔKAZ MERANIA (QC + retenčný prehľad)
 ==============================================================================
-médium: real_speech.mp4 (345651 B, dĺžka podľa hlavičiek 65.44 s)
+médium: real_speech.mp4 (345651 B, dĺžka z ffprobe 20.27 s)
 
 — NAMERANÉ (canonical os z reálneho videa) —
 meranie prešlo (ok): true
-dĺžka osi (s): 65.44
+dĺžka osi (s): 20.27
 klipov celkom: 3
 video klipy: 2
 strihy: 1
-strihov / min: 0.9
-medián záberu (s): 32.72
+strihov / min: 3
+medián záberu (s): 10.135000000000002
 zábery pod 1,5 s: 0
 zvukové stopy: 1
 zvukové klipy: 1
