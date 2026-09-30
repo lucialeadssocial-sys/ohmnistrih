@@ -66,13 +66,13 @@ dá sa prečítať a skontrolovať očami.
   Bez ffmpeg v prostredí sa korektne preskočia, nezlyhnú.
 - `bun test tests/wordTiming.test.ts` — 22 testov (krok A): hranice slov, pauzy,
   delenie viet, sanitizácia poškodených dát.
-- `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` — 59 testov
+- `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` — 62 testov
   (krok B): ASS formát a jeho escapovanie, zalomenie textu, prepočet časov pri
   strihu, validácia požiadavky, percentá z ffmpeg, stavová mašina renderu,
   bezpečné názvy súborov, upratovanie — a **E2E s ffmpeg**, ktorý meria, že sú
   titulky naozaj v obraze (a že výstup nemá menej snímok než zdroj).
 
-**Celkom: `bun test tests/` = 187 testov v 8 súboroch, 0 zlyhaní.**
+**Celkom: `bun test tests/` = 190 testov v 8 súboroch, 0 zlyhaní.**
 
 ## 7. Render klipu do súboru (F2b)
 
