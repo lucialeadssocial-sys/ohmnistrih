@@ -35,12 +35,13 @@ function main() {
 
   const run = (goal?: string) => {
     const project = buildRealProjectForExport(media, SOURCE, durationSec);
+    if (!project) throw new Error("Projekt z reálneho videa sa nepodarilo postaviť.");
     (coreEngine as any).commandManager.setProject(project);
     const plan = buildStylePlan({
       segments,
       recipe,
       durationSec,
-      availableSupportingVisuals: 3,
+      availableSupportingVisuals: project.assets.filter((a) => a.type === "image").length,
       ...(goal ? { goal } : {}),
       now: NOW,
     });
@@ -48,7 +49,7 @@ function main() {
     const report: any = applyStylePlan(coreEngine as any, plan, { now: NOW });
     const after = fingerprintStyleState(coreEngine.getProject());
     // Presný rollback — aby ďalší beh začínal z rovnakého stavu.
-    const rollback: any = rollbackStyleApply(coreEngine as any, report, { now: NOW });
+    const rollback: any = rollbackStyleApply(coreEngine as any, report);
     const restored = fingerprintStyleState(coreEngine.getProject());
     return {
       goal: goal ?? null,

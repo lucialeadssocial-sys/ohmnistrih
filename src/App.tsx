@@ -21,6 +21,7 @@ function toStyleSegments(captionProject: { segments?: Array<{ id?: string; start
 }
 
 import { Header } from "./components/Header";
+import { OwnVisualPanel } from "./components/OwnVisualPanel";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { ContextualInspector } from "./components/ContextualInspector";
 import { SelectionType } from "./types";
@@ -1125,6 +1126,37 @@ function MainApp() {
     }, 2500);
   };
 
+  /** KROK 27 — priznania autorov obrázkov z voľnej knižnice (aby sa nestratili). */
+  const [ownVisualAttributions, setOwnVisualAttributions] = useState<string[]>([]);
+
+  /**
+   * KROK 27 — pridanie vlastného vizuálu do videa.
+   *
+   * Prečo `coreEngine.importMediaFile`: je to **existujúca** cesta appky
+   * (registerMediaFile → asset do projektu → AddClipCommand cez CommandManager),
+   * tá istá, akou sa do projektu dostáva nahraté video. Žiadna skratka, žiadna
+   * druhá cesta — takže vizuál je v canonical osi a ide do náhľadu aj exportu.
+   */
+  const handleAddOwnVisual = async (file: File, meta: { sourceSk: string; noteSk: string; attributionSk?: string }) => {
+    try {
+      const clip = await coreEngine.importMediaFile(file, "b-roll");
+      if (meta.attributionSk) setOwnVisualAttributions((prev) => (prev.includes(meta.attributionSk!) ? prev : [...prev, meta.attributionSk!]));
+      showToast(
+        isSk
+          ? `✅ Vizuál pridaný do videa (${meta.sourceSk}). ${meta.noteSk}`
+          : `✅ Visual added (${meta.sourceSk}).`,
+      );
+      recordLive("visual_added");
+      if (meta.attributionSk) {
+        showToast(isSk ? `📋 Nezabudni uviesť autora: ${meta.attributionSk}` : `📋 Attribution: ${meta.attributionSk}`);
+      }
+      void clip;
+    } catch (error: any) {
+      // Poctivo: keď sa vizuál nepridal, appka to povie a nič nepredstiera.
+      showToast(isSk ? `❌ Vizuál sa nepodarilo pridať: ${String(error?.message ?? error)}` : `❌ Visual failed: ${error?.message}`);
+    }
+  };
+
   const handleApplyBroll = () => {
     setBrollProject({ ...brollProject, isApplied: true });
     // KROK 21: sprievodca odškrtne krok len teraz — stav projektu sa naozaj zmenil
@@ -1235,7 +1267,7 @@ function MainApp() {
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<
-    "edl_autopilot" | "content_graph" | "pro_audio" | "qc_analytics" | "editor_brain" | "ai_orchestrator" | "ai_visual_director" | "pro_autopilot" | "system_test" | "pipeline" | "raw" | "story" | "jump" | "transitions" | "bilingual" | "audio" | "beat" | "attention" | "finder" | "cleanup" | "export" | "pack" | "retention" | "ab" | "pro_timeline" | "omnistrih" | "eraser" | "captions" | "burned_subtitles" | "opus" | "canva" | "thumbnail" | "os_hub" | "broll" | "toggles" | "zoomsfx" | "pro_toolbox" | "ai_voice" | "media_manager" | "director_briefing" | "workspace" | "style_studio"
+    "edl_autopilot" | "content_graph" | "pro_audio" | "qc_analytics" | "editor_brain" | "ai_orchestrator" | "ai_visual_director" | "pro_autopilot" | "system_test" | "pipeline" | "raw" | "story" | "jump" | "transitions" | "bilingual" | "audio" | "beat" | "attention" | "finder" | "cleanup" | "export" | "pack" | "retention" | "ab" | "pro_timeline" | "omnistrih" | "eraser" | "captions" | "burned_subtitles" | "opus" | "canva" | "thumbnail" | "os_hub" | "broll" | "toggles" | "zoomsfx" | "pro_toolbox" | "ai_voice" | "media_manager" | "director_briefing" | "workspace" | "style_studio" | "own_visual"
   >(() => {
     const saved = localStorage.getItem("omnistrih_active_tab");
     return (saved as any) || "pro_autopilot";
@@ -3599,11 +3631,12 @@ function MainApp() {
                         </button>
                       ))}
 
-                      {['broll', 'finder', 'attention', 'thumbnail', 'style_studio'].includes(activeTab) && [
+                      {['broll', 'finder', 'attention', 'thumbnail', 'style_studio', 'own_visual'].includes(activeTab) && [
                         { id: 'broll', label: isSk ? '🎥 B-Roll Studio' : '🎥 B-Roll Studio', icon: Film },
                         { id: 'finder', label: isSk ? '🔍 B-Roll Finder' : '🔍 B-Roll Finder', icon: Search },
                         { id: 'attention', label: isSk ? '👁️ Vizuálna Pozornosť' : '👁️ Visual Attention', icon: Eye },
                         { id: 'thumbnail', label: isSk ? '🖼️ AI Miniatúry (CTR 95%+)' : '🖼️ AI Thumbnails (95%+ CTR)', icon: ImageIcon },
+                        { id: 'own_visual', label: isSk ? '➕ Vlastný vizuál' : '➕ Own Visual', icon: ImageIcon },
                       ].map(tab => (
                         <button
                           key={tab.id}
@@ -4156,6 +4189,16 @@ function MainApp() {
                     {activeTab === "retention" && <RetentionSimulator project={retentionProject} isAnalyzing={isAnalyzingRetention} onRunAnalysis={handleRunRetentionAnalysis} onSeek={handleSeek} currentTime={currentTime} language={language} />}
                     {activeTab === "ab" && <ABVersionGenerator project={abVersionProject} isGenerating={isGeneratingAB} onGenerate={handleGenerateABVersions} onPreview={(v) => handleSeek(0)} language={language} />}
                     {activeTab === "pro_timeline" && <ProTimeline duration={duration} currentTime={currentTime} isPlaying={isPlaying} onSeek={handleSeek} onTogglePlay={handleTogglePlay} language={language} />}
+                    {activeTab === "own_visual" && (
+                      <OwnVisualPanel
+                        language={language}
+                        segments={toStyleSegments(captionProject as any)}
+                        showToast={showToast}
+                        onAddVisual={handleAddOwnVisual}
+                        attributions={ownVisualAttributions}
+                        onAttribution={(text) => setOwnVisualAttributions((prev) => (prev.includes(text) ? prev : [...prev, text]))}
+                      />
+                    )}
                     {activeTab === "style_studio" && (
                       <StyleStudioPanel
                         language={language}

@@ -27,7 +27,9 @@ export type LiveSignal =
   // KROK 21 — spätná väzba z vnútra nástrojov: appka to vie, lebo sa zmenil
   // stav projektu, ktorý ide do náhľadu (nie odhad, nie čas).
   | "broll_applied"
-  | "voice_added";
+  | "voice_added"
+  // KROK 27 — vlastný vizuál sa dostal do projektu (znamená to zmenu canonical osi).
+  | "visual_added";
 
 /** Reálne vstupy: čo appka naozaj vie (nie odhad). */
 export interface LiveInputs {
@@ -53,6 +55,7 @@ export function computeSignals(inputs: LiveInputs): Record<LiveSignal, boolean> 
     export_finished: fromLog("export_finished"),
     broll_applied: fromLog("broll_applied"),
     voice_added: fromLog("voice_added"),
+    visual_added: fromLog("visual_added"),
   };
 }
 
@@ -110,6 +113,11 @@ export const TOOL_LIVE_STEPS: Record<string, LiveStep[]> = {
   broll: [
     { label: "Vyber záber, ktorý chceš pridať", where: "panel B-roll vľavo", manual: true },
     { label: "Použi B-roll (aplikuj na video)", where: "tlačidlo použiť/aplikovať v paneli", signal: "broll_applied" },
+  ],
+  own_visual: [
+    { label: "Vyber, odkiaľ vizuál vezmeš (vytvoriť / knižnica / súbor / AI)", where: "panel Vlastný vizuál vľavo", manual: true },
+    { label: "Pridaj vizuál do videa", where: "tlačidlo „Pridať do videa“ v paneli", signal: "visual_added" },
+    { label: "Skontroluj, že je vizuál na správnom mieste", where: "prehrávač vpravo + časová os", manual: true },
   ],
   story: [
     { label: "Nechaj appku navrhnúť štruktúru príbehu", where: "panel Story Builder vľavo", manual: true },
