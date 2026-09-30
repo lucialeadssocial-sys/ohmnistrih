@@ -5,6 +5,7 @@
 
 import { ProjectModel, ClipModel } from '../types/project';
 import { TimelineEngine } from '../timeline/timelineEngine';
+import { buildCanonicalFramePlan, CanonicalLayer } from './canonicalFrame';
 
 export class RenderEngine {
   private static instance: RenderEngine | null = null;
@@ -50,68 +51,34 @@ export class RenderEngine {
     ctx.fillStyle = backgroundColor || '#000000';
     ctx.fillRect(0, 0, width, height);
 
-    // 2. Get active clips at time `t` ordered by track z-index
-    const activeLayers = TimelineEngine.getActiveClipsAtTime(project, currentTime);
+    // 2. Canonical plán snímky — JEDINÉ miesto, ktoré rozhoduje, čo sa kreslí.
+    //    Náhľad aj export idú cez túto funkciu, takže sa nemôžu rozísť.
+    const plan = buildCanonicalFramePlan(project, currentTime);
 
-    // 3. Render layers
-    for (const { clip } of activeLayers) {
+    // 3. Render layers (zdola nahor, presne v poradí z plánu)
+    for (const layer of plan.layers) {
+      const clip = findClipById(project, layer.clipId);
+      if (!clip) continue;
+
       ctx.save();
 
-      const clipTimeOffset = (currentTime - clip.start) * clip.speed;
-
-      // Compute keyframe animated values
-      const scale = TimelineEngine.interpolateKeyframeValue(
-        clip.keyframes,
-        'scale',
-        clipTimeOffset,
-        clip.scale
-      ) / 100;
-
-      const opacity = TimelineEngine.interpolateKeyframeValue(
-        clip.keyframes,
-        'opacity',
-        clipTimeOffset,
-        clip.opacity
-      ) / 100;
-
-      const positionX = TimelineEngine.interpolateKeyframeValue(
-        clip.keyframes,
-        'positionX',
-        clipTimeOffset,
-        clip.positionX
-      );
-
-      const positionY = TimelineEngine.interpolateKeyframeValue(
-        clip.keyframes,
-        'positionY',
-        clipTimeOffset,
-        clip.positionY
-      );
-
-      const rotation = TimelineEngine.interpolateKeyframeValue(
-        clip.keyframes,
-        'rotation',
-        clipTimeOffset,
-        clip.rotation
-      );
-
-      ctx.globalAlpha = opacity;
+      ctx.globalAlpha = layer.opacity / 100;
 
       // Translate to Canvas Center + Offset
-      const centerX = width / 2 + positionX;
-      const centerY = height / 2 + positionY;
+      const centerX = width / 2 + layer.positionX;
+      const centerY = height / 2 + layer.positionY;
 
       ctx.translate(centerX, centerY);
-      if (rotation !== 0) {
-        ctx.rotate((rotation * Math.PI) / 180);
+      if (layer.rotation !== 0) {
+        ctx.rotate((layer.rotation * Math.PI) / 180);
       }
-      ctx.scale(scale, scale);
+      ctx.scale(layer.scale / 100, layer.scale / 100);
 
-      // Render Clip Content according to Type
-      if (clip.type === 'video' || clip.type === 'b-roll' || clip.type === 'image') {
+      // Render Clip Content according to Type (obsah aj hodnoty berie z canonical plánu)
+      if (layer.kind === 'media') {
         this.renderMediaClip(ctx, clip, width, height);
-      } else if (clip.type === 'text' || clip.type === 'caption') {
-        this.renderTextClip(ctx, clip, width, height);
+      } else if (layer.kind === 'text') {
+        this.renderTextClip(ctx, clip, layer, width, height);
       }
 
       ctx.restore();
@@ -154,12 +121,17 @@ export class RenderEngine {
   private renderTextClip(
     ctx: CanvasRenderingContext2D,
     clip: ClipModel,
+    layer: CanonicalLayer,
     canvasWidth: number,
     canvasHeight: number
   ): void {
-    if (!clip.textConfig) return;
+    if (!clip?.textConfig) return;
 
-    const { content, fontFamily, fontSize, color, strokeColor, strokeWidth, backgroundColor } = clip.textConfig;
+    // Obsah berie z canonical plánu — aby náhľad aj export kreslili to isté.
+    const content = layer.text ?? clip.textConfig.content;
+    if (!content) return;
+
+    const { fontFamily, fontSize, color, strokeColor, strokeWidth, backgroundColor } = clip.textConfig;
 
     ctx.font = `${clip.textConfig.fontWeight || 'bold'} ${fontSize}px ${fontFamily || 'Inter, sans-serif'}`;
     ctx.textAlign = 'center';
@@ -205,6 +177,16 @@ export class RenderEngine {
         return 'none';
     }
   }
+}
+
+/** Nájde klip podľa id v celom projekte (plán nesie len identifikátory). */
+export function findClipById(project: ProjectModel, clipId: string): ClipModel | null {
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.id === clipId) return clip;
+    }
+  }
+  return null;
 }
 
 export const renderEngine = RenderEngine.getInstance();

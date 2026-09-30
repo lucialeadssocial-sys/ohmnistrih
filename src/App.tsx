@@ -1831,6 +1831,12 @@ function MainApp() {
    * Zdroj pre render strihu: najprv pôvodný súbor (najrýchlejšie a bezpečné),
    * potom blob URL, ktorú vie prehliadač načítať znova.
    */
+  /** Stabilný odber zmien canonical osi (CommandManager) pre canonical náhľad. */
+  const subscribeCanonicalChanges = useCallback(
+    (onChange: () => void) => coreEngine.commandManager.subscribe(() => onChange()),
+    [],
+  );
+
   const getSourceBlobForRender = useCallback(async (): Promise<Blob | null> => {
     if (sourceFileRef.current) return sourceFileRef.current;
 
@@ -4002,6 +4008,16 @@ function MainApp() {
                         showToast={showToast}
                         onApplyStylePlan={(plan, decisionIds) => applyStylePlan(coreEngine, plan, { decisionIds })}
                         onRollbackStyleApply={(report) => rollbackStyleApply(coreEngine, report)}
+                        // KROK 7: náhľad aj export idú z TEJ ISTEJ canonical časovej osi.
+                        // Projekt sa číta naživo a zmeny osi odoberá priamo panel —
+                        // takže po Apply sa náhľad prekreslí a zvyšok appky sa nererenderuje.
+                        canonicalPreviewProps={{
+                          getProject: () => coreEngine.getProject(),
+                          subscribeToCanonical: subscribeCanonicalChanges,
+                          currentTime,
+                          mediaUrl: currentVideoUrl,
+                          getSourceBlob: getSourceBlobForRender,
+                        }}
                       />
                     )}
                     {activeTab === "eraser" && <ObjectEraserSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} language={language} />}

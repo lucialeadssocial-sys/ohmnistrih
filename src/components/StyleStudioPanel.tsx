@@ -26,6 +26,8 @@ import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 import { buildStylePlan, type StylePlan } from "../core/style/styleIntelligence";
 import { customRecipeFromBrief, getStyleRecipe, type StylePresetId, type StyleRecipe } from "../core/style/styleRecipes";
 import { DEFAULT_STYLE_CONTROLS, type StyleControls } from "../core/style/styleDecisionTypes";
+import { CanonicalExportPanel } from "./CanonicalExportPanel";
+import type { ProjectModel } from "../core/types/project";
 import {
   styleApplyCanRunSk,
   styleApplyReportTextSk,
@@ -91,6 +93,18 @@ export interface StyleStudioPanelProps {
   onRollbackStyleApply?: (report: StyleApplyReport) => StyleRollbackReport | null;
   /** Hotový report z aplikovania (pre statický náhľad a testy). */
   initialApplyReport?: StyleApplyReport | null;
+  /**
+   * KROK 7 — canonical náhľad a export. Bez tohto objektu obrazovka náhľad
+   * ani export nezobrazí (statický náhľad nič nepredstiera).
+   */
+  canonicalPreviewProps?: {
+    project?: ProjectModel | null;
+    getProject?: () => ProjectModel | null;
+    subscribeToCanonical?: (onChange: () => void) => () => void;
+    currentTime: number;
+    mediaUrl?: string | null;
+    getSourceBlob?: () => Promise<Blob | null>;
+  } | null;
 }
 
 const TONE_CLASS: Record<string, string> = {
@@ -120,6 +134,7 @@ export function StyleStudioPanel({
   onApplyStylePlan,
   onRollbackStyleApply,
   initialApplyReport = null,
+  canonicalPreviewProps = null,
 }: StyleStudioPanelProps) {
   const isSk = language === "sk";
 
@@ -847,6 +862,20 @@ export function StyleStudioPanel({
                 </>
               )}
             </div>
+
+            {/* Canonical náhľad + export (krok 7) — jedna os pre náhľad aj export */}
+            {canonicalPreviewProps && (
+              <CanonicalExportPanel
+                language={language}
+                project={canonicalPreviewProps.project ?? null}
+                getProject={canonicalPreviewProps.getProject}
+                subscribeToCanonical={canonicalPreviewProps.subscribeToCanonical}
+                currentTime={canonicalPreviewProps.currentTime}
+                mediaUrl={canonicalPreviewProps.mediaUrl}
+                getSourceBlob={canonicalPreviewProps.getSourceBlob}
+                showToast={showToast}
+              />
+            )}
 
             {/* Čo engine zvážil a nevybral */}
             {considered.length > 0 && (
