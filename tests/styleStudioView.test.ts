@@ -45,9 +45,9 @@ const plan = () =>
   });
 
 describe("H) recepty na obrazovke", () => {
-  test("obrazovka ponúka všetkých 10 receptov s pomerom a charakterom", () => {
+  test("obrazovka ponúka všetkých 13 receptov s pomerom a charakterom", () => {
     const rows = recipeOptionsSk();
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(13);
     for (const r of rows) {
       expect(r.labelSk.length).toBeGreaterThan(2);
       expect(r.ratioSk).toMatch(/% rečník/);
