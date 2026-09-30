@@ -288,16 +288,38 @@ describe("canonical export: zadanie pre existujúcu renderovaciu linku", () => {
     expect(plan.request.zoom ?? []).toEqual([]);
   });
 
-  test("pootočená alebo priesvitná vrstva sa nevykreslí a je to povedané", () => {
+  test("pootočená a priesvitná vrstva sa vykreslí a nesie svoje hodnoty (krok 10)", () => {
+    // Do kroku 10 sa také vrstvy vynechávali. Teraz sa vykresľujú — a do linky
+    // musia ísť presné hodnoty z canonical osi, nie „nejako".
     const project = projectWithStyle();
-    project.tracks[1].clips[0].rotation = 5;
+    project.tracks[1].clips[0].rotation = 12.5;
+    project.tracks[1].clips[0].opacity = 60;
+    project.tracks[1].clips[0].filter = "VINTAGE";
+    const plan = buildCanonicalExportPlan(
+      project,
+      { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 },
+      { assetUploads: { asset_shot: "shot.png" } },
+    );
+    expect(plan.request.overlays?.length).toBe(1);
+    const ov = plan.request.overlays![0];
+    expect(ov.rotation).toBe(12.5);
+    expect(ov.opacity).toBe(60);
+    expect(ov.filter).toBe("VINTAGE");
+    // a už sa nesťažuje, že by to nešlo
+    expect(plan.unsupportedSk.join(" ")).not.toContain("pootočených");
+    expect(plan.unsupportedSk.join(" ")).not.toContain("priehľadnosť");
+  });
+
+  test("takmer neviditeľná vrstva (pod 1 %) sa prizná — v obraze by nebola vidieť", () => {
+    const project = projectWithStyle();
+    project.tracks[1].clips[0].opacity = 0.5;
     const plan = buildCanonicalExportPlan(
       project,
       { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 },
       { assetUploads: { asset_shot: "shot.png" } },
     );
     expect(plan.request.overlays ?? []).toEqual([]);
-    expect(plan.unsupportedSk.join(" ")).toContain("pootočených");
+    expect(plan.unsupportedSk.join(" ")).toContain("priehľadnosť");
   });
 
   test("skrytá stopa s b-rollom sa do videa nedostane (a je to správne, s dôvodom)", () => {

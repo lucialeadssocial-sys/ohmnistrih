@@ -28,6 +28,12 @@ import {
 import { normalizeKeepRanges } from "./subtitleRender";
 import type { SpeechSegmentLike } from "../transcript/wordTiming";
 
+/**
+ * Farebné filtre, ktoré vie táto linka vykresliť. Musia sedieť s `colorFilterForName`
+ * v `subtitleRender.ts` — inak by plán poslal filter, ktorý sa ticho vynechá.
+ */
+export const BURN_KNOWN_FILTERS = ["NONE", "TEAL_ORANGE", "CINEMATIC", "VINTAGE", "BW", "WARM", "COOL"] as const;
+
 export const BURN_LIMITS = {
   /** Väčšie video = dlhší upload do .data; nad týmto radšej poctivo odmietnuť. */
   maxUploadBytes: 512 * 1024 * 1024,
@@ -44,6 +50,8 @@ export const BURN_LIMITS = {
   maxZoomPercent: 400,
   /** Koľko krokov animovaného priblíženia (keyframov) sa smie skladať v jednom okne. */
   maxZoomKeyframes: 24,
+  /** Otočenie vrstvy, ktoré dáva zmysel (mimo neho je to skôr chyba v pláne). */
+  maxOverlayRotation: 360,
 } as const;
 
 export const BURN_MAX_UPLOAD_SK = `Video je príliš veľké na vypálenie titulkov (limit ${Math.round(
@@ -119,7 +127,25 @@ export interface BurnSpec {
     keyframes?: { timeSec: number; scalePercent: number }[];
   }[];
   /** Obrazové vrstvy z canonical osi (krok 8) — odkazy na súbory nahraté na server. */
-  overlays: { clipId: string; kind: "image" | "video"; uploadId: string; name: string; startSec: number; endSec: number; scalePercent: number; positionX: number; positionY: number }[];
+  overlays: {
+    clipId: string;
+    kind: "image" | "video";
+    uploadId: string;
+    name: string;
+    startSec: number;
+    endSec: number;
+    scalePercent: number;
+    positionX: number;
+    positionY: number;
+    /** Otočenie v stupňoch okolo stredu (0 = bez otočenia). */
+    rotation: number;
+    /** Priesvitnosť v percentách (100 = plne nepriehľadné). */
+    opacity: number;
+    /** Farebný filter (len z `BURN_KNOWN_FILTERS`). */
+    filter: string;
+  }[];
+  /** Farebný filter základného videa (len z `BURN_KNOWN_FILTERS`). */
+  baseFilter: string;
 }
 
 export type BurnValidation =
@@ -307,6 +333,29 @@ export function validateBurnRequest(body: any): BurnValidation {
       if (scalePercent < 5 || scalePercent > 1000) {
         return { ok: false, errorSk: `Veľkosť obrazovej vrstvy ${Math.round(scalePercent)} % je mimo rozumného rozsahu.` };
       }
+      // Otočenie a priesvitnosť (krok 10): rozsahy sa kontrolujú, nie „nejako" prevezmú.
+      const rotation = num(raw?.rotation, 0);
+      if (Math.abs(rotation) > BURN_LIMITS.maxOverlayRotation) {
+        return {
+          ok: false,
+          errorSk: `Otočenie obrazovej vrstvy ${Math.round(rotation)}° je mimo rozsahu ±${BURN_LIMITS.maxOverlayRotation}°.`,
+        };
+      }
+      const opacity = num(raw?.opacity, 100);
+      if (opacity < 1 || opacity > 100) {
+        return {
+          ok: false,
+          errorSk: `Priesvitnosť obrazovej vrstvy ${Math.round(opacity)} % je mimo rozsahu 1–100 %.`,
+        };
+      }
+      const overlayFilter = String(raw?.filter ?? "NONE").toUpperCase();
+      if (!(BURN_KNOWN_FILTERS as readonly string[]).includes(overlayFilter)) {
+        return {
+          ok: false,
+          errorSk: `Neznámy farebný filter „${overlayFilter}" na obrazovej vrstve — známe sú: ${BURN_KNOWN_FILTERS.join(", ")}.`,
+        };
+      }
+
       overlays.push({
         clipId: String(raw?.clipId ?? "").slice(0, 80),
         kind: raw?.kind === "video" ? "video" : "image",
@@ -317,8 +366,19 @@ export function validateBurnRequest(body: any): BurnValidation {
         scalePercent,
         positionX: num(raw?.positionX, 0),
         positionY: num(raw?.positionY, 0),
+        rotation,
+        opacity,
+        filter: overlayFilter,
       });
     }
+  }
+
+  const baseFilter = String(body?.baseFilter ?? "NONE").toUpperCase();
+  if (!(BURN_KNOWN_FILTERS as readonly string[]).includes(baseFilter)) {
+    return {
+      ok: false,
+      errorSk: `Neznámy farebný filter „${baseFilter}" na videu — známe sú: ${BURN_KNOWN_FILTERS.join(", ")}.`,
+    };
   }
 
   const uploadName = safeBaseName(body.uploadName, "video.mp4");
@@ -344,6 +404,7 @@ export function validateBurnRequest(body: any): BurnValidation {
       height,
       keepRanges,
       zoom,
+      baseFilter,
       overlays,
       ...(Object.keys(normalized.overrides).length > 0 ? { overrides: normalized.overrides } : {}),
       ...(normalized.notesSk.length > 0 ? { overrideNotesSk: normalized.notesSk } : {}),

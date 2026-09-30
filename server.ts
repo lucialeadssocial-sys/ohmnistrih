@@ -3803,7 +3803,19 @@ app.post("/api/export/burn-captions", (req, res) => {
   // Každá vrstva musí byť naozaj na disku. Keď nie je, render sa **nezastaví
   // potichu**: vrstva sa vynechá a používateľ dostane dôvod (nie prázdne miesto).
   const overlayNotesSk: string[] = [];
-  const overlayInputs: { path: string; kind: "image" | "video"; startSec: number; endSec: number; scalePercent: number; positionX: number; positionY: number; nameSk?: string }[] = [];
+  const overlayInputs: {
+    path: string;
+    kind: "image" | "video";
+    startSec: number;
+    endSec: number;
+    scalePercent: number;
+    positionX: number;
+    positionY: number;
+    rotation: number;
+    opacity: number;
+    filter: string;
+    nameSk?: string;
+  }[] = [];
   for (const overlay of spec.overlays) {
     const overlayPath = path.join(UPLOAD_DIR, overlay.uploadId);
     if (!fs.existsSync(overlayPath)) {
@@ -3820,12 +3832,25 @@ app.post("/api/export/burn-captions", (req, res) => {
       scalePercent: overlay.scalePercent,
       positionX: overlay.positionX,
       positionY: overlay.positionY,
+      // Otočenie, priesvitnosť a farebný filter vrstvy (krok 10) — idú do linky.
+      rotation: overlay.rotation,
+      opacity: overlay.opacity,
+      filter: overlay.filter,
       nameSk: overlay.name,
     });
   }
   if (overlayInputs.length > 0) {
+    const rotated = overlayInputs.filter((o) => Math.abs(o.rotation) > 0.01).length;
+    const faded = overlayInputs.filter((o) => o.opacity < 99.5).length;
+    const filtered = overlayInputs.filter((o) => o.filter !== "NONE").length;
+    const extra: string[] = [];
+    if (rotated > 0) extra.push(`${rotated} pootočených`);
+    if (faded > 0) extra.push(`${faded} priesvitných`);
+    if (filtered > 0) extra.push(`${filtered} s farebným filtrom`);
     overlayNotesSk.push(
-      `${overlayInputs.length} obrazových vrstiev sa skladá do obrazu (b-roll/fotky z canonical osi).`,
+      `${overlayInputs.length} obrazových vrstiev sa skladá do obrazu (b-roll/fotky z canonical osi)${
+        extra.length > 0 ? ` — ${extra.join(", ")}` : ""
+      }.`,
     );
   }
 
@@ -3854,6 +3879,7 @@ app.post("/api/export/burn-captions", (req, res) => {
           }
         : {}),
       ...(overlayInputs.length > 0 ? { overlays: overlayInputs } : {}),
+      ...(spec.baseFilter && spec.baseFilter !== "NONE" ? { baseFilter: spec.baseFilter } : {}),
       ...(built.clipDurationSec > 0 ? { outputDurationSec: built.clipDurationSec } : {}),
       ...(probe?.fps ? { sourceFps: probe.fps } : {}),
       // Rozmery rámu idú do linky LEN pre priblíženie (aby orezalo na presne tie

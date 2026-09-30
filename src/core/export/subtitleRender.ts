@@ -1051,6 +1051,12 @@ export interface BurnOverlay {
   scalePercent: number;
   positionX: number;
   positionY: number;
+  /** Otočenie v stupňoch okolo stredu (0 = bez otočenia). */
+  rotation?: number;
+  /** Priesvitnosť v percentách (100 = plne nepriehľadné). */
+  opacity?: number;
+  /** Farebný filter z canonical osi (`NONE`, `BW`, `VINTAGE`, …). */
+  filter?: string;
   /** Meno pre poznámky a report (nikdy nie cesta na disku). */
   nameSk?: string;
 }
@@ -1066,6 +1072,8 @@ export interface BurnArgsOptions {
   zoomWindows?: BurnZoomWindow[];
   /** Obrazové vrstvy z canonical osi (b-roll, fotky). */
   overlays?: BurnOverlay[];
+  /** Farebný filter na základnom videu (`NONE` = nič). */
+  baseFilter?: string;
   /** Dĺžka výsledku — potrebná, keď sa skladá z viacerých častí alebo s vrstvami. */
   outputDurationSec?: number;
   /**
@@ -1178,6 +1186,14 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
     videoLabel = "[vscaled]";
   }
 
+  // Farebný filter základného videa — ten istý prepis ako pri vrstvách, aby sa
+  // náhľad a export nemohli rozísť.
+  const baseColorFilter = colorFilterForName(o.baseFilter);
+  if (baseColorFilter) {
+    filters.push(`${videoLabel}format=yuv420p${baseColorFilter}[vbase]`);
+    videoLabel = "[vbase]";
+  }
+
   // Obrazové vrstvy (b-roll / fotky) — v poradí zdola nahor, každá vo svojom čase.
   overlays.forEach((overlay, i) => {
     const inputIndex = 1 + i;
@@ -1186,13 +1202,17 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
       : 1;
     const imgScale = scale !== 1 ? `scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},` : "";
     const overlayLabel = `[ov${i}]`;
+    // Farebný filter, otočenie a priesvitnosť — v poradí, v akom ich skladá
+    // canonical kompozitor: filter na obsah, otočenie okolo stredu, potom alfa.
+    const colorFilter = colorFilterForName(overlay.filter);
+    const transform = overlayTransformFilters(overlay);
     if (overlay.kind === "video") {
       const dur = Math.max(0.02, overlay.endSec - overlay.startSec);
       filters.push(
-        `[${inputIndex}:v]${imgScale}format=rgba,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS+${overlay.startSec.toFixed(3)}/TB${overlayLabel}`,
+        `[${inputIndex}:v]${imgScale}format=rgba,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS+${overlay.startSec.toFixed(3)}/TB${colorFilter}${transform}${overlayLabel}`,
       );
     } else {
-      filters.push(`[${inputIndex}:v]${imgScale}format=rgba,setpts=PTS-STARTPTS${overlayLabel}`);
+      filters.push(`[${inputIndex}:v]${imgScale}format=rgba,setpts=PTS-STARTPTS${colorFilter}${transform}${overlayLabel}`);
     }
     const nextLabel = `[vov${i}]`;
     // Poloha presne ako v canonical kompozitore: stred plátna + posun klipu.
@@ -1239,6 +1259,76 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
  * 1078 px — rám sa potichu zmenší o dva pixely (odhalené meraním výstupu, nie testom).
  * Rám videa sa meniť nesmie.
  */
+/**
+ * Farebný filter canonical osi → ffmpeg.
+ *
+ * Musí sedieť s tým, čo kreslí canonical kompozitor (`renderEngine.getCanvasFilterCSS`),
+ * inak by náhľad a export ukazovali niečo iné. Pozor na jednu poctivú nepresnosť:
+ * prehliadačové `brightness(95 %)` je **násobenie**, kým `eq=brightness` je
+ * **pripočítanie** — preto je tu prepis `0,95 → -0,05`. Je to zámerná aproximácia
+ * (CSS filtre sú percepčné, ffmpeg lineárne) a v poznámkach sa to priznáva.
+ */
+export function colorFilterForName(filter?: string): string {
+  const name = String(filter ?? "NONE").toUpperCase();
+  switch (name) {
+    case "TEAL_ORANGE":
+      return ",eq=contrast=1.2:saturation=1.3,hue=h=-10";
+    case "CINEMATIC":
+      return ",eq=contrast=1.1:brightness=-0.05:saturation=0.85";
+    case "VINTAGE":
+      return `,${sepiaMix(0.4)},eq=brightness=-0.10`;
+    case "BW":
+      return ",hue=s=0,eq=contrast=1.2";
+    case "WARM":
+      return `,${sepiaMix(0.2)},eq=saturation=1.2`;
+    case "COOL":
+      return ",hue=h=15:s=1.1";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Čiastočná sépia presne podľa CSS: matica sépie sa mieša s jednotkovou maticou.
+ * (`sepia(40 %)` v prehliadači = 60 % pôvodnej farby + 40 % sépie.)
+ */
+function sepiaMix(amount: number): string {
+  const a = Math.min(1, Math.max(0, amount));
+  const b = 1 - a;
+  const f = (v: number) => Number(v.toFixed(4));
+  return (
+    "colorchannelmixer=" +
+    [
+      `rr=${f(b + 0.393 * a)}`, `rg=${f(0.769 * a)}`, `rb=${f(0.189 * a)}`,
+      `gr=${f(0.349 * a)}`, `gg=${f(b + 0.686 * a)}`, `gb=${f(0.168 * a)}`,
+      `br=${f(0.272 * a)}`, `bg=${f(0.534 * a)}`, `bb=${f(b + 0.131 * a)}`,
+    ].join(":")
+  );
+}
+
+/**
+ * Otočenie a priesvitnosť vrstvy ako ffmpeg filtre (0 = nič sa nemení).
+ * Poradie je **otočenie → priesvitnosť**; alfa sa násobí, takže na výsledku sa
+ * nič nemení, ale čitateľnosť filtra je lepšia (geometria pred priehľadnosťou).
+ */
+export function overlayTransformFilters(overlay: { opacity?: number; rotation?: number }): string {
+  const parts: string[] = [];
+  const rotation = overlay.rotation ?? 0;
+  if (Math.abs(rotation) > 0.01) {
+    // Otočenie okolo stredu. `ow=rotw/oh=roth` = celý otočený obsah zostane
+    // viditeľný (rohy priesvitné) — presne ako `ctx.rotate` na canvase, ktorý
+    // tiež nič neodrezáva.
+    const radians = (rotation * Math.PI) / 180;
+    parts.push(`rotate=${radians.toFixed(6)}:ow=rotw(${radians.toFixed(6)}):oh=roth(${radians.toFixed(6)}):c=none`);
+  }
+  const opacity = overlay.opacity ?? 100;
+  if (Math.abs(opacity - 100) > 0.01) {
+    const alpha = Math.min(1, Math.max(0, opacity / 100));
+    parts.push(`colorchannelmixer=aa=${alpha.toFixed(4)}`);
+  }
+  return parts.length > 0 ? `,${parts.join(",")}` : "";
+}
+
 export function zoomFilterForPercent(scalePercent?: number, frameWidth?: number, frameHeight?: number): string {
   const p = Number(scalePercent ?? 100);
   if (!Number.isFinite(p) || Math.abs(p - 100) <= 0.01) return "";
