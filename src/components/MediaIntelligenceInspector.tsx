@@ -216,17 +216,35 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 { key: 'duplicate_shots', label: 'Duplicitné Zábery' },
               ].map((node) => {
                 const isDone = indexData?.completedTasks[node.key];
+                const quality = indexData?.dataQuality?.[node.key];
                 return (
                   <div
                     key={node.key}
-                    className={`p-2 rounded-lg border flex items-center justify-between ${
-                      isDone
+                    className={`p-2 rounded-lg border flex flex-col gap-0.5 ${
+                      quality === 'MEASURED'
                         ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-500'
+                        : quality === 'DERIVED'
+                          ? 'bg-sky-950/40 border-sky-800/80 text-sky-300'
+                          : quality === 'NOT_AVAILABLE'
+                            ? 'bg-amber-950/30 border-amber-800/70 text-amber-300'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-500'
                     }`}
                   >
-                    <span>{node.label}</span>
-                    <CheckCircle2 className={`w-3.5 h-3.5 ${isDone ? 'text-emerald-400' : 'text-zinc-600'}`} />
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{node.label}</span>
+                      <CheckCircle2 className={`w-3.5 h-3.5 ${isDone ? 'opacity-90' : 'text-zinc-600'}`} />
+                    </div>
+                    <span className="text-[10px] uppercase tracking-wide opacity-80">
+                      {quality === 'MEASURED'
+                        ? 'merané'
+                        : quality === 'DERIVED'
+                          ? 'odvodené z merania'
+                          : quality === 'NOT_AVAILABLE'
+                            ? 'nemám dáta'
+                            : isDone
+                              ? 'bez označenia'
+                              : 'nespustené'}
+                    </span>
                   </div>
                 );
               })}
@@ -300,15 +318,36 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
-                  <p className="text-zinc-400">Nájdených {indexData.scenes.length} samostatných scén na základe farebnej zmeny frame-by-frame.</p>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {indexData.scenes.map((sc, i) => (
-                      <div key={sc.id} className="p-2 bg-zinc-900 rounded border border-zinc-800 flex justify-between text-[11px]">
-                        <span className="font-mono text-purple-300">Scéna #{i + 1}</span>
-                        <span className="text-zinc-400">{sc.start}s – {sc.end}s ({sc.duration.toFixed(1)}s)</span>
+                  {indexData.dataQuality?.scene_boundaries === 'NOT_AVAILABLE' ? (
+                    <div className="p-3 bg-amber-950/30 border border-amber-800/70 rounded-lg text-amber-200 space-y-1">
+                      <p className="font-semibold uppercase tracking-wide text-[11px]">Scény: nemám dáta</p>
+                      <p className="text-[11px] leading-relaxed">
+                        {indexData.unavailableSk?.scene_boundaries ||
+                          'Snímky z média sa nepodarilo prečítať, preto sa strihy nemerali.'}
+                      </p>
+                      <p className="text-[10px] opacity-80">Nič sa nedomýšľa — žiadne „scény“ sa nevymýšľajú.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-zinc-400">
+                        Nameraných {indexData.scenes.length} scén z {indexData.framesAnalysed} skutočných snímok
+                        (zmena jasu/farby medzi vzorkami).
+                      </p>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {indexData.scenes.length === 0 && (
+                          <p className="text-zinc-500 italic text-[11px]">
+                            Žiadna zmena obrazu neprekročila prah — video má pravdepodobne jeden súvislý záber.
+                          </p>
+                        )}
+                        {indexData.scenes.map((sc, i) => (
+                          <div key={sc.id} className="p-2 bg-zinc-900 rounded border border-zinc-800 flex justify-between text-[11px]">
+                            <span className="font-mono text-purple-300">Scéna #{i + 1}</span>
+                            <span className="text-zinc-400">{sc.start}s – {sc.end}s ({sc.duration.toFixed(1)}s)</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -319,12 +358,23 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
-                  <p className="text-zinc-300 font-medium leading-relaxed">
-                    "{indexData.transcriptText || 'Pre transkript spusti analýzu.'}"
-                  </p>
-                  <span className="text-[11px] text-zinc-500 block">
-                    {indexData.wordTimestamps.length} slov s presným časovaním
-                  </span>
+                  {indexData.dataQuality?.transcript === 'NOT_AVAILABLE' || !indexData.transcriptText ? (
+                    <div className="p-3 bg-amber-950/30 border border-amber-800/70 rounded-lg text-amber-200 space-y-1">
+                      <p className="font-semibold uppercase tracking-wide text-[11px]">Prepis: nemám dáta</p>
+                      <p className="text-[11px] leading-relaxed">
+                        {indexData.unavailableSk?.transcript ||
+                          'Automatický prepis sa pri analýze média nespúšťa.'}
+                      </p>
+                      <p className="text-[10px] opacity-80">Vymyslené slová sa tu už nezobrazujú (predtým tu bol pevný zoznam slov).</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-zinc-300 font-medium leading-relaxed">"{indexData.transcriptText}"</p>
+                      <span className="text-[11px] text-zinc-500 block">
+                        {indexData.wordTimestamps.length} slov s presným časovaním
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 

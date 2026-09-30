@@ -17,12 +17,23 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
+import { spawnSync } from "node:child_process";
 import { buildRealProjectForExport } from "./verify-style-real-media";
 import { measureProject, measurementSummary, verdictForCheck } from "../src/core/qc/qcMeasure";
 import { INITIAL_QC_GATE_CHECKS } from "../src/data/qcGateChecksData";
 import type { ClipModel, ProjectModel } from "../src/core/types/project";
 
 const mediaPath = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "/home/user/real-media/real_speech.mp4";
+
+/** Dĺžka média z ffprobe (imageio-ffmpeg) — žiadne konštanty. */
+function probeDuration(file: string): number {
+  const exe = spawnSync("python3", ["-c", "import imageio_ffmpeg,sys;sys.stdout.write(imageio_ffmpeg.get_ffmpeg_exe())"], { encoding: "utf-8" }).stdout?.trim() ?? "";
+  if (!exe) return 0;
+  const res = spawnSync(exe, ["-hide_banner", "-i", file], { encoding: "utf-8" });
+  const m = `${res.stderr ?? ""}`.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
 
 function line(label: string, value: string | number | boolean) {
   console.log(`${label.padEnd(44, ".")} ${value}`);
@@ -65,9 +76,16 @@ async function main() {
   }
 
   const media = readFileSync(mediaPath);
-  const durationSec = Number(process.env.MEDIA_SECONDS ?? 65.44);
+  // POCTIVOSŤ: dĺžku meriame z média (ffprobe), nikdy nedosadzujeme konštantu.
+  const durationSec = probeDuration(mediaPath);
+  if (!(durationSec > 0)) {
+    say(`CHYBA: dĺžku média sa nepodarilo zmerať (${mediaPath}).`);
+    writeFileSync("docs/proof-qc-measure.txt", report.join("\n") + "\n", "utf-8");
+    process.exit(2);
+  }
   line("médium", basename(mediaPath));
-  report.push(`médium: ${basename(mediaPath)} (${media.byteLength} B, dĺžka podľa hlavičiek ${durationSec} s)`);
+  line("dĺžka (ffprobe)", `${durationSec.toFixed(2)} s`);
+  report.push(`médium: ${basename(mediaPath)} (${media.byteLength} B, dĺžka z ffprobe ${durationSec.toFixed(2)} s)`);
 
   const built = buildRealProjectForExport(media, mediaPath, durationSec);
   if (!built) {
