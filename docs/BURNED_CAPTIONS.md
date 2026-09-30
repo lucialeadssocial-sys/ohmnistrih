@@ -4,7 +4,8 @@
 > Kód: `src/core/export/subtitleRender.ts`, `src/core/export/burnJob.ts`,
 > `src/core/export/ffmpegEnv.ts`, `src/components/BurnCaptionsPanel.tsx`,
 > endpointy v `server.ts`.
-> Testy: `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` (62 testov).
+> Testy: `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts tests/captionStyles.test.ts`
+> (100 testov).
 
 ## Prečo to existuje
 
@@ -37,17 +38,22 @@ prehliadač                        server (.data/)                       ffmpeg
 - Proces pozná `/api/export/ffmpeg` — keď ffmpeg na serveri nie je, panel to povie
   **pred** kliknutím a tlačidlo ostane vypnuté (`FFMPEG_MISSING_SK`).
 
-## Štýly
+## Možnosti výberu tituliek
 
-| Štýl | Vzhľad | Kedy |
-|---|---|---|
-| `VIRAL_BOLD` (predvolený) | veľké tučné písmo (78 ‰ výšky), 2–3 slová naraz, aktuálne slovo **žlté**, čierny obrys | TikTok / Reels / Shorts |
-| `CLEAN` | celá veta naraz, bez zvýrazňovania | rozhovory, podcast, B2B |
-| `MINIMAL` | malé decentné písmo | firemné a dokumentárne video |
+Deväť štýlov v troch skupinách (virálne / čisté / brand) + **odporúčanie s dôvodmi**
++ **náhľad bez renderovania** (s vlastnými slovami z videa). Podrobný popis,
+pravidlá poradcu a tabuľky štýlov: **`docs/CAPTION_STYLES.md`**.
+
+| Skupina | Štýly |
+|---|---|
+| 🔥 Virálne | Virálny (Submagic štýl), Hormozi (1–2 slová), Karaoke (celá veta), Placka (farebný pruh), Zdôraznené čísla a silné slová |
+| 🎬 Čisté | Čistý (celá veta), Podcast, Minimálny |
+| 🏢 Brand | Brand (firemné, vyššie v obraze) |
 
 Zvýrazňovanie aktuálneho slova funguje **len vtedy**, keď sú k dispozícii
 word-level časy. Keď nie sú, zvýrazňovanie sa **vypne** a appka to napíše —
-žiadne náhodné blikanie.
+žiadne náhodné blikanie. Štýl „Zdôraznené čísla a silné slová“ vie zdôrazniť
+čísla aj **bez** časovania slov (je to pravidlo, nie AI).
 
 ## Čo sa deje pri strihu (najdôležitejšia časť)
 
@@ -95,9 +101,9 @@ Test to kontroluje naozaj (`tests/burnPipeline.test.ts`: 93 snímok na výstupe)
 
 1. Otvor appku → **RAW → READY** → krok 3 (Director Plan).
 2. Nechaj vygenerovať **automatické titulky** (záložka Titulky) — bez nich sa páliať nedá.
-3. V „⚡ RETENTION SHORT" postav strih a klikni **„Prehrať náhľad klipu"** (skontroluj, čo vypadne).
-4. Dole v paneli **„Titulky zapečené do obrazu"**: vyber štýl → zaškrtni potvrdenie →
-   **„Vypáliť titulky do videa"**. Uvidíš skutočné percentá z ffmpeg.
+3. V „⚡ RETENTION SHORT“ postav strih a klikni **„Prehrať náhľad klipu“** (skontroluj, čo vypadne).
+4. Dole v paneli **„Titulky zapečené do obrazu“**: vyber štýl → zaškrtni potvrdenie →
+   **„Vypáliť titulky do videa“**. Uvidíš skutočné percentá z ffmpeg.
 5. Po dokončení: **Stiahnuť klip** alebo **Prehrať v novej karte** (klip ostáva na serveri).
 
 ### Keď je ffmpeg potrebný (lokálne spustenie)
@@ -110,24 +116,36 @@ Bez ffmpeg appka funguje ďalej — len vypálenie titulkov odmietne s vysvetlen
 
 ## Overené naživo (30. 9. 2026)
 
-- vstup: 6 s, 1080×1920, **30 fps**, titulky „Dnes si ukážeme" / „tajný postup" /
-  „ako som to spravil" (word-level), strih na úseky 0–1,6 s a 3,0–4,5 s,
+- vstup: 6 s, 1080×1920, **30 fps**, titulky „Dnes si ukážeme“ / „tajný postup“ /
+  „ako som to spravil“ (word-level), strih na úseky 0–1,6 s a 3,0–4,5 s,
 - prehliadač zámerne poslal nesprávne rozmery 720×1280 → server ich **opravil** na
   1080×1920 a napísal to,
 - výstup: **3,10 s, 93 snímok, 30 fps, 1080×1920, H.264 + AAC** (0 snímok stratených),
-- titulok „DNES SI UKÁŽEME" v obraze (aktívne slovo `SI` žlté), v čase 1,5 s
+- titulok „DNES SI UKÁŽEME“ v obraze (aktívne slovo `SI` žlté), v čase 1,5 s
   (medzera medzi titulkami) je obraz čistý, v čase 2,0 s je **prepočítaný** titulok
-  „AKO SOM TO SPRAVIL",
+  „AKO SOM TO SPRAVIL“,
 - diakritika (Ž, Á, Ô, Ň, Ľ) kreslená správne — písmo DejaVu Sans Bold.
 
 Ukážky: `/home/user/ukazka-vypaleny-klip.mp4`, `/home/user/ukazka-vypalene-titulky.png`.
+
+### Druhé kolo (30. 9. 2026, večer) — 9 štýlov + poradca
+
+- **Hormozi**: 4 s klip, 120 snímok (bez straty), obrovské „KONCA / TRIK“, aktívne
+  slovo žlté a zväčšené (`\fscx112`),
+- **Placka (NEON_BOX)**: 6 titulkov, fialová placka + žlté aktívne slovo,
+  padding 20 (pri `BorderStyle 3` je to vnútorný okraj),
+- **Zdôraznené čísla (KEYWORD_POP)**: „Zľava **50 %** na celý kurz len do piatka“ —
+  oranžové čísla, funguje aj bez časovania slov,
+- pri testovaní sa našla **tichá chyba**: chýbajúce pole `OutlineColour` v ASS →
+  libass ho čítal ako čiernu a fialová placka sčernela. Opravené + poistka +
+  test pre každý štýl (detail v `docs/CAPTION_STYLES.md` §6).
 
 ## Čo ešte nie je hotové (poctivo)
 
 - **Žiadne ďalšie efekty** (zoom, trasenie, progresívne odkrývanie textu) — krok B
   rieši len titulky. Zoom je samostatný krok.
 - **Bez automatického výberu štýlu podľa klienta** — štýl sa vyberá ručne (pripravené
-  je na napojenie na „VLASTNÝ štýl" z Trend Radaru).
+  je na napojenie na „VLASTNÝ štýl“ z Trend Radaru).
 - **Bez emoji/SFX v titulkoch** a bez karaoke animácií (Submagic ich má; my zatiaľ
   len zvýrazňujeme aktuálne slovo).
 - **Bez sledovania priebehu cez WebSocket** — klient sa pýta každých 0,8 s (pre

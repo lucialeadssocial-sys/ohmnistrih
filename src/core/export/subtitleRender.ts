@@ -22,25 +22,69 @@ import type { SpeechSegmentLike, WordTimingLike } from "../transcript/wordTiming
 // Typy
 // ---------------------------------------------------------------------------
 
-export type CaptionStyleId = "VIRAL_BOLD" | "CLEAN" | "MINIMAL";
+export type CaptionStyleId =
+  | "VIRAL_BOLD"
+  | "HORMOZI"
+  | "KARAOKE"
+  | "NEON_BOX"
+  | "KEYWORD_POP"
+  | "CLEAN"
+  | "PODCAST"
+  | "MINIMAL"
+  | "BRAND";
+
+/** Kategória pre UI — aby sa v zozname dalo rýchlo orientovať. */
+export type CaptionStyleCategory = "viralne" | "ciste" | "brand";
+
+/**
+ * Ako sa zvýrazňuje text:
+ *  - `active-word` — aktuálne hovorené slovo (karaoke efekt, potrebuje časovanie slov),
+ *  - `keywords` — celá veta naraz, ale **čísla a silné slová** sú farebne zdôraznené
+ *    (needs časovanie slov sa nevyžaduje — preto funguje aj bez neho),
+ *  - `none` — len čistý text, žiadne zvýrazňovanie.
+ */
+export type CaptionHighlightMode = "active-word" | "keywords" | "none";
 
 export interface CaptionStyleSpec {
   id: CaptionStyleId;
   labelSk: string;
   descriptionSk: string;
+  /** Kategória pre UI (virálne / čisté / brand). */
+  category: CaptionStyleCategory;
+  /**
+   * Odkiaľ štýl je — poctivo: „princíp bežný v X". Nie je to kópia cudzieho
+   * kódu ani sľub, že to vyzerá 1:1 ako iný nástroj.
+   */
+  inspirationSk: string;
+  /** Pre koho sa hodí — jednou vetou, aby výber netrval minúty. */
+  bestForSk: string;
   /** Veľkosť fontu ako podiel výšky videa (1/1000). */
   fontSizeRatio: number;
   bold: boolean;
   uppercase: boolean;
   /** Farba textu (ASS &HAABBGGRR). */
   primaryColor: string;
-  /** Farba zvýrazneného slova. */
+  /** Farba zvýrazneného slova (pri `keywords` farba zdôraznených slov). */
   highlightColor: string;
   outlineColor: string;
   outlineWidth: number;
   shadow: number;
-  /** Koľko slov sa zobrazuje naraz (viral štýl ukazuje málo slov, veľké). */
+  /** Koľko slov sa zobrazuje naraz (virálny štýl ukazuje málo slov, veľké). */
   wordsPerChunk: number;
+  /** Ako sa zvýrazňuje — viď `CaptionHighlightMode`. */
+  highlightMode: CaptionHighlightMode;
+  /** Kedy sa zvýraznenie vypne, keď niet časovania slov (keywords zostávajú). */
+  highlightNeedsWordTiming: boolean;
+  /** Rozdiel veľkosti (‰) zvýrazneného slova — „bounce" efekt virálnych štýlov. */
+  activeWordScale?: number;
+  /** Text na farebnej placce (ASS BorderStyle 3) namiesto obrysu. */
+  boxed?: boolean;
+  /** Farba placky (ASS &HAABBGGRR), keď je `boxed`. */
+  boxColor?: string;
+  /** Zarovnanie v ASS (2 = dole na stred, 5 = stred obrazu). */
+  alignment?: number;
+  /** Rozostup písmen (ASS Spacing) — decentný štýl vyzerá lepšie s 1–2. */
+  letterSpacing?: number;
   /** Spodný okraj ako podiel výšky — kvôli rozhraniu aplikácií. */
   bottomMarginRatio: number;
 }
@@ -49,15 +93,23 @@ const C = {
   WHITE: "&H00FFFFFF",
   YELLOW: "&H0000FFFF", // v ASS je poradie BGR → toto je žltá
   GREEN: "&H0000FF00",
+  ORANGE: "&H0000A5FF", // oranžová (BGR: FF A5 00)
   BLACK: "&H00000000",
+  PLATE_PURPLE: "&H00B43CC8", // fialová placka
+  PLATE_DARK: "&H00141414", // takmer čierna placka
   TRANSPARENT_BACK: "&H80000000",
 } as const;
 
 export const CAPTION_STYLES: CaptionStyleSpec[] = [
+  // ── VIRÁLNE (krátke formáty, pozerané bez zvuku) ──────────────────────────
   {
     id: "VIRAL_BOLD",
     labelSk: "Virálny (Submagic štýl)",
-    descriptionSk: "Veľké tučné písmo, 2–3 slová naraz, aktuálne slovo žlté. Najčítanejšie bez zvuku.",
+    descriptionSk:
+      "Veľké tučné písmo, 2–3 slová naraz, aktuálne slovo žlté. Najčítanejšie bez zvuku.",
+    category: "viralne",
+    inspirationSk: "princíp bežný v Submagic / CapCut",
+    bestForSk: "TikTok, Reels, Shorts — rýchly hovorený obsah",
     fontSizeRatio: 78,
     bold: true,
     uppercase: true,
@@ -67,12 +119,107 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     outlineWidth: 6,
     shadow: 3,
     wordsPerChunk: 3,
+    highlightMode: "active-word",
+    highlightNeedsWordTiming: true,
     bottomMarginRatio: 0.16,
   },
+  {
+    id: "HORMOZI",
+    labelSk: "Hormozi (1–2 slová, obrovské)",
+    descriptionSk:
+      "Najagresívnejší štýl: 1–2 slová cez pol obrazu, zvýraznené slovo sa ešte zväčší.",
+    category: "viralne",
+    inspirationSk: "princíp bežný v Hormozi / MrBeast style klipoch",
+    bestForSk: "hook a prvé 3 sekundy, reklama, veľmi rýchle tempo",
+    fontSizeRatio: 104,
+    bold: true,
+    uppercase: true,
+    primaryColor: C.WHITE,
+    highlightColor: C.YELLOW,
+    outlineColor: C.BLACK,
+    outlineWidth: 8,
+    shadow: 4,
+    wordsPerChunk: 2,
+    highlightMode: "active-word",
+    highlightNeedsWordTiming: true,
+    activeWordScale: 112,
+    bottomMarginRatio: 0.2,
+  },
+  {
+    id: "KARAOKE",
+    labelSk: "Karaoke (celá veta po slovách)",
+    descriptionSk:
+      "Vidno celú vetu a zvýrazňuje sa práve hovorené slovo — čitateľné aj v strehu, bez skákania textu.",
+    category: "viralne",
+    inspirationSk: "princíp bežný v karaoke titulkoch (Submagic „karaoke“ mód)",
+    bestForSk: "vysvetľovanie, vzdelávanie, keď sa veta nedá rozbiť",
+    fontSizeRatio: 62,
+    bold: true,
+    uppercase: false,
+    primaryColor: C.WHITE,
+    highlightColor: C.YELLOW,
+    outlineColor: C.BLACK,
+    outlineWidth: 5,
+    shadow: 3,
+    wordsPerChunk: 0, // 0 = celý segment
+    highlightMode: "active-word",
+    highlightNeedsWordTiming: true,
+    activeWordScale: 118,
+    bottomMarginRatio: 0.15,
+  },
+  {
+    id: "NEON_BOX",
+    labelSk: "Placka (text na farebnom pruhu)",
+    descriptionSk:
+      "Biely text na fialovej placce — čitateľné doslova v každom zábere (svetlá stena, more, sneh).",
+    category: "viralne",
+    inspirationSk: "princíp bežný v estetických Reels a UGC reklamách",
+    bestForSk: "svetlé alebo rušivé zábery, beauty, cestovanie, produkt",
+    fontSizeRatio: 60,
+    bold: true,
+    uppercase: true,
+    primaryColor: C.WHITE,
+    highlightColor: C.YELLOW,
+    outlineColor: C.PLATE_PURPLE,
+    outlineWidth: 20, // pri BorderStyle 3 je to vnútorný okraj placky (padding)
+    shadow: 0,
+    wordsPerChunk: 3,
+    highlightMode: "active-word",
+    highlightNeedsWordTiming: true,
+    boxed: true,
+    boxColor: C.PLATE_PURPLE,
+    bottomMarginRatio: 0.18,
+  },
+  {
+    id: "KEYWORD_POP",
+    labelSk: "Zdôraznené čísla a silné slová",
+    descriptionSk:
+      "Celá veta naraz, ale čísla (3 000 €, 95 %, krok 2) a silné slová sú farebne zdôraznené — aj bez časovania slov.",
+    category: "viralne",
+    inspirationSk: "princíp „keyword emphasis“ z kontraktu kvality (§3)",
+    bestForSk: "predaj, vzdelávanie, výsledky a čísla, ponuky",
+    fontSizeRatio: 58,
+    bold: true,
+    uppercase: false,
+    primaryColor: C.WHITE,
+    highlightColor: C.ORANGE,
+    outlineColor: C.BLACK,
+    outlineWidth: 5,
+    shadow: 2,
+    wordsPerChunk: 0,
+    highlightMode: "keywords",
+    highlightNeedsWordTiming: false, // zdôraznenie čísel funguje aj bez časov slov
+    bottomMarginRatio: 0.15,
+  },
+
+  // ── ČISTÉ (rozprávanie, bez efektov) ─────────────────────────────────────
   {
     id: "CLEAN",
     labelSk: "Čistý (celá veta)",
     descriptionSk: "Pokojné biele písmo, celá veta naraz, bez zvýrazňovania slov.",
+    category: "ciste",
+    inspirationSk: "klasické titulky v televíznom štýle",
+    bestForSk: "rozhovory, YouTube, B2B, keď má video zvuk",
     fontSizeRatio: 54,
     bold: true,
     uppercase: false,
@@ -82,12 +229,40 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     outlineWidth: 4,
     shadow: 2,
     wordsPerChunk: 0, // 0 = celý segment
+    highlightMode: "none",
+    highlightNeedsWordTiming: false,
     bottomMarginRatio: 0.14,
+  },
+  {
+    id: "PODCAST",
+    labelSk: "Podcast (pokojne, mäkký obrys)",
+    descriptionSk:
+      "Menšie písmo s mäkkým obrysom a rozostupom — nič nezakrýva tvár, hodí sa na dlhšie rozprávanie.",
+    category: "ciste",
+    inspirationSk: "princíp titulkov v podcastových zostrihoch",
+    bestForSk: "podcast, talking head, interview",
+    fontSizeRatio: 50,
+    bold: true,
+    uppercase: false,
+    primaryColor: C.WHITE,
+    highlightColor: C.WHITE,
+    outlineColor: C.BLACK,
+    outlineWidth: 4,
+    shadow: 2,
+    wordsPerChunk: 0,
+    highlightMode: "none",
+    highlightNeedsWordTiming: false,
+    letterSpacing: 1,
+    bottomMarginRatio: 0.12,
   },
   {
     id: "MINIMAL",
     labelSk: "Minimálny",
-    descriptionSk: "Malé decentné písmo bez výrazného obrysu — pre firemné a dokumentárne video.",
+    descriptionSk:
+      "Malé decentné písmo bez výrazného obrysu — pre firemné a dokumentárne video.",
+    category: "ciste",
+    inspirationSk: "dokumentárny a firemný štandard",
+    bestForSk: "dokument, firemné video, keď titulky nemajú byť stredobod",
     fontSizeRatio: 42,
     bold: false,
     uppercase: false,
@@ -97,9 +272,77 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     outlineWidth: 2,
     shadow: 1,
     wordsPerChunk: 0,
+    highlightMode: "none",
+    highlightNeedsWordTiming: false,
     bottomMarginRatio: 0.12,
   },
+
+  // ── BRAND ────────────────────────────────────────────────────────────────
+  {
+    id: "BRAND",
+    labelSk: "Brand (firemné, vyššie v obraze)",
+    descriptionSk:
+      "Decentný text s rozostupom a väčším odstupom od okraja — necháva priestor pre logo a CTA prvky.",
+    category: "brand",
+    inspirationSk: "princíp firemných šablón (konzistencia pred efektom)",
+    bestForSk: "firemné video, portfólio, prezentácia klienta",
+    fontSizeRatio: 46,
+    bold: false,
+    uppercase: false,
+    primaryColor: C.WHITE,
+    highlightColor: C.WHITE, // štýl nič nezvýrazňuje — nedeklarujeme nepoužitú farbu
+    outlineColor: C.BLACK,
+    outlineWidth: 3,
+    shadow: 1,
+    wordsPerChunk: 0,
+    highlightMode: "none",
+    highlightNeedsWordTiming: false,
+    letterSpacing: 2,
+    bottomMarginRatio: 0.22,
+  },
 ];
+
+/**
+ * Slová, ktoré diváka naozaj zastavia — čísla, peniaze, čas, kontrasty.
+ * Je to **pravidlo, nie AI**: dá sa prečítať, otestovať a vysvetliť.
+ */
+const STRONG_WORDS_SK = [
+  "zadarmo", "zdarma", "gratis", "tajny", "tajný", "trik", "chyba", "nikdy",
+  "vzdy", "vždy", "prvy", "prvý", "posledny", "posledný", "najlepsi", "najlepší",
+  "najhorsi", "najhorší", "rychlo", "rýchlo", "zdvojnasob", "zdvojnásob",
+  "zaraba", "zarába", "usetri", "ušetrí", "strati", "stratí", "prekvapenie",
+  "zakazany", "zakázaný", "skutocne", "skutočne", "dokaz", "dôkaz", "vysledok",
+  "výsledok", "tajomstvo", "recept", "navod", "návod", "0", "100",
+];
+
+/** Čísla, peniaze, percentá a jednotky — najsilnejšie slová v titulkoch. */
+const NUMBER_PATTERN = /\d|[€$£%]|\bx\d/i;
+
+/**
+ * Je toto slovo „silné" (má sa farebne zdôrazniť)?
+ * Zdôrazňujeme: čísla a meny, veľké skratky (VIP, B2B), slová z krátkeho
+ * zoznamu silných slov a slová písané VEĽKÝMI (autor ich sám zdôraznil).
+ */
+export function isStrongCaptionWord(word: string): boolean {
+  const raw = String(word ?? "").trim();
+  if (!raw) return false;
+  const bare = raw.replace(/^[^\p{L}\p{N}€$£%]+|[^\p{L}\p{N}€$£%]+$/gu, "");
+  if (!bare) return false;
+  if (NUMBER_PATTERN.test(bare)) return true;
+  if (bare.length >= 3 && bare === bare.toUpperCase() && /[A-ZÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽ]/u.test(bare)) return true;
+  const lower = bare
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return STRONG_WORDS_SK.some((w) => lower === w.normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+}
+
+/** Koľko silných slov veta má — používa sa v odporúčaní štýlu. */
+export function countStrongWords(text: string): number {
+  return String(text ?? "")
+    .split(/\s+/)
+    .filter((w) => w && isStrongCaptionWord(w)).length;
+}
 
 export function getCaptionStyle(id: CaptionStyleId): CaptionStyleSpec {
   const s = CAPTION_STYLES.find((x) => x.id === id);
@@ -254,22 +497,25 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
       "Style: Default",
       fontName,
       fontSize,
-      style.primaryColor,
-      style.primaryColor,
-      style.outlineColor,
-      C.TRANSPARENT_BACK,
+      style.primaryColor || C.WHITE,
+      style.primaryColor || C.WHITE,
+      // Poistka: prázdne pole by libass prečítal ako čiernu a štýl by ticho
+      // zmenil farbu (presne to sa raz stalo pri placce — placka sčernela).
+      style.outlineColor || C.BLACK,
+      // Pri „placce" (BorderStyle 3) je BackColour farba podkladu, inak priehľadná.
+      style.boxed ? (style.boxColor || C.PLATE_DARK) : C.TRANSPARENT_BACK,
       style.bold ? "-1" : "0",
       "0",
       "0",
       "0",
       "100",
       "100",
+      String(style.letterSpacing ?? 0),
       "0",
-      "0",
-      "1",
+      style.boxed ? "3" : "1", // 3 = text na placce, 1 = obrys + tieň
       style.outlineWidth,
       style.shadow,
-      "2", // dole, na stred
+      String(style.alignment ?? 2), // 2 = dole na stred
       sideMargin,
       sideMargin,
       bottomMargin,
@@ -291,28 +537,69 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
   };
 
   let segmentsWithoutWords = 0;
+  let keywordEmphasis = false;
+
+  const mode: CaptionHighlightMode = style.highlightMode ?? "active-word";
+  /** Pri `keywords` je celá veta naraz; pri `active-word` podľa `wordsPerChunk`. */
+  const wholeSentence = style.wordsPerChunk === 0;
+
+  /** Zvýrazní jedno slovo farbou (+ prípadné zväčšenie aktívneho slova). */
+  const accentWord = (escapedWord: string, opts: { active: boolean; strong: boolean }): string => {
+    if (!opts.active && !opts.strong) return escapedWord;
+    const color = opts.active ? style.highlightColor : style.highlightColor;
+    const scale =
+      opts.active && style.activeWordScale && style.activeWordScale !== 100
+        ? `\\fscx${style.activeWordScale}\\fscy${style.activeWordScale}`
+        : "";
+    const resetScale = scale ? `\\fscx100\\fscy100` : "";
+    return `{\\c${color}${scale}}${escapedWord}{\\c${style.primaryColor}${resetScale}}`;
+  };
 
   for (const seg of Array.isArray(segments) ? segments : []) {
     const words = segmentWords(seg);
     const segStart = Number(seg?.start) || words[0]?.start || 0;
     const segEnd = Number(seg?.end) || words[words.length - 1]?.end || segStart + 1;
+    const hasWordTiming = words.length >= 2;
 
-    // Bez slov → celý segment naraz (poctivo priznané)
-    if (words.length < 2 || style.wordsPerChunk === 0) {
-      if (words.length < 2) segmentsWithoutWords++;
+    // ── 1) Bez časovania slov ────────────────────────────────────────────
+    if (!hasWordTiming) {
+      segmentsWithoutWords++;
       const text = words.length
         ? words.map((w) => w.word).join(" ")
         : String(seg?.text ?? "").trim();
       if (!text) continue;
       const shown = style.uppercase ? text.toUpperCase() : text;
       const lines = wrapAssLines(shown.split(/\s+/), fontSize, maxTextWidth, 2);
+
+      // Aj bez časovania vieme zdôrazniť čísla a silné slová (`keywords`).
+      const renderedLines = lines.map((line) =>
+        line
+          .split(/\s+/)
+          .map((w0) => {
+            const escaped = escapeAssText(w0);
+            if (mode !== "keywords") return escaped;
+            const strong = isStrongCaptionWord(w0);
+            if (strong) keywordEmphasis = true;
+            return accentWord(escaped, { active: false, strong });
+          })
+          .join(" "),
+      );
+      pushDialogue(segStart, segEnd, renderedLines.join("\\N"));
+      continue;
+    }
+
+    // ── 2) Režim „len text" (čisté štýly) ────────────────────────────────
+    if (mode === "none") {
+      const text = words.map((w) => w.word).join(" ");
+      const shown = style.uppercase ? text.toUpperCase() : text;
+      const lines = wrapAssLines(shown.split(/\s+/), fontSize, maxTextWidth, 2);
       pushDialogue(segStart, segEnd, lines.map((l) => escapeAssText(l)).join("\\N"));
       continue;
     }
 
-    // So slovami → dávky po `wordsPerChunk` slovách, zvýraznené aktuálne slovo
+    // ── 3) Zvýrazňovanie (karaoke / virálne / kľúčové slová) ─────────────
     wordHighlight = true;
-    const perChunk = Math.max(1, style.wordsPerChunk);
+    const perChunk = wholeSentence || mode === "keywords" ? words.length : Math.max(1, style.wordsPerChunk);
     for (let i = 0; i < words.length; i += perChunk) {
       const chunk = words.slice(i, i + perChunk);
       const chunkTextWords = chunk.map((w) => (style.uppercase ? w.word.toUpperCase() : w.word));
@@ -321,6 +608,7 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
       // Text sa escapuje RAZ a vopred — zvýrazňovacie kódy sa vkladajú až potom,
       // inak by ich escapovanie zjedlo a zvýraznenie by vôbec nefungovalo.
       const safeLines = lines.map((line) => line.split(/\s+/).map((w) => escapeAssText(w)));
+      const strongFlags = lines.map((line) => line.split(/\s+/).map((w) => isStrongCaptionWord(w)));
 
       for (let k = 0; k < chunk.length; k++) {
         const w = chunk[k];
@@ -331,17 +619,17 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 
         const target = w.word.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
         const rendered = safeLines
-          .map((line) =>
+          .map((line, li) =>
             line
-              .map((escapedWord) => {
+              .map((escapedWord, wi) => {
                 const bare = escapedWord.replace(/\\/g, "").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
                 const isActive =
                   bare.length > 0 &&
                   target.length > 0 &&
                   (bare === target || target.startsWith(bare) || bare.startsWith(target));
-                return isActive
-                  ? `{\\c${style.highlightColor}}${escapedWord}{\\c${style.primaryColor}}`
-                  : escapedWord;
+                const strong = mode === "keywords" && Boolean(strongFlags[li]?.[wi]);
+                if (strong) keywordEmphasis = true;
+                return accentWord(escapedWord, { active: isActive, strong });
               })
               .join(" "),
           )
@@ -353,8 +641,29 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
   }
 
   if (segmentsWithoutWords > 0) {
+    if (mode === "keywords") {
+      notesSk.push(
+        `Pri ${pluralSk(segmentsWithoutWords, "titulku", "titulkoch", "titulkoch")} nemám časovanie slov — zdôrazňujem preto len čísla a silné slová (nie aktuálne hovorené slovo).`,
+      );
+    } else if (mode === "active-word") {
+      notesSk.push(
+        `Pri ${pluralSk(segmentsWithoutWords, "titulku", "titulkoch", "titulkoch")} nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).`,
+      );
+    }
+  }
+  if (wordHighlight && mode === "active-word") {
     notesSk.push(
-      `Pri ${pluralSk(segmentsWithoutWords, "titulku", "titulkoch", "titulkoch")} nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).`,
+      "Zvýrazňovanie hovoreného slova je zapnuté — mám časovanie slov z automatických tituliek.",
+    );
+  }
+  if (keywordEmphasis) {
+    notesSk.push(
+      "Zdôraznené sú čísla a silné slová (pravidlo, nie AI) — dá sa prečítať v appke a vypnúť výberom iného štýlu.",
+    );
+  }
+  if (style.boxed) {
+    notesSk.push(
+      "Tento štýl kreslí text na farebnú placku — je najčitateľnejší aj na svetlom a rušivom zábere.",
     );
   }
   if (eventCount === 0) {

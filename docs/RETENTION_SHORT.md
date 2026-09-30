@@ -1,11 +1,11 @@
 # RETENTION SHORT — ako to funguje (F2)
 
 Tento dokument vysvetľuje, čo presne sa stane, keď v kroku 3 klikneš
-**„⚡ Postaviť strih"**. Je krátky zámerne — má sa dať prečítať do dvoch minút.
+**„⚡ Postaviť strih“**. Je krátky zámerne — má sa dať prečítať do dvoch minút.
 
 ## 1. Vstup: tvoje schválené zásahy
 
-Engine berie **iba to, čo si označila a potvrdila** („Použiť vybrané"). Nič si
+Engine berie **iba to, čo si označila a potvrdila** („Použiť vybrané“). Nič si
 nedomýšľa a nič nepridáva. Ak v tvojom výbere nie je žiadny `CUT` zásah, engine
 to povie: klip by bol rovnako dlhý ako RAW (titulky, zoom či hudba strih neskracujú).
 
@@ -27,23 +27,23 @@ to povie: klip by bol rovnako dlhý ako RAW (titulky, zoom či hudba strih neskr
 
 | Stav | Príklad hlášky |
 |---|---|
-| Hook presunutý | „Vyrezal som hook z 68,0 s a dal ho na začiatok klipu (4,0 s)." + rada overiť súvislosť |
-| Priveľa vystrihnuté | „Strih odstráni 77 % videa." + rada skontrolovať, či pointy zostali celé |
-| Klip pod minimom | „Výsledný klip má 6,0 s — pod minimom pre Instagram Reels (7 s)." |
-| Odrezané kvôli limitu | „Kvôli limitu Reels som odrezal 2 úseky z konca (203,5 s)." |
-| Plán nič nestrihá | „Plán v tomto behu nič nestrihá — klip by bol rovnako dlhý ako RAW." |
-| Časy sú odhad | „Časy v strihu sú odhad (plán nie je kotvený na prepis)." |
-| Hook vo vystrihnutom úseku | „Hook leží vo vystrihnutom úseku — plán si navzájom odporuje." (STOP) |
+| Hook presunutý | „Vyrezal som hook z 68,0 s a dal ho na začiatok klipu (4,0 s).“ + rada overiť súvislosť |
+| Priveľa vystrihnuté | „Strih odstráni 77 % videa.“ + rada skontrolovať, či pointy zostali celé |
+| Klip pod minimom | „Výsledný klip má 6,0 s — pod minimom pre Instagram Reels (7 s).“ |
+| Odrezané kvôli limitu | „Kvôli limitu Reels som odrezal 2 úseky z konca (203,5 s).“ |
+| Plán nič nestrihá | „Plán v tomto behu nič nestrihá — klip by bol rovnako dlhý ako RAW.“ |
+| Časy sú odhad | „Časy v strihu sú odhad (plán nie je kotvený na prepis).“ |
+| Hook vo vystrihnutom úseku | „Hook leží vo vystrihnutom úseku — plán si navzájom odporuje.“ (STOP) |
 
 ## 4. Náhľad bez renderovania
 
-Tlačidlo **„Prehrať náhľad klipu"** zapne preskakovanie: kedykoľvek sa prehrávanie
+Tlačidlo **„Prehrať náhľad klipu“** zapne preskakovanie: kedykoľvek sa prehrávanie
 dostane do vystrihnutého úseku, skočí na jeho koniec. Vidíš teda **presne to, čo
 by vzniklo** — okamžite, bez jedinej sekundy renderu a bez čakania.
 
 ## 5. EDL (edit decision list)
 
-Tlačidlo **„EDL (JSON)"** stiahne zoznam:
+Tlačidlo **„EDL (JSON)“** stiahne zoznam:
 
 ```
 { platform, totalDurationSec, segments: [{ sourceStart, sourceEnd, timelineStart, duration }],
@@ -66,17 +66,17 @@ dá sa prečítať a skontrolovať očami.
   Bez ffmpeg v prostredí sa korektne preskočia, nezlyhnú.
 - `bun test tests/wordTiming.test.ts` — 22 testov (krok A): hranice slov, pauzy,
   delenie viet, sanitizácia poškodených dát.
-- `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` — 62 testov
+- `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts tests/captionStyles.test.ts` — 100 testov
   (krok B): ASS formát a jeho escapovanie, zalomenie textu, prepočet časov pri
   strihu, validácia požiadavky, percentá z ffmpeg, stavová mašina renderu,
   bezpečné názvy súborov, upratovanie — a **E2E s ffmpeg**, ktorý meria, že sú
   titulky naozaj v obraze (a že výstup nemá menej snímok než zdroj).
 
-**Celkom: `bun test tests/` = 190 testov v 8 súboroch, 0 zlyhaní.**
+**Celkom: `bun test tests/` = 228 testov v 9 súboroch, 0 zlyhaní.**
 
 ## 7. Render klipu do súboru (F2b)
 
-Za tlačidlom **„Vyrenderovať klip"** nie je žiadny cloud ani prekódovanie. Klip sa
+Za tlačidlom **„Vyrenderovať klip“** nie je žiadny cloud ani prekódovanie. Klip sa
 skladá **kopírovaním packetov** z tvojho videa (Mediabunny) — obraz aj zvuk zostávajú
 bit po bite tie isté ako v zdroji, takže **žiadna strata kvality** a render je
 rádovo rýchlejší než reálny čas (25 s klip ≈ 0,1 s práce).
@@ -118,7 +118,7 @@ Teraz sa posielajú ďalej.
 
 1. **Plán** kotví vety na skutočné sekundy (nie na odhad) a v odpovedi to prizná:
    `timingPrecision: "words"`, `wordCount: počet slov`. AI navyše dostane zoznam viet
-   s presnými časmi a inštrukciu strihať v pauzách — nie „od oka".
+   s presnými časmi a inštrukciu strihať v pauzách — nie „od oka“.
 2. **Strih** sa prichytáva na **hranice slov**: začiatok strihu ide na koniec slova,
    ktoré by inak ostalo prerezané, koniec na koniec prerezaného slova. Nikdy sa
    nepretne slovo v polovici.
@@ -132,7 +132,7 @@ Teraz sa posielajú ďalej.
 **Poctivé mantinely:**
 
 - Keď titulky nemáš, strih funguje ako doteraz a panel to **napíše**:
-  „Časy sú odhad z dĺžky textu" + návod, ako získať presné.
+  „Časy sú odhad z dĺžky textu“ + návod, ako získať presné.
 - Keď máš menej než 3 slová, presné časovanie sa nepredstiera.
 - Server berie word-level dáta len po sanitizácii (čísla, limity 500 segmentov /
   60 slov na segment) — poškodená položka posunie strih maximálne tak, že sa zahodí.
