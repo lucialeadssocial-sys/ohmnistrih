@@ -27,6 +27,9 @@ const args = process.argv.slice(2);
 const mediaPathArg = args.find((a) => !a.startsWith("--"));
 const planFile = valueOf("--plan");
 const recipeArg = valueOf("--recipe");
+// Skúška animovaného priblíženia: keyframy sa do canonical osi zapíšu **cez
+// existujúci CommandManager** (žiadna tichá mutácia modelu).
+const animatedZoomArg = args.includes("--animated-zoom");
 const outPath = valueOf("--out") ?? "/home/user/export-z-canonical-os.mp4";
 
 /** Podporuje oba tvary: `--plan subor.json` aj `--plan=subor.json`. */
@@ -293,10 +296,10 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   const synth = join(workDir, "synthetic.mp4");
   const gen = spawnSync(ff, [
     "-y", "-hide_banner", "-loglevel", "error",
-    "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30:duration=6",
-    "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+    "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30:duration=8",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
-    "-t", "6", synth,
+    "-t", "8", synth,
   ]);
   if (gen.status !== 0 || !existsSync(synth)) {
     line("syntetický podklad", "NEPODARILO SA vygenerovať (skúška sa preskakuje)");
@@ -304,7 +307,7 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   }
 
   const assPath = join(workDir, "probe.ass");
-  writeFileSync(assPath, "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,OutlineColour,BackColour,Bold,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,DejaVu Sans,72,&H00FFFFFF,&H00000000,&H00000000,-1,100,100,0,0,1,4,0,2,40,40,120,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.50,0:00:05.50,Default,,0,0,0,,SKUSKA LINKY\n", "utf8");
+  writeFileSync(assPath, "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,OutlineColour,BackColour,Bold,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,DejaVu Sans,72,&H00FFFFFF,&H00000000,&H00000000,-1,100,100,0,0,1,4,0,2,40,40,120,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.50,0:00:07.50,Default,,0,0,0,,SKUSKA LINKY\n", "utf8");
 
   const overlayPng = join(workDir, "probe-overlay.png");
   spawnSync(ff, ["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=240x240:d=1", "-frames:v", "1", overlayPng]);
@@ -317,10 +320,24 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
     assPath,
     frameSize: { width: 1080, height: 1920 },
     sourceFps: 30,
-    outputDurationSec: 6,
-    zoomWindows: [{ startSec: 2, endSec: 4, scalePercent: 130 }],
+    outputDurationSec: 8,
+    // Dve okná naraz, aby sa dali oddeliť:
+    //   2–4 s  … statické priblíženie 130 % (kontrola, že orez funguje),
+    //   5–7 s  … animované priblíženie 100 % → 150 % (kontrola, že sa mení v čase).
+    zoomWindows: [
+      { startSec: 2, endSec: 4, scalePercent: 130 },
+      {
+        startSec: 5,
+        endSec: 7,
+        scalePercent: 150,
+        keyframes: [
+          { timeSec: 0, scalePercent: 100 },
+          { timeSec: 2, scalePercent: 150 },
+        ],
+      },
+    ],
     ...(overlayOk
-      ? { overlays: [{ path: overlayPng, kind: "image" as const, startSec: 4.2, endSec: 5.4, scalePercent: 100, positionX: 0, positionY: -300 }] }
+      ? { overlays: [{ path: overlayPng, kind: "image" as const, startSec: 4.2, endSec: 4.8, scalePercent: 100, positionX: 0, positionY: -300 }] }
       : {}),
   });
   const render = spawnSync(ff, args, { encoding: "utf-8" });
@@ -352,6 +369,34 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
     line("rozdiel v zoom okne v 3 s", diffZoom === null ? "nedá sa zmerať" : diffZoom.toFixed(2));
     zoomOk = diffPlain !== null && diffZoom !== null && diffPlain < 2 && diffZoom > 8;
   }
+  // Animované priblíženie: rozdiel voči zdroju musí v čase RAST (nie byť len „iný").
+  let animatedOk = false;
+  let animNumbers: number[] = [];
+  {
+    const times = [5.15, 6.0, 6.85];
+    const values: (number | null)[] = [];
+    for (const t of times) {
+      const srcF = join(workDir, `syn-an-src-${t}.png`);
+      const outF = join(workDir, `syn-an-out-${t}.png`);
+      if (!extractFrame(ff, synth, t, srcF) || !extractFrame(ff, outPath, t, outF)) {
+        values.push(null);
+        continue;
+      }
+      values.push(diffTwoImages(ff, srcF, outF));
+    }
+    animNumbers = values.filter((v): v is number => v !== null);
+    if (values.every((v) => v !== null)) {
+      line(
+        `animované priblíženie v 5,15 / 6,00 / 6,85 s`,
+        values.map((v) => (v as number).toFixed(2)).join(" → ") + " (má rásť)",
+      );
+      const [a, b, c] = values as number[];
+      animatedOk = c > b + 0.5 && b > a + 0.5 && a < 60;
+    } else {
+      line("animované priblíženie", "nedá sa zmerať (chýba snímka)");
+    }
+  }
+
   if (overlayOk) {
     const srcBefore = join(workDir, "syn-ov-src-before.png");
     const outBefore = join(workDir, "syn-ov-out-before.png");
@@ -360,13 +405,13 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
     const ok2 =
       extractFrame(ff, synth, 4.0, srcBefore) &&
       extractFrame(ff, outPath, 4.0, outBefore) &&
-      extractFrame(ff, synth, 4.8, srcInside) &&
-      extractFrame(ff, outPath, 4.8, outInside);
+      extractFrame(ff, synth, 4.55, srcInside) &&
+      extractFrame(ff, outPath, 4.55, outInside);
     if (ok2) {
       const outside = diffTwoImagesTop(ff, srcBefore, outBefore);
       const inside = diffTwoImagesTop(ff, srcInside, outInside);
       line("vrstva: rozdiel HORE mimo okna (4,0 s)", outside === null ? "nedá sa zmerať" : outside.toFixed(2));
-      line("vrstva: rozdiel HORE v okne (4,8 s)", inside === null ? "nedá sa zmerať" : inside.toFixed(2));
+      line("vrstva: rozdiel HORE v okne (4,55 s)", inside === null ? "nedá sa zmerať" : inside.toFixed(2));
       overlayOkMeasured = inside !== null && outside !== null && inside > 1 && inside > outside * 3;
     }
   }
@@ -381,9 +426,14 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   })();
   line("titulky v obraze (dole) na syntetickom podklade", captionCheck === null ? "nedá sa zmerať" : captionCheck.toFixed(2));
 
-  const pass = sizeOk && zoomOk && (!overlayOk || overlayOkMeasured) && captionCheck !== null && captionCheck > 2;
-  line("VÝSLEDOK SKÚŠKY LINKY", pass ? "PASS (zoom aj vrstva aj titulky naozaj idú do obrazu)" : "NEPREŠLA — pozri čísla vyššie");
-  return { pass, sizeOk, zoomOk, overlayOkMeasured, captionCheck };
+  const pass = sizeOk && zoomOk && animatedOk && (!overlayOk || overlayOkMeasured) && captionCheck !== null && captionCheck > 2;
+  line(
+    "VÝSLEDOK SKÚŠKY LINKY",
+    pass
+      ? "PASS (statické aj animované priblíženie, vrstva aj titulky naozaj idú do obrazu)"
+      : "NEPREŠLA — pozri čísla vyššie",
+  );
+  return { pass, sizeOk, zoomOk, animatedOk, overlayOkMeasured, captionCheck };
 }
 
 async function main() {
@@ -450,6 +500,46 @@ async function main() {
   if (!apply.ok || !apply.timelineChanged) {
     console.error("Apply nezmenil canonical časovú os — nemá zmysel exportovať (a nič sa nepredstiera).");
     process.exit(5);
+  }
+
+  if (animatedZoomArg) {
+    const { SetAudioKeyframeCommand } = await import(join(REPO, "src/core/command/commandSystem.ts"));
+    const projectNow = coreEngine.getProject();
+    const videoClip = projectNow.tracks
+      .filter((t: any) => t.type === "video" && t.visible !== false)
+      .flatMap((t: any) => t.clips)
+      .find((c: any) => c.type === "video");
+    if (!videoClip) {
+      console.error("Animované priblíženie: v canonical osi nie je video klip (skúška sa preskakuje).");
+    } else {
+      // Priebeh 100 % → 145 % počas klipu; druhý krok na 70 % dĺžky klipu.
+      const a = {
+        id: "kf_anim_zoom_a",
+        timeOffset: 0,
+        parameter: "scale" as const,
+        value: 100,
+        easing: "easeInOut" as const,
+      };
+      const b = {
+        id: "kf_anim_zoom_b",
+        timeOffset: Math.max(0.4, Math.round(videoClip.duration * 0.7 * 100) / 100),
+        parameter: "scale" as const,
+        value: 145,
+        easing: "easeInOut" as const,
+      };
+      const okA = coreEngine.commandManager.executeCommand(
+        new SetAudioKeyframeCommand("Skúška: animované priblíženie (krok 1/2)", videoClip.id, a),
+      );
+      const okB = coreEngine.commandManager.executeCommand(
+        new SetAudioKeyframeCommand("Skúška: animované priblíženie (krok 2/2)", videoClip.id, b),
+      );
+      line(
+        "animované priblíženie v canonical osi (cez CommandManager)",
+        okA && okB
+          ? `áno — klip „${videoClip.name}“: 100 % → 145 % za ${b.timeOffset.toFixed(2)} s`
+          : "NEPODARILO SA zapísať keyframy (command ich odmietol)",
+      );
+    }
   }
 
   const canonicalProject = coreEngine.getProject();
@@ -562,6 +652,50 @@ async function main() {
   if (exportPlan.unsupportedSk.length > 0) {
     console.log("  POZOR (táto linka nevykresľuje):");
     for (const note of exportPlan.unsupportedSk) console.log(`    – ${note}`);
+  }
+  const animatedZooms = (exportPlan.request.zoom ?? []).filter((z: { animated?: boolean }) => z.animated) as {
+    startSec: number;
+    endSec: number;
+    scale: number;
+    keyframes?: { timeSec: number; scale: number }[];
+  }[];
+  if (animatedZooms.length > 0) {
+    const z = animatedZooms[0];
+    line(
+      "animované priblíženie ide do linky",
+      `${animatedZooms.length}× (${z.keyframes?.map((k: { timeSec: number; scale: number }) => `${k.timeSec.toFixed(2)}s=${Math.round(k.scale)}%`).join(" → ")})`,
+    );
+  } else if (animatedZoomArg) {
+    line("animované priblíženie ide do linky", "NIE — plán ho neobsahuje (pozri poznámky vyššie)");
+  }
+  // Dôkaz, nie sľub: vypíšeme SKUTOČNÝ filter, ktorý pre animované priblíženie
+  // vyrobí tá istá funkcia, akú použije server.
+  if (animatedZooms.length > 0) {
+    const { buildBurnFfmpegArgs } = await import(join(REPO, "src/core/export/subtitleRender.ts"));
+    const zoomProbeArgs = buildBurnFfmpegArgs({
+      inputPath: "vstup.mp4",
+      outputPath: "vystup.mp4",
+      assPath: "/x/a.ass",
+      sourceFps: 30,
+      frameSize: { width: 1080, height: 1920 },
+      outputDurationSec: 20,
+      zoomWindows: [
+        {
+          startSec: animatedZooms[0].startSec,
+          endSec: animatedZooms[0].endSec,
+          scalePercent: animatedZooms[0].scale,
+          keyframes: (animatedZooms[0].keyframes ?? []).map((k) => ({
+            timeSec: k.timeSec,
+            scalePercent: k.scale,
+          })),
+        },
+      ],
+    });
+    const graph = zoomProbeArgs[zoomProbeArgs.indexOf("-filter_complex") + 1] ?? "";
+    const zoomsInGraph = graph.includes("zoompan=");
+    line("filter pre animované priblíženie", zoomsInGraph ? "obsahuje zoompan= (mení mierku v čase)" : "CHÝBA zoompan= — to by nebolo animované!");
+    const expr = (graph.match(/z='([^']+)'/) ?? [])[1] ?? "";
+    if (expr) line("  priebeh (výraz)", expr.length > 150 ? `${expr.slice(0, 150)}…` : expr);
   }
   line("zhoda canonical ↔ zadanie", exportPlan.parity.matched ? "áno (nič nechýba, nič navyše)" : "NIE");
   if (!exportPlan.canExport) {

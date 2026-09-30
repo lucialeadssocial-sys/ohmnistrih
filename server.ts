@@ -3846,6 +3846,10 @@ app.post("/api/export/burn-captions", (req, res) => {
               startSec: z.startSec,
               endSec: z.endSec,
               scalePercent: z.scale,
+              // Animované priblíženie: priebeh ide do linky (čas je od začiatku okna).
+              ...(z.keyframes && z.keyframes.length >= 2
+                ? { keyframes: z.keyframes.map((k) => ({ timeSec: k.timeSec, scalePercent: k.scalePercent })) }
+                : {}),
             })),
           }
         : {}),

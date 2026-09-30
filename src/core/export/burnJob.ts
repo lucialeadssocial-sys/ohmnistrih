@@ -42,6 +42,8 @@ export const BURN_LIMITS = {
   /** Rozsah priblíženia, ktorý dáva zmysel (mimo neho je to skôr chyba v pláne). */
   minZoomPercent: 50,
   maxZoomPercent: 400,
+  /** Koľko krokov animovaného priblíženia (keyframov) sa smie skladať v jednom okne. */
+  maxZoomKeyframes: 24,
 } as const;
 
 export const BURN_MAX_UPLOAD_SK = `Video je príliš veľké na vypálenie titulkov (limit ${Math.round(
@@ -106,7 +108,16 @@ export interface BurnSpec {
   keepRanges: KeepRange[];
   fontFamily?: string;
   /** Priblíženia z canonical osi (krok 8). */
-  zoom: { clipId: string; startSec: number; endSec: number; scale: number; positionX: number; positionY: number }[];
+  zoom: {
+    clipId: string;
+    startSec: number;
+    endSec: number;
+    scale: number;
+    positionX: number;
+    positionY: number;
+    /** Animované priblíženie: priebeh (čas od začiatku okna, percentá). */
+    keyframes?: { timeSec: number; scalePercent: number }[];
+  }[];
   /** Obrazové vrstvy z canonical osi (krok 8) — odkazy na súbory nahraté na server. */
   overlays: { clipId: string; kind: "image" | "video"; uploadId: string; name: string; startSec: number; endSec: number; scalePercent: number; positionX: number; positionY: number }[];
 }
@@ -208,7 +219,48 @@ export function validateBurnRequest(body: any): BurnValidation {
       }
       const positionX = num(raw?.positionX, 0);
       const positionY = num(raw?.positionY, 0);
-      if (Math.abs(scale - 100) <= 0.01) continue; // nič sa nemení, zbytočný filter
+
+      // Animované priblíženie (keyframy) — priebeh sa overuje, nie „nejako" prevezme.
+      let keyframes: { timeSec: number; scalePercent: number }[] | undefined;
+      if (Array.isArray(raw?.keyframes) && raw.keyframes.length > 0) {
+        if (raw.keyframes.length > BURN_LIMITS.maxZoomKeyframes) {
+          return {
+            ok: false,
+            errorSk: `Animované priblíženie má príliš veľa krokov (${raw.keyframes.length}, max ${BURN_LIMITS.maxZoomKeyframes}).`,
+          };
+        }
+        const parsed: { timeSec: number; scalePercent: number }[] = [];
+        for (const k of raw.keyframes as any[]) {
+          const t = num(k?.timeSec, NaN);
+          // Canonical plán posiela krok ako `scale` (rovnako ako `zoom.scale`),
+          // renderovacia linka používa `scalePercent`. Prijímame obe mená —
+          // presne táto nezhoda sa naozaj stala a odhalil ju až reálny beh.
+          const pct = num(k?.scalePercent, num(k?.scale, NaN));
+          if (!Number.isFinite(t) || !Number.isFinite(pct)) {
+            return { ok: false, errorSk: "Animované priblíženie má krok s neplatným časom alebo hodnotou." };
+          }
+          if (t < -0.001 || t > endSec - startSec + 0.05) {
+            return {
+              ok: false,
+              errorSk: `Krok animovaného priblíženia je mimo svojho okna (${t.toFixed(2)} s pri dĺžke ${(endSec - startSec).toFixed(2)} s).`,
+            };
+          }
+          if (pct < 100 - 0.01 || pct > BURN_LIMITS.maxZoomPercent) {
+            return {
+              ok: false,
+              errorSk: `Animované priblíženie musí byť v rozsahu 100–${BURN_LIMITS.maxZoomPercent} % (zmenšovanie nevykresľujeme).`,
+            };
+          }
+          parsed.push({ timeSec: t, scalePercent: pct });
+        }
+        parsed.sort((a, b) => a.timeSec - b.timeSec);
+        if (parsed.length < 2) {
+          return { ok: false, errorSk: "Animované priblíženie potrebuje aspoň dva kroky (inak je to statický stav)." };
+        }
+        keyframes = parsed;
+      }
+
+      if (Math.abs(scale - 100) <= 0.01 && !keyframes) continue; // nič sa nemení, zbytočný filter
       if (Math.abs(positionX) > 0.01 || Math.abs(positionY) > 0.01) {
         return {
           ok: false,
@@ -223,6 +275,7 @@ export function validateBurnRequest(body: any): BurnValidation {
         scale,
         positionX,
         positionY,
+        ...(keyframes ? { keyframes } : {}),
       });
     }
     if (zoom.length > BURN_LIMITS.maxKeepRanges) {
