@@ -16,9 +16,9 @@ import { GENERATED_VISUALS_PROVIDER_AVAILABLE, DEFAULT_STYLE_CONTROLS } from "..
  */
 
 describe("A) načítanie presetov", () => {
-  test("existuje presne 13 receptov a všetky ID sedia", () => {
-    expect(STYLE_PRESET_IDS).toHaveLength(13);
-    expect(Object.keys(STYLE_RECIPES)).toHaveLength(13);
+  test("existuje presne 14 receptov a všetky ID sedia", () => {
+    expect(STYLE_PRESET_IDS).toHaveLength(14);
+    expect(Object.keys(STYLE_RECIPES)).toHaveLength(14);
     for (const id of STYLE_PRESET_IDS) {
       expect(getStyleRecipe(id).id).toBe(id);
     }

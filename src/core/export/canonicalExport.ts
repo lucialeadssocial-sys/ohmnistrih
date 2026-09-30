@@ -339,6 +339,16 @@ export function buildCanonicalExportPlan(
     notesSk.push(
       `${segments.length} titulkov pôjde do videa priamo z canonical časovej osi (štýl ${styleId} podľa canonical presetov).`,
     );
+    // Poctivosť: canonical vrstva má 5 predvolieb titulkov, kým appka pozná 9 štýlov.
+    // Cesta recept → canonical → render je preto **stratová** (napr. MINIMAL aj PODCAST
+    // idú do predvoľby „minimal" a späť sa vráti PODCAST). Nech to vie aj používateľ,
+    // nie len kód.
+    if (captionClips.some((c) => c.captionStyle?.preset === "minimal" || c.captionStyle?.preset === "clean")) {
+      notesSk.push(
+        "Poznámka k titulkom: canonical vrstva pozná 5 predvolieb (bold/kinetic/social/clean/minimal), appka 9 štýlov — " +
+          "vypáli sa najbližšia predvoľba, nie vždy doslovný názov štýlu z receptu.",
+      );
+    }
   } else {
     notesSk.push("Canonical časová os nemá titulky — export nebude mať vypálené titulky.");
   }

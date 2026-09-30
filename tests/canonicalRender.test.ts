@@ -377,3 +377,23 @@ describe("canonical export: zadanie pre existujúcu renderovaciu linku", () => {
     expect(plan.notesSk.join(" ")).toContain("nemá text alebo platný čas");
   });
 });
+
+describe("poctivosť: cesta recept → canonical → render je stratová", () => {
+  test("plán sám prizná, že canonical pozná 5 predvolieb titulkov, nie 9 štýlov", () => {
+    // Presne prípad receptu AI_CINEMATIC_TAKE (MINIMAL) — canonical z neho spraví
+    // predvoľbu „minimal" a späť sa vráti PODCAST. Používateľ to musí vidieť v pláne.
+    const project = projectWithStyle();
+    project.tracks[0].clips[0].captionStyle!.preset = "minimal";
+    const plan = buildCanonicalExportPlan(project, { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
+    const notes = plan.notesSk.join(" ");
+    expect(notes).toContain("5 predvolieb");
+    expect(notes).toContain("9 štýlov");
+  });
+
+  test("pri predvolbe bold sa poznámka o strate nepridáva (nič sa nestratilo)", () => {
+    const project = projectWithStyle();
+    project.tracks[0].clips.forEach((c) => { c.captionStyle!.preset = "bold"; });
+    const plan = buildCanonicalExportPlan(project, { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
+    expect(plan.notesSk.join(" ")).not.toContain("5 predvolieb");
+  });
+});
