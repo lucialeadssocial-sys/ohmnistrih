@@ -25,7 +25,7 @@ import { buildStylePlan } from "../src/core/style/styleIntelligence";
 import { getStyleRecipe, type StylePresetId } from "../src/core/style/styleRecipes";
 import type { SpeechSegmentLike } from "../src/core/transcript/wordTiming";
 import { flattenWords } from "../src/core/transcript/wordTiming";
-import type { MediaAsset } from "../src/core/types/project";
+import type { MediaAsset, ProjectModel } from "../src/core/types/project";
 
 const args = process.argv.slice(2);
 const mediaPath = args.find((a) => !a.startsWith("--"));
@@ -64,6 +64,99 @@ function ffprobeDuration(exe: string, file: string): number {
 
 function line(label: string, value: string | number | boolean) {
   console.log(`${label.padEnd(46, ".")} ${value}`);
+}
+
+/**
+ * Postaví canonical projekt z reálneho média (video + zvuk + reálna snímka).
+ *
+ * Je to zámerne **exportovaná** funkcia: druhý runner (`verify-canonical-export.ts`)
+ * tak meria presne ten istý canonical projekt, aký vzniká pri real-media verifikácii —
+ * nie druhú, „približne podobnú“ konštrukciu.
+ */
+export function buildRealProjectForExport(media: Buffer, mediaName: string, durationSec: number): ProjectModel | null {
+  const ff = ffmpegExe();
+  const project = createInitialProject("Real-media export verifikácia (canonical os)");
+  const shotPath = "/tmp/verify-style-shot.png";
+  spawnSync(ff, ["-y", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", mediaName, "-frames:v", "1", shotPath]);
+  const shot = existsSync(shotPath) ? readFileSync(shotPath) : null;
+
+  const base: MediaAsset = {
+    id: "asset_main_video",
+    name: mediaName,
+    type: "video",
+    opfsPath: `/local/${mediaName}`,
+    size: media.byteLength,
+    mimeType: "video/mp4",
+    duration: durationSec,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    createdAt: Date.now(),
+  } as MediaAsset;
+
+  const assets: MediaAsset[] = [base];
+  if (shot) {
+    assets.push({
+      ...base,
+      id: "asset_real_shot",
+      name: "snímka-z-videa.png",
+      type: "image",
+      mimeType: "image/png",
+      size: shot.byteLength,
+      duration: 0,
+      fps: 0,
+      createdAt: Date.now() + 1,
+    } as MediaAsset);
+  }
+
+  const withAssets: ProjectModel = { ...project, assets };
+  const videoTrack = withAssets.tracks.find((t) => t.type === "video");
+  const audioTrack = withAssets.tracks.find((t) => t.type === "audio");
+  if (!videoTrack || !audioTrack) return null;
+
+  const clipBase = {
+    trackId: videoTrack.id,
+    type: "video" as const,
+    assetId: "asset_main_video",
+    name: mediaName,
+    timelineStart: 0,
+    start: 0,
+    sourceStart: 0,
+    sourceEnd: durationSec,
+    duration: durationSec,
+    offset: 0,
+    speed: 1,
+    volume: 100,
+    scale: 100,
+    opacity: 100,
+    positionX: 0,
+    positionY: 0,
+    rotation: 0,
+    keyframes: [],
+  };
+
+  const tracks = withAssets.tracks.map((track) => {
+    if (track.id === videoTrack.id) {
+      return { ...track, clips: [{ ...clipBase, id: "clip_main_video", trackId: track.id } as never] };
+    }
+    if (track.id === audioTrack.id) {
+      return {
+        ...track,
+        clips: [
+          {
+            ...clipBase,
+            id: "clip_original_vo",
+            trackId: track.id,
+            type: "audio" as const,
+            name: "Pôvodný zvuk (VO master)",
+          } as never,
+        ],
+      };
+    }
+    return track;
+  });
+
+  return { ...withAssets, tracks } as ProjectModel;
 }
 
 async function main() {
@@ -276,7 +369,11 @@ async function main() {
   process.exit(ok ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error("\nVERIFIKÁCIA ZLYHALA:", (err as Error)?.message ?? err);
-  process.exit(1);
-});
+// Spustí sa LEN keď je tento súbor hlavný program. Druhý runner z neho importuje
+// pomocnú funkciu — import nesmie spustiť celú verifikáciu ani ukončiť proces.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error("\nVERIFIKÁCIA ZLYHALA:", (err as Error)?.message ?? err);
+    process.exit(1);
+  });
+}
