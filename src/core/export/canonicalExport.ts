@@ -23,6 +23,13 @@ export interface CanonicalExportUpload {
   fontFamily?: string;
 }
 
+/** Jeden krok animovaného priblíženia (čas je relatívny k začiatku úseku). */
+export interface CanonicalZoomKeyframe {
+  timeSec: number;
+  /** 100 = bez zmeny. 150 = priblíženie na 150 %. */
+  scale: number;
+}
+
 /** Priblíženie (motion) z canonical osi — obraz sa priblíži na stred. */
 export interface CanonicalZoomSpec {
   clipId: string;
@@ -33,6 +40,12 @@ export interface CanonicalZoomSpec {
   /** Posun stredu (px na plátne). Nenulový posun + zoom = nepodporované (priznáme). */
   positionX: number;
   positionY: number;
+  /**
+   * `true` = priblíženie sa v čase mení (keyframy `scale` na klipe).
+   * Vtedy `scale` nesie najväčšiu hodnotu (do poznámok) a `keyframes` presný priebeh.
+   */
+  animated?: boolean;
+  keyframes?: CanonicalZoomKeyframe[];
 }
 
 /** Obrazová vrstva (b-roll / fotka) z canonical osi, ktorá pôjde do videa. */
@@ -65,7 +78,7 @@ export interface CanonicalBurnRequest {
   width: number;
   height: number;
   segments: { start: number; end: number; text: string; words?: { word: string; start: number; end: number }[] }[];
-  keepRanges: { start: number; end: number; scalePercent?: number }[];
+  keepRanges: { start: number; end: number; scalePercent?: number; keyframes?: CanonicalZoomKeyframe[] }[];
   fontFamily?: string;
   /** Priblíženia z canonical osi (reálne sa vykreslia v obraze). */
   zoom?: CanonicalZoomSpec[];
@@ -146,9 +159,84 @@ export function canonicalCaptionClips(project: ProjectModel): ClipModel[] {
  * je vlastnosť klipu na časovej osi. Tu sa to spojí na jednom mieste, aby sa
  * zoom neprilepil na nesprávny úsek.
  */
+// ---------------------------------------------------------------------------
+// Animované priblíženie (keyframy `scale` na klipe)
+// ---------------------------------------------------------------------------
+
+/** Prečo animované priblíženie klipu nevieme vykresliť — po slovensky a konkrétne. */
+export interface AnimatedZoomRejection {
+  reasonSk: string;
+}
+
+/** Klip tak, ako ho vidí extrakcia (aby sa dala testovať bez celého modelu). */
+export interface ZoomSourceClip {
+  duration: number;
+  scale?: number;
+  positionX?: number;
+  positionY?: number;
+  keyframes?: { parameter: string; timeOffset: number; value: number }[];
+}
+
+/**
+ * Z keyframov klipu zloží priebeh priblíženia.
+ *
+ * Vracia:
+ *  - `null` — klip nie je animovaný (žiadne alebo len jeden `scale` keyframe),
+ *  - `{ keyframes }` — podporované animované priblíženie,
+ *  - `{ reasonSk }` — animované je, ale táto linka ho verne nevykreslí.
+ *
+ * Pravidlá (každé má dôvod, nie je to obmedzenie pre obmedzenie):
+ *  - animuje sa **len `scale`** — pri animovanom posune/rotácii/priesvitnosti by
+ *    stredový orez klamal,
+ *  - **žiadny statický posun** — orez by nezachoval kompozíciu,
+ *  - **len priblíženie (≥ 100 %)**, nie zmenšovanie — zmenšený obraz by v ráme
+ *    nechal prázdne okraje, a to canonical kompozitor nerobí,
+ *  - rozsah do 400 % (mimo neho je to skôr chyba v pláne).
+ */
+export function animatedZoomFromClip(clip: ZoomSourceClip): { keyframes: CanonicalZoomKeyframe[] } | AnimatedZoomRejection | null {
+  const all = clip.keyframes ?? [];
+  const scaleKfs = all.filter((k) => k.parameter === "scale");
+  if (scaleKfs.length < 2) return null;
+
+  const otherKfs = all.filter((k) => k.parameter !== "scale");
+  if (otherKfs.length > 0) {
+    const names = Array.from(new Set(otherKfs.map((k) => k.parameter))).slice(0, 3).join(", ");
+    return {
+      reasonSk: `animuje aj ${names} — animované priblíženie vykreslíme len vtedy, keď sa animuje samotné priblíženie (scale)`,
+    };
+  }
+  if (Math.abs(clip.positionX ?? 0) > 0.01 || Math.abs(clip.positionY ?? 0) > 0.01) {
+    return { reasonSk: "má priblíženie spojené s posunom obrazu — stredový orez by kompozíciu skreslil" };
+  }
+
+  // Časy zoradíme a zlúčime duplicity (rovnaký čas = platí posledná hodnota).
+  const sorted = scaleKfs
+    .map((k) => ({
+      timeSec: Math.min(Math.max(0, k.timeOffset), clip.duration),
+      scale: k.value,
+    }))
+    .filter((k) => Number.isFinite(k.timeSec) && Number.isFinite(k.scale))
+    .sort((a, b) => a.timeSec - b.timeSec);
+  const merged: CanonicalZoomKeyframe[] = [];
+  for (const k of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && Math.abs(last.timeSec - k.timeSec) < 0.001) merged[merged.length - 1] = k;
+    else merged.push(k);
+  }
+  if (merged.length < 2) return null;
+
+  if (merged.some((k) => k.scale < 100 - 0.01)) {
+    return { reasonSk: "zmenšuje obraz (priblíženie pod 100 %) — v ráme by ostali okraje, a to canonical kompozitor nerobí" };
+  }
+  if (merged.some((k) => k.scale > 400)) {
+    return { reasonSk: "má priblíženie nad 400 % (mimo rozsahu, ktorý dáva zmysel)" };
+  }
+  return { keyframes: merged };
+}
+
 export function canonicalKeepRangesWithZoom(
   project: ProjectModel,
-): { start: number; end: number; scalePercent: number; clipId: string }[] {
+): { start: number; end: number; scalePercent: number; clipId: string; keyframes?: CanonicalZoomKeyframe[] }[] {
   const videoClips: ClipModel[] = [];
   for (const track of project.tracks) {
     if (track.type !== "video" || !track.visible) continue;
@@ -158,12 +246,19 @@ export function canonicalKeepRangesWithZoom(
   }
   videoClips.sort((a, b) => a.start - b.start);
   return videoClips
-    .map((clip) => ({
-      start: round3(clip.sourceStart ?? 0),
-      end: round3(clip.sourceEnd ?? (clip.sourceStart ?? 0) + clip.duration),
-      scalePercent: round3(clip.scale ?? 100),
-      clipId: clip.id,
-    }))
+    .map((clip) => {
+      // Pri animovanom priblížení nesie úsek aj priebeh; čas keyframov je
+      // relatívny k začiatku úseku (rovnako ako `timeOffset` na klipe).
+      const animated = animatedZoomFromClip(clip);
+      const keyframes = animated && "keyframes" in animated ? animated.keyframes : undefined;
+      return {
+        start: round3(clip.sourceStart ?? 0),
+        end: round3(clip.sourceEnd ?? (clip.sourceStart ?? 0) + clip.duration),
+        scalePercent: round3(keyframes ? Math.max(...keyframes.map((k) => k.scale)) : (clip.scale ?? 100)),
+        clipId: clip.id,
+        ...(keyframes ? { keyframes: keyframes.map((k) => ({ timeSec: round3(k.timeSec), scale: round3(k.scale) })) } : {}),
+      };
+    })
     .filter((r) => r.end - r.start > 0.02);
 }
 
@@ -254,6 +349,8 @@ export function buildCanonicalExportPlan(
   const zoom: CanonicalZoomSpec[] = [];
   let zoomUnsupported = 0;
   let animatedZoomClips = 0;
+  let animatedZoomRendered = 0;
+  let animatedZoomRejected = 0;
   let pannedZoomClips = 0;
   const filteredClipsList: string[] = [];
 
@@ -272,8 +369,31 @@ export function buildCanonicalExportPlan(
       if (!hasZoom && !animated) continue;
 
       if (animated) {
-        animatedZoomClips++;
-        zoomUnsupported++;
+        const res = animatedZoomFromClip(clip);
+        if (res && "keyframes" in res) {
+          animatedZoomClips++;
+          animatedZoomRendered++;
+          zoom.push({
+            clipId: clip.id,
+            startSec: round3(clip.start),
+            endSec: round3(clip.start + clip.duration),
+            // `scale` nesie najväčšiu hodnotu (do poznámok a reportu), presný priebeh je v keyframes.
+            scale: round3(Math.max(...res.keyframes.map((k) => k.scale))),
+            positionX: 0,
+            positionY: 0,
+            animated: true,
+            keyframes: res.keyframes.map((k) => ({ timeSec: round3(k.timeSec), scale: round3(k.scale) })),
+          });
+        } else {
+          animatedZoomClips++;
+          animatedZoomRejected++;
+          zoomUnsupported++;
+          if (res && "reasonSk" in res) {
+            unsupportedSk.push(`Animované priblíženie klipu „${clip.name}“ sa nevykreslí: ${res.reasonSk}.`);
+          } else {
+            unsupportedSk.push(`Animované priblíženie klipu „${clip.name}“ sa nevykreslí (keyframy sa nedali prečítať).`);
+          }
+        }
         continue;
       }
       if (moves && hasZoom) {
@@ -292,9 +412,9 @@ export function buildCanonicalExportPlan(
       });
     }
   }
-  if (animatedZoomClips > 0) {
+  if (animatedZoomRejected > 0) {
     unsupportedSk.push(
-      `${animatedZoomClips} klipov má animované priblíženie (keyframy) — v exporte sa vykreslí len statický stav prvého keyframu sa NEpoužíva; tieto klipy idú bez priblíženia.`,
+      `${animatedZoomRejected} klipov má animované priblíženie, ktoré táto linka verne nevykreslí — dôvod je pri každom klipе zvlášť vyššie; tieto klipy idú bez priblíženia.`,
     );
   }
   if (pannedZoomClips > 0) {
@@ -387,7 +507,7 @@ export function buildCanonicalExportPlan(
   }
   if (zoom.length > 0) {
     notesSk.push(
-      `Priblíženie (motion) sa vykreslí na ${zoom.length} klipoch (statický stredový orez podľa canonical osi).`,
+      `Priblíženie (motion) sa vykreslí na ${zoom.length} klipoch (${zoom.filter((z) => z.animated).length} z toho animovaných, postupné priblíženie podľa keyframov; ostatné statický stredový orez).`,
     );
   }
 
@@ -404,7 +524,12 @@ export function buildCanonicalExportPlan(
   const rangesWithZoom = canonicalKeepRangesWithZoom(project);
   const keepRangesWithScale =
     keepRanges.length > 0
-      ? rangesWithZoom.map((r) => ({ start: r.start, end: r.end, scalePercent: r.scalePercent }))
+      ? rangesWithZoom.map((r) => ({
+          start: r.start,
+          end: r.end,
+          scalePercent: r.scalePercent,
+          ...(r.keyframes ? { keyframes: r.keyframes } : {}),
+        }))
       : [];
   const zoomWindows = keepRanges.length === 0 && zoom.length > 0 ? zoom : [];
 

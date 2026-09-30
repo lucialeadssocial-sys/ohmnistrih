@@ -1023,12 +1023,20 @@ export function buildAssForCut(options: AssForCutOptions): AssForCutResult {
  * Priblíženie jedného klipu (statické, na stred) — presne ako v canonical pláne snímky.
  * `scalePercent` 112 = obraz je 1,12× väčší a orezaný na stred (žiadny posun).
  */
+/** Jeden krok animovaného priblíženia (čas od začiatku úseku). */
+export interface BurnZoomKeyframe {
+  timeSec: number;
+  scalePercent: number;
+}
+
 export interface BurnZoomWindow {
   /** Identifikátor klipu (len do poznámok/reportu). */
   clipId?: string;
   startSec: number;
   endSec: number;
   scalePercent: number;
+  /** Keď je vyplnené, priblíženie sa v čase mení (nie statický orez). */
+  keyframes?: BurnZoomKeyframe[];
 }
 
 /**
@@ -1053,7 +1061,7 @@ export interface BurnArgsOptions {
   assPath: string;
   fontsDir?: string;
   /** Klipy, ktoré sa majú vystrihnúť (rovnaký EDL ako v náhľade). Prázdne = celé video. */
-  keepSegments?: { start: number; end: number; scalePercent?: number }[];
+  keepSegments?: { start: number; end: number; scalePercent?: number; keyframes?: BurnZoomKeyframe[] }[];
   /** Priblíženia na časovej osi (len keď sa nič nestrihá — čas videа sa nemení). */
   zoomWindows?: BurnZoomWindow[];
   /** Obrazové vrstvy z canonical osi (b-roll, fotky). */
@@ -1112,7 +1120,7 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
     // Strih: každý úsek orežeme a spojíme (aj s priblížením daného úseku).
     // `fps=` drží snímkovú frekvenciu zdroja — bez neho `concat` ticho prepne na 25 fps.
     const parts = keep.map((k, i) => {
-      const zoom = zoomFilterForPercent(k.scalePercent, o.frameSize?.width, o.frameSize?.height);
+      const zoom = zoomFilterForWindow(k, o.sourceFps, o.frameSize);
       return (
         `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}${zoom}[v${i}]` +
         `;[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
@@ -1133,6 +1141,7 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
         startSec: Math.max(0, z.startSec),
         endSec: z.endSec,
         scalePercent: z.scalePercent,
+        ...(z.keyframes && z.keyframes.length >= 2 ? { keyframes: z.keyframes } : {}),
       }));
     const parts: string[] = [];
     let cursor = 0;
@@ -1145,7 +1154,7 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
         index++;
       }
       parts.push(
-        `[0:v]trim=start=${w.startSec.toFixed(3)}:end=${w.endSec.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}${zoomFilterForPercent(w.scalePercent, o.frameSize?.width, o.frameSize?.height)}[v${index}]`,
+        `[0:v]trim=start=${w.startSec.toFixed(3)}:end=${w.endSec.toFixed(3)},setpts=PTS-STARTPTS${fpsFilter}${zoomFilterForWindow(w, o.sourceFps, o.frameSize)}[v${index}]`,
       );
       index++;
       cursor = w.endSec;
@@ -1240,6 +1249,78 @@ export function zoomFilterForPercent(scalePercent?: number, frameWidth?: number,
     return `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},crop=${w}:${h}`;
   }
   return `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)},crop=trunc(iw/${scale.toFixed(4)}/2)*2:trunc(ih/${scale.toFixed(4)}/2)*2`;
+}
+
+/**
+ * Priebeh animovaného priblíženia ako výraz pre `zoompan` (premenná `in_time`).
+ *
+ * Prečo po častiach lineárne a bez `min()`/`max()` obalu: obal s vnorenými
+ * `if()` sa v praxi správal nepredvídateľne (namerané počas vývoja — raz
+ * zoomoval, raz nie), preto výraz drží rozsah **konštrukciou**: prvý úsek sa
+ * pred svojím časom drží prvej hodnoty a posledná hodnota platí až do konca.
+ * Hodnoty aj časy sú overené vo validácii, takže výraz nemá čo „zalepiť".
+ */
+export function zoomExpressionFromKeyframes(keyframes: BurnZoomKeyframe[]): string {
+  const pts = keyframes
+    .filter((k) => Number.isFinite(k.timeSec) && Number.isFinite(k.scalePercent))
+    .slice()
+    .sort((a, b) => a.timeSec - b.timeSec);
+  if (pts.length === 0) return "1";
+  if (pts.length === 1) return (pts[0].scalePercent / 100).toFixed(4);
+
+  // Od konca: posledná hodnota platí, kým sa nedostaneme do skoršieho úseku.
+  let expr = (pts[pts.length - 1].scalePercent / 100).toFixed(4);
+  for (let i = pts.length - 2; i >= 0; i--) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const sa = (a.scalePercent / 100).toFixed(4);
+    const sb = (b.scalePercent / 100).toFixed(4);
+    const span = Math.max(0.001, b.timeSec - a.timeSec);
+    const seg = `${sa}+(${sb}-${sa})*(in_time-${a.timeSec.toFixed(3)})/${span.toFixed(3)}`;
+    expr = `if(lt(in_time,${b.timeSec.toFixed(3)}),${seg},${expr})`;
+  }
+  // Pred prvým krokrom drž prvú hodnotu (aby priblíženie nezačínalo „pod 100 %").
+  const first = pts[0];
+  if (first.timeSec > 0 && first.scalePercent !== 100) {
+    expr = `if(lt(in_time,${first.timeSec.toFixed(3)}),${(first.scalePercent / 100).toFixed(4)},${expr})`;
+  }
+  return expr;
+}
+
+/**
+ * Animované priblíženie ako filter (`zoompan`). Na rozdiel od statického orezu
+ * mení mierku **priebežne**, preto tu `zoompan` s `d=1` (jedna výstupná snímka
+ * na vstupnú) a `s=` presne na rozmery rámu — rám videa sa nesmie zmeniť.
+ */
+export function animatedZoomFilter(
+  keyframes: BurnZoomKeyframe[],
+  sourceFps?: number,
+  frameWidth?: number,
+  frameHeight?: number,
+): string {
+  if (!keyframes || keyframes.length < 2) return "";
+  if (!frameWidth || !frameHeight || frameWidth <= 0 || frameHeight <= 0) return "";
+  const w = Math.round(frameWidth);
+  const h = Math.round(frameHeight);
+  const fps = sourceFps && sourceFps > 0 ? `:fps=${Math.round(sourceFps * 1000) / 1000}` : "";
+  return (
+    `,zoompan=z='${zoomExpressionFromKeyframes(keyframes)}'` +
+    `:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}${fps}`
+  );
+}
+
+/**
+ * Filter priblíženia pre úsek/okno — animovaný (`zoompan`) alebo statický orez.
+ * Drží jedno miesto, aby sa obe cesty (so strihom aj bez) nemohli rozísť.
+ */
+export function zoomFilterForWindow(
+  window: { scalePercent?: number; keyframes?: BurnZoomKeyframe[] },
+  sourceFps?: number,
+  frameSize?: { width: number; height: number },
+): string {
+  const animated = animatedZoomFilter(window.keyframes ?? [], sourceFps, frameSize?.width, frameSize?.height);
+  if (animated) return animated;
+  return zoomFilterForPercent(window.scalePercent, frameSize?.width, frameSize?.height);
 }
 
 /** Cesty vo filtroch: `:` a `\` majú vo ffmpeg filtri špeciálny význam. */
