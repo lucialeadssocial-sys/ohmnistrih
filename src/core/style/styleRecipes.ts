@@ -41,6 +41,7 @@ export type StylePresetId =
   | "FILM_MONTAGE"
   | "EXPERT_COLLAGE_TALK"
   | "AI_CINEMATIC_TAKE"
+  | "EDU_WORD_TALK"
   | "CUSTOM";
 
 export interface StyleAnimationSpec {
@@ -792,7 +793,85 @@ const AI_CINEMATIC_TAKE: StyleRecipe = makeRecipe({
     "Potrebuje dlhé zábery — vlastné b-roll alebo AI klipy vyrobené mimo appky (appka video negeneruje). Pomer 30/70 je z jeho zverejneného workflow, nie z merania videa; podiel rečníka sa bez detektora tvárí zmerať nedá.",
 });
 
-/** Všetkých 14 receptov v poradí, v akom sa ponúkajú v UI. */
+
+/**
+ * **EDU TALK — SLOVO PO SLOVE** — recept nameraný zo **6 klipov** na TikToku
+ * (`tiktok.com/@ai_ktivista`, spolu 297,2 s). Je to jeho najčastejší formát:
+ * rečník v obraze + vložené ilustrácie/screenshoty k tomu, čo práve hovorí,
+ * a titulky idúce **slovo po slove** (v snímkach je vždy len jedno slovo).
+ *
+ * NAMERANÉ (medián cez 6 klipov; pruhy zapečené vo videu vyrezané):
+ *  - 0,15 rezu/s · 5,35 s na záber → pokojné tempo, strih je výnimka,
+ *  - jas 115,5 (rozsah 65,0–142,8) · kontrast 55,0 · sýtosť 30 %,
+ *  - dynamika 46,2 (obraz menia vložené prvky, nie strih),
+ *  - hustota hrán 0,026 (čisté prostredie, málo detailov v pozadí),
+ *  - svetlý spodok len v 2 zo 6 klipov → titulky nie sú vždy dole.
+ *
+ * ČO NAMERANÉ NEBOLO (a recept to nepredstiera):
+ *  - **podiel rečníka** — bez detektora tvárí sa zmerať nedá; 60/40 je pracovný
+ *    pomer, nie meranie,
+ *  - **krok slova v titulkoch** — z videa sa časovanie slov nečíta; `staggerMs`
+ *    je preto len nastavenie, nie meranie (presný rytmus je z časovania v prepise),
+ *  - **jeho žltá** (`#FEC903`) prekročila prah palety (0,5 % plochy) len v **1 zo 6**
+ *    klipov (11,9 % plochy); v ostatných je žltá vidieť v popiskoch, ale jej plocha
+ *    je pod prahom merania — preto ju recept uvádza ako **možný** akcent, nie pravidlo,
+ *  - **žiadna farba sa neopakuje vo väčšine klipov** (rovnako ako pri AI_CINEMATIC_TAKE).
+ */
+const EDU_WORD_TALK: StyleRecipe = makeRecipe({
+  id: "EDU_WORD_TALK",
+  name: "Edu Word Talk",
+  labelSk: "Edu talk — slovo po slove (merané)",
+  purposeSk:
+    "Vysvetľujúci klip: rečník hovorí a k jeho slovám sa prikladajú ilustrácie, screenshoty a karty; titulky idú po jednom slove.",
+  whySk:
+    "Merané na 6 klipoch: pokojné tempo (0,15 rezu/s, 5,35 s na záber) a dynamika 46,2 znamenajú, že pozornosť držia vložené prvky a text, nie strih. Preto recept necháva strih pokojný a animuje jednotlivé prvky.",
+  animation: { kind: "smooth", fpsLook: null, motionBlur: false, easingSk: "prvky sa objavujú po jednom, bez švihov (namerané tempo 0,15 rezu/s)" },
+  typography: {
+    character: "bold-sans",
+    kinetic: true,
+    staggerMs: 120,
+    scaleHint: 120,
+    uppercase: false,
+    // Namerané: v snímkach je vždy len jedno slovo → naraz maximálne jeden text.
+    maxElementsPerScene: 1,
+    roles: ["keyword", "emphasis", "label"],
+  },
+  camera: { punchIn: true, punchInScale: 1.08, fastZoom: false, whipPan: "none" },
+  movement: {
+    paperCutout: false,
+    layering: false,
+    subtleZoom: true,
+    depthLayers: 1,
+    noteSk: "obraz menia vložené ilustrácie a karty, ktoré sa objavujú po jednom — nie efekty na rečníkovi",
+  },
+  aesthetic: {
+    labelSk: "rečník + vložené ilustrácie, screenshoty a karty",
+    elementPool: ["illustration", "diagram", "existing_media", "photo", "icon"],
+    halftone: false,
+    visibleShadows: false,
+    tornEdges: false,
+    asymmetric: false,
+    illustrationBodies: true,
+  },
+  // Namerané „občasné" farby: biela #FCF8FC, takmer čierna #110D11, žltá #FEC903
+  // (v 1 zo 6 klipov 11,9 % plochy), zelená #4A6C56. Žiadna nie je zdieľaná.
+  colorPalette: ["#FCF8FC", "#110D11", "#FEC903", "#4A6C56"],
+  composition: { primary: "full_screen", allowed: ["full_screen", "picture_in_picture", "split"], layersMax: 2 },
+  texture: { level: "clean", kinds: ["čisté prostredie bez textúry (nameraná sýtosť 30 %)"] },
+  visualStructure: { elementAnimation: "sequential", transitionsBetweenPanels: false },
+  captionStyle: {
+    styleId: "KARAOKE",
+    rationaleSk:
+      "Jeho titulky idú slovo po slove — v snímkach je vždy len jedno slovo. KARAOKE je najbližší existujúci štýl; či render naozaj zvýrazňuje po slovách, overí real export, nie tento text.",
+  },
+  transitionStyle: { base: "cut", accent: "punch", noteSk: "Prechody appka nemeria — recept preto používa len strih a dôraz na vloženom prvku." },
+  talkingHeadRatio: 0.6,
+  motionPool: ["pop", "slide", "subtle_zoom"],
+  requiresSk:
+    "Potrebuje vložené ilustrácie, screenshoty alebo karty k tomu, čo hovoríš — appka ich negeneruje, len ich načasuje. Podiel rečníka (60/40) nie je meraný (bez detektora tvárí) a zvýrazňovanie titulkov po slovách musí potvrdiť real export.",
+});
+
+/** Všetkých 15 receptov v poradí, v akom sa ponúkajú v UI. */
 export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   EDITORIAL_COLLAGE,
   DOCUMENTARY,
@@ -807,6 +886,7 @@ export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   FILM_MONTAGE,
   EXPERT_COLLAGE_TALK,
   AI_CINEMATIC_TAKE,
+  EDU_WORD_TALK,
   CUSTOM,
 };
 
@@ -824,6 +904,7 @@ export const STYLE_PRESET_IDS: StylePresetId[] = [
   "FILM_MONTAGE",
   "EXPERT_COLLAGE_TALK",
   "AI_CINEMATIC_TAKE",
+  "EDU_WORD_TALK",
   "CUSTOM",
 ];
 

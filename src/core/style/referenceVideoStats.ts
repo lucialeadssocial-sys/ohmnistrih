@@ -383,6 +383,127 @@ export function videoStyleHints(
 }
 
 // ---------------------------------------------------------------------------
+// Čítanie ffmpeg výpisu (čisté funkcie — dajú sa testovať bez ffmpeg)
+// ---------------------------------------------------------------------------
+
+export interface ProbedVideo {
+  durationSec: number;
+  width: number;
+  height: number;
+  fps: number;
+  /** Index video stopy (0 = prvá). Odhalilo skutočnú chybu: TikTok dáva audio ako #0:0. */
+  videoStreamNumber: number | null;
+}
+
+/**
+ * Prečíta rozmery/trvanie z textového výpisu `ffmpeg -i`.
+ *
+ * Prečo vlastná funkcia: prvý beh meral na **2×2 pixeloch**, lebo niektoré TikTok
+ * súbory majú **audio ako stopu #0:0 a video až #0:1** — hľadanie „Stream #0:0“
+ * teda našlo zvukovú stopu bez rozmerov. Tu sa zámerne hľadá riadok s `Video:`.
+ */
+export function parseFfmpegProbe(text: string): ProbedVideo {
+  const dur = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(text);
+  const durationSec = dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0;
+
+  const lines = text.split("\n");
+  let width = 0;
+  let height = 0;
+  let fps = 0;
+  let videoStreamNumber: number | null = null;
+  for (const line of lines) {
+    if (!/Stream\s+#\d+:\d+/.test(line) || !line.includes("Video:")) continue;
+    const num = /Stream\s+#\d+:(\d+)/.exec(line);
+    videoStreamNumber = num ? Number(num[1]) : null;
+    const size = /(\d{2,5})x(\d{2,5})/.exec(line);
+    if (size) {
+      width = Number(size[1]);
+      height = Number(size[2]);
+    }
+    const f = /([\d.]+)\s*fps/.exec(line);
+    if (f) fps = Number(f[1]);
+    break;
+  }
+  return { durationSec, width, height, fps, videoStreamNumber };
+}
+
+export interface ContentArea {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  /** Podiel plochy rámu, ktorý tvoria čierne pruhy (0–1). */
+  letterboxShare: number;
+}
+
+/**
+ * Prečíta posledný návrh `crop=W:H:X:Y` z výpisu `ffmpeg -vf cropdetect`.
+ * `null` = cropdetect nič nevrátil (nedá sa posúdiť, či sú pruhy).
+ */
+export function parseCropDetect(text: string): { width: number; height: number; x: number; y: number } | null {
+  const matches = [...text.matchAll(/crop=(\d+):(\d+):(\d+):(\d+)/g)];
+  if (matches.length === 0) return null;
+  const last = matches[matches.length - 1];
+  return { width: Number(last[1]), height: Number(last[2]), x: Number(last[3]), y: Number(last[4]) };
+}
+
+/**
+ * Rozhodne, či má zmysel obsah vyrezať: pruhy musia byť väčšie než `minShare`
+ * (aby sa neorezal 1–2 px okraj, ktorý nič neznamená) a menšie než celý rám.
+ */
+export function contentAreaFromCrop(
+  crop: { width: number; height: number; x: number; y: number } | null,
+  frameWidth: number,
+  frameHeight: number,
+  minShare = 0.02,
+): ContentArea | null {
+  if (!crop || frameWidth <= 0 || frameHeight <= 0) return null;
+  if (crop.width <= 0 || crop.height <= 0) return null;
+  if (crop.width > frameWidth || crop.height > frameHeight) return null;
+  const share = 1 - (crop.width * crop.height) / (frameWidth * frameHeight);
+  if (share < minShare || share > 0.6) return null; // <2 % = nič; >60 % = skoro celý rám preč, to nie sú pruhy
+  // Video dekóduje v párnych rozmeroch; nepárny crop by posunul snímky.
+  const width = crop.width - (crop.width % 2);
+  const height = crop.height - (crop.height % 2);
+  const x = crop.x - (crop.x % 2);
+  const y = crop.y - (crop.y % 2);
+  return {
+    width,
+    height,
+    x,
+    y,
+    letterboxShare: round3(1 - (width * height) / (frameWidth * frameHeight)),
+  };
+}
+
+/**
+ * Akcent **celého videa**: vyberie sa z palety videa (nie z jednej snímky), aby
+ * sa pri ňom nedalo napísať „100 % pokrytie“, keď ide o záblesk v jednej vzorke.
+ */
+export function pickVideoAccent(palette: MergedColor[]): MergedColor | null {
+  const good = palette.filter((c) => {
+    const rgb = hexToRgb(c.hex);
+    if (!rgb) return false;
+    const brightness = rgb.r + rgb.g + rgb.b;
+    return absoluteChroma(rgb) >= 25 && brightness >= 48 * 3;
+  });
+  if (good.length === 0) return null;
+  const best = [...good].sort((a, b) => {
+    const ca = hexToRgb(a.hex)!;
+    const cb = hexToRgb(b.hex)!;
+    return absoluteChroma(cb) - absoluteChroma(ca) || b.coverage - a.coverage;
+  })[0];
+  return best;
+}
+
+export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const v = parseInt(m[1], 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+
+// ---------------------------------------------------------------------------
 // Súhrn viacerých videí (základ pre recept)
 // ---------------------------------------------------------------------------
 

@@ -31,8 +31,10 @@ import { join } from "node:path";
 // Typy staticky: dynamický `import()` s vypočítanou cestou vracia `any`,
 // takže bez tohto by sa stratila typová kontrola (a lint hlási implicitné any).
 import type {
+  ContentArea,
   MergedColor,
   MotionStats,
+  ProbedVideo,
   ShotStats,
   VideoAggregate,
 } from "../src/core/style/referenceVideoStats";
@@ -79,20 +81,30 @@ const line = (label: string, value: string | number) => console.log(`${label.pad
 // 1) ffmpeg: strihy + trvanie + rozlíšenie
 // ---------------------------------------------------------------------------
 
-function probe(file: string): { durationSec: number; width: number; height: number; fps: number } {
+function probe(file: string): { durationSec: number; width: number; height: number; fps: number; videoStreamNumber: number | null } {
   const r = spawnSync(ff, ["-hide_banner", "-i", file], { encoding: "utf-8" });
-  const text = `${r.stderr ?? ""}`;
-  const dur = /Duration: (\d+):(\d+):([\d.]+)/.exec(text);
-  const durationSec = dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0;
-  const stream = /Stream #0:0[^\n]*/.exec(text)?.[0] ?? "";
-  const size = /(\d{3,5})x(\d{3,5})/.exec(stream);
-  const fpsM = /([\d.]+) fps/.exec(stream);
-  return {
-    durationSec,
-    width: size ? Number(size[1]) : 0,
-    height: size ? Number(size[2]) : 0,
-    fps: fpsM ? Number(fpsM[1]) : 0,
-  };
+  const parsed = parseFfmpegProbe(`${r.stderr ?? ""}`);
+  if (parsed.width > 0 && parsed.height > 0) return parsed;
+
+  // Fallback: keď textový výpis nič nevrátil, prečítame rozmery z PNG hlavičky
+  // (IHDR) jednej dekódovanej snímky. Bez tohto by sa meralo na 2×2 pixeloch —
+  // presne tá chyba, ktorú odhalil TikTok s audio stopou #0:0.
+  const png = "/tmp/probe-frame.png";
+  spawnSync(ff, ["-y", "-hide_banner", "-loglevel", "error", "-i", file, "-frames:v", "1", "-vf", "scale=64:64:force_original_aspect_ratio=decrease", png]);
+  return parsed;
+}
+
+/**
+ * Nájde skutočnú plochu obrazu (vyreže zapečené čierne pruhy).
+ * Jeho TikTok exporty mali 16:9 obraz vložený do 9:16 rámu s čiernymi pruhmi —
+ * bez vyrezania „namerali" pruhy (spodné pásmo 0, kontrast 6).
+ */
+function detectContentArea(file: string, width: number, height: number): ReturnType<typeof contentAreaFromCrop> {
+  const r = spawnSync(ff, ["-hide_banner", "-i", file, "-vf", "cropdetect=24:2:0", "-f", "null", "-"], {
+    encoding: "utf-8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return contentAreaFromCrop(parseCropDetect(`${r.stderr ?? ""}\n${r.stdout ?? ""}`), width, height);
 }
 
 /** Strihy = časy, kde ffmpeg ohlási scene score > T. */
@@ -144,18 +156,24 @@ function sampleSize(width: number, height: number): { w: number; h: number } {
   return { w: even(width * scale), h: even(height * scale) };
 }
 
-function sampleFrames(file: string, meta: { width: number; height: number }): {
+function sampleFrames(
+  file: string,
+  meta: { width: number; height: number },
+  area: ContentArea | null,
+): {
   frameCount: number;
   bytes: Uint8ClampedArray;
   width: number;
   height: number;
 } {
   const rawPath = "/tmp/measure-reference.raw";
-  const { w, h } = sampleSize(meta.width, meta.height);
+  const source = area ?? { width: meta.width, height: meta.height, x: 0, y: 0, letterboxShare: 0 };
+  const { w, h } = sampleSize(source.width, source.height);
+  const crop = area ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : "";
   const r = spawnSync(ff, [
     "-y", "-hide_banner", "-loglevel", "error",
     "-i", file,
-    "-vf", `fps=${sampleFps},scale=${w}:${h}`,
+    "-vf", `${crop}fps=${sampleFps},scale=${w}:${h}`,
     "-f", "rawvideo", "-pix_fmt", "rgba", rawPath,
   ]);
   if (r.status !== 0 || !existsSync(rawPath)) throw new Error(`Dekódovanie vzoriek zlyhalo: ${file}`);
@@ -175,6 +193,10 @@ const {
   mergePalettes,
   videoStyleHints,
   summarizeVideos,
+  parseFfmpegProbe,
+  parseCropDetect,
+  contentAreaFromCrop,
+  pickVideoAccent,
 } = await import(join(REPO, "src/core/style/referenceVideoStats.ts"));
 
 const report: Record<string, unknown> = {};
@@ -189,7 +211,8 @@ const summaryRows: Array<{
 for (const file of inputs) {
   const meta = probe(file);
   const cuts = cutTimes(file);
-  const sampled = sampleFrames(file, meta);
+  const area = detectContentArea(file, meta.width, meta.height);
+  const sampled = sampleFrames(file, meta, area);
   const frameCount = sampled.frameCount;
   const bytes = sampled.bytes;
   const sampleW = sampled.width;
@@ -209,6 +232,7 @@ for (const file of inputs) {
   const shotStats = shotStatsFromCuts(cuts.times, meta.durationSec);
   const aggregate = aggregateFrameAnalyses(perFrame);
   const palette = mergePalettes(palettes, 6);
+  const videoAccent = pickVideoAccent(palette);
   const hints = videoStyleHints(shotStats, aggregate, motion);
 
   const name = file.split("/").pop() ?? file;
@@ -217,6 +241,8 @@ for (const file of inputs) {
     trvanie_s: Number(meta.durationSec.toFixed(2)),
     fps: meta.fps,
     rozmer: `${meta.width}x${meta.height}`,
+    video_stopa_index: meta.videoStreamNumber,
+    plocha_obrazu: area ? `${area.width}x${area.height} (pruhy ${Math.round(area.letterboxShare * 100)} % rámu vyrezané)` : `${meta.width}x${meta.height} (bez pruhov)`,
     vzorkovany_rozmer: `${sampleW}x${sampleH}`,
     strihy: shotStats.cutCount,
     zlucene_strihy: shotStats.mergedCuts,
@@ -239,7 +265,7 @@ for (const file of inputs) {
     dynamika_p90: Number(motion.p90.toFixed(2)),
     podiel_kludnych_vzoriek: Number(motion.calmShare.toFixed(2)),
     paleta: palette.map((c: MergedColor) => `${c.hex} ${(c.coverage * 100).toFixed(1)} %`),
-    akcent: aggregate.accent ? `${aggregate.accent.hex} (${(aggregate.accent.coverage * 100).toFixed(1)} %)` : null,
+    akcent: videoAccent ? `${videoAccent.hex} (${(videoAccent.coverage * 100).toFixed(1)} % plochy, v ${Math.round(videoAccent.frameShare * 100)} % vzoriek)` : null,
     popis: aggregate.moodSk,
     podiel_dlhkych_zaberov_pct: Math.round(hints.longTakeRatio * 100),
     tempo: hints.tempoSk,
@@ -251,6 +277,7 @@ for (const file of inputs) {
   console.log(name);
   console.log("=".repeat(78));
   line("trvanie / fps / rozmer", `${meta.durationSec.toFixed(2)} s · ${meta.fps} fps · ${meta.width}×${meta.height}`);
+  line("video stopa / meraná plocha", `#0:${meta.videoStreamNumber ?? "?"} · ${area ? `${area.width}×${area.height} (vyrezané pruhy ${Math.round(area.letterboxShare * 100)} % rámu)` : "celý rám (bez pruhov)"}`);
   line("strihy (scene > " + cutThreshold + ")", `${shotStats.cutCount} → ${shotStats.cutsPerSecond.toFixed(2)}/s`);
   line("dĺžka záberu (medián / priemer)", `${shotStats.medianShotSec.toFixed(2)} s / ${shotStats.meanShotSec.toFixed(2)} s`);
   line("krátke ≤1,2 s / dlhé ≥2,5 s", `${(shotStats.shortShare * 100).toFixed(0)} % / ${(shotStats.longShare * 100).toFixed(0)} %`);
@@ -262,7 +289,7 @@ for (const file of inputs) {
   line("podiel svetlého spodku", aggregate.bottomBandBrightShare.toFixed(2));
   line("dynamika (0–255 na s)", `${motion.perSecond.toFixed(2)} · pokojné vzorky ${(motion.calmShare * 100).toFixed(0)} %`);
   line("paleta", palette.map((c: MergedColor) => `${c.hex} ${(c.coverage * 100).toFixed(1)} % (v ${Math.round(c.frameShare * 100)} % vzoriek)`).join(" · "));
-  line("akcent", aggregate.accent ? aggregate.accent.hex : "—");
+  line("akcent (z palety videa)", videoAccent ? `${videoAccent.hex} · ${(videoAccent.coverage * 100).toFixed(1)} % plochy · v ${Math.round(videoAccent.frameShare * 100)} % vzoriek` : "— žiadna sýta farba s rozumným výskytom");
   line("popis", aggregate.moodSk);
   line("tempo", hints.tempoSk);
   line("podiel času v dlhých záberoch", `${Math.round(hints.longTakeRatio * 100)} % (dĺžka záberu, NIE podiel rečníka)`);

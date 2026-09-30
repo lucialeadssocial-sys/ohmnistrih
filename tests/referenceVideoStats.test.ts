@@ -11,10 +11,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   aggregateFrameAnalyses,
+  contentAreaFromCrop,
+  hexToRgb,
   medianOf,
   mergePalettes,
   motionBetweenFrames,
   normalizeCutTimes,
+  parseCropDetect,
+  parseFfmpegProbe,
+  pickVideoAccent,
   shotLengths,
   shotStatsFromCuts,
   summarizeVideos,
@@ -294,8 +299,8 @@ describe("C) poctivosť merania (žiadne predstieranie)", () => {
 describe("C2) recept AI_CINEMATIC_TAKE stojí na nameraných číslach", () => {
   const recipe = STYLE_RECIPES.AI_CINEMATIC_TAKE;
 
-  test("je v ponuke ako 14. recept", () => {
-    expect(STYLE_PRESET_IDS).toHaveLength(14);
+  test("je v ponuke vedľa receptu z TikToku", () => {
+    expect(STYLE_PRESET_IDS).toHaveLength(15);
     expect(STYLE_PRESET_IDS).toContain("AI_CINEMATIC_TAKE");
     expect(getStyleRecipe("ai_cinematic_take").id).toBe("AI_CINEMATIC_TAKE");
   });
@@ -353,5 +358,155 @@ describe("C2) recept AI_CINEMATIC_TAKE stojí na nameraných číslach", () => {
       const r = STYLE_RECIPES[id];
       expect(r.talkingHeadRatio + r.supportingVisualRatio).toBeCloseTo(1, 3);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D) čítanie ffmpeg výpisu — trieda chýb, ktorá sa už nesmie vrátiť
+// ---------------------------------------------------------------------------
+
+describe("D) čítanie ffmpeg výpisu (video stopa, pruhy, akcent)", () => {
+  const tikTokStyle = `Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'x.mp4':
+  Duration: 00:00:45.51, start: 0.000000, bitrate: 1442 kb/s
+  Stream #0:0[0x1](und): Audio: aac (HE-AACv2) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 32 kb/s (default)
+  Stream #0:1[0x2](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709), 576x1024 [SAR 1:1 DAR 9:16], 1404 kb/s, 30 fps, 30 tbr`;
+
+  test("nájde VIDEO stopu, aj keď je až druhá (TikTok: audio #0:0, video #0:1)", () => {
+    const p = parseFfmpegProbe(tikTokStyle);
+    expect(p.videoStreamNumber).toBe(1);
+    expect(p.width).toBe(576);
+    expect(p.height).toBe(1024);
+    expect(p.fps).toBe(30);
+    expect(p.durationSec).toBeCloseTo(45.51, 2);
+  });
+
+  test("bežné poradie (video prvé) funguje tiež", () => {
+    const p = parseFfmpegProbe(`  Duration: 00:00:12.00, start: 0.000000
+  Stream #0:0: Video: h264, yuv420p, 1280x720, 25 fps
+  Stream #0:1: Audio: aac, 44100 Hz`);
+    expect(p.videoStreamNumber).toBe(0);
+    expect(p.width).toBe(1280);
+    expect(p.height).toBe(720);
+    expect(p.fps).toBe(25);
+  });
+
+  test("keď rozmery vo výpise nie sú, vráti nuly (a volajúci to musí vyriešiť inak)", () => {
+    const p = parseFfmpegProbe("  Stream #0:0: Audio: aac, 44100 Hz");
+    expect(p.width).toBe(0);
+    expect(p.height).toBe(0);
+    expect(p.videoStreamNumber).toBeNull();
+  });
+
+  test("cropdetect: berie sa POSLEDNÝ návrh (ffmpeg ho spresňuje)", () => {
+    const crop = parseCropDetect("crop=576:1024:0:0\ncrop=508:642:34:190\ncrop=508:642:34:190\n");
+    expect(crop).toEqual({ width: 508, height: 642, x: 34, y: 190 });
+  });
+
+  test("cropdetect bez návrhu = null (nedá sa posúdiť)", () => {
+    expect(parseCropDetect("no crop here")).toBeNull();
+  });
+
+  test("zapečené pruhy sa vyrežú a veľkosť sa zaokrúhli na párne", () => {
+    const area = contentAreaFromCrop({ width: 507, height: 641, x: 35, y: 191 }, 576, 1024);
+    expect(area).not.toBeNull();
+    expect(area!.width % 2).toBe(0);
+    expect(area!.height % 2).toBe(0);
+    expect(area!.x % 2).toBe(0);
+    expect(area!.y % 2).toBe(0);
+    expect(area!.letterboxShare).toBeGreaterThan(0.3);
+  });
+
+  test("okraj do 2 % sa neorezáva (nechceme rezať 1–2 px)", () => {
+    expect(contentAreaFromCrop({ width: 574, height: 1020, x: 1, y: 2 }, 576, 1024)).toBeNull();
+  });
+
+  test("keď by vyrezanie zobralo väčšinu rámu, radšej nič (nie sú to pruhy)", () => {
+    expect(contentAreaFromCrop({ width: 300, height: 300, x: 100, y: 100 }, 576, 1024)).toBeNull();
+  });
+
+  test("plný rám = žiadne pruhy", () => {
+    expect(contentAreaFromCrop({ width: 576, height: 1024, x: 0, y: 0 }, 576, 1024)).toBeNull();
+  });
+
+  test("akcent videa sa berie z palety videa a nesie pokrytie z celého videa", () => {
+    const accent = pickVideoAccent([
+      { hex: "#7D5F55", coverage: 0.053, frameShare: 0.6 },
+      { hex: "#0E0E17", coverage: 0.129, frameShare: 1 },
+    ])!;
+    expect(accent.hex).toBe("#7D5F55");
+    expect(accent.coverage).toBeCloseTo(0.053, 3);
+    expect(accent.frameShare).toBeCloseTo(0.6, 3);
+  });
+
+  test("skoro-čierna farba nie je akcent (rovnaké pravidlo ako pri snímke)", () => {
+    expect(pickVideoAccent([{ hex: "#110D0B", coverage: 0.66, frameShare: 1 }])).toBeNull();
+  });
+
+  test("hex → rgb funguje a nezmysel vráti null", () => {
+    expect(hexToRgb("#FAC918")).toEqual({ r: 250, g: 201, b: 24 });
+    expect(hexToRgb("fac918")).toEqual({ r: 250, g: 201, b: 24 });
+    expect(hexToRgb("#GGG")).toBeNull();
+  });
+
+  test("tempo sa nemení tým, že video má audio stopu prvú (regresia)", () => {
+    const p = parseFfmpegProbe(tikTokStyle);
+    const stats = shotStatsFromCuts([2, 6], p.durationSec);
+    expect(stats.cutsPerSecond).toBeCloseTo(0.04, 2);
+    expect(stats.cutCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E) recept z TikToku (EDU_WORD_TALK) — stojí na nameraných číslach skupiny
+// ---------------------------------------------------------------------------
+
+describe("E) recept EDU_WORD_TALK stojí na meraní 6 klipov z TikToku", () => {
+  const recipe = STYLE_RECIPES.EDU_WORD_TALK;
+
+  test("je v ponuke ako 15. recept", () => {
+    expect(STYLE_PRESET_IDS).toHaveLength(15);
+    expect(STYLE_PRESET_IDS).toContain("EDU_WORD_TALK");
+    expect(getStyleRecipe("edu_word_talk").id).toBe("EDU_WORD_TALK");
+  });
+
+  test("titulky idú po jednom slove — naraz maximálne jeden text", () => {
+    // Namerané zo snímok: v jeho klipoch je vždy len jedno slovo.
+    expect(recipe.typography.maxElementsPerScene).toBe(1);
+    expect(recipe.captionStyle.styleId).toBe("KARAOKE");
+  });
+
+  test("tempo zostáva pokojné (0,15 rezu/s v meraní) — žiadne švihy ani rýchly zoom", () => {
+    expect(recipe.camera.fastZoom).toBe(false);
+    expect(recipe.camera.whipPan).toBe("none");
+    expect(recipe.camera.punchIn).toBe(true);
+    expect(recipe.camera.punchInScale).toBeLessThan(1.15);
+    expect(recipe.motionPool).not.toContain("whip_transition");
+  });
+
+  test("používa vložené ilustrácie a screenshoty, nie koláž", () => {
+    expect(recipe.aesthetic.elementPool).toContain("illustration");
+    expect(recipe.aesthetic.elementPool).toContain("existing_media");
+    expect(recipe.aesthetic.elementPool).not.toContain("paper_element");
+    expect(recipe.aesthetic.halftone).toBe(false);
+    expect(recipe.composition.primary).toBe("full_screen");
+  });
+
+  test("paleta je označená ako občasná, nie ako jeho pravidlo", () => {
+    expect(recipe.colorPalette).toEqual(["#FCF8FC", "#110D11", "#FEC903", "#4A6C56"]);
+    // Biela, takmer čierna, žltá (v 1 zo 6 klipov) a zelená — žiadna nie je zdieľaná.
+    const text = `${recipe.whySk} ${recipe.requiresSk}`.toLowerCase();
+    expect(text).toContain("detektora tvárí");
+    expect(text).toContain("real export");
+  });
+
+  test("priznáva, že krok slova nie je meraný a že AI negeneruje ilustrácie", () => {
+    const text = `${recipe.requiresSk} ${recipe.captionStyle.rationaleSk}`;
+    expect(text).toContain("negeneruje");
+    expect(text).toContain("real export");
+  });
+
+  test("regresia: recept z IG (krok 12) zostal bez zmeny", () => {
+    expect(STYLE_RECIPES.AI_CINEMATIC_TAKE.captionStyle.styleId).toBe("MINIMAL");
+    expect(STYLE_RECIPES.AI_CINEMATIC_TAKE.requiresSk).toContain("video negeneruje");
   });
 });
