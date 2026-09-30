@@ -28,6 +28,10 @@ import {
 } from '../command/commandSystem';
 
 import { editingBrain } from './editingBrain';
+// STYLE MODE (krok 1–3 Reality Gate): deterministická Style Intelligence.
+// Zámerne NIE je nový DirectorEngine — Style Mode je metóda tejto triedy a jej
+// logika je čistá funkcia bez AI providera (`src/core/style/styleIntelligence.ts`).
+import { buildStylePlan, type StylePlan, type StylePlanInput } from '../style/styleIntelligence';
 
 export interface DirectorBrief {
   id: string;
@@ -157,6 +161,21 @@ export class DirectorEngine {
   public executeEditPlan(plan: DirectorEditPlan): boolean {
     plan.status = 'EXECUTED';
     return true;
+  }
+
+  /**
+   * STYLE MODE — Style Plan nad existujúcim DirectorEngine.
+   *
+   * Prečo metóda tu a nie nový „Style Director“: zadanie (aj Reality Gate) zakazuje
+   * druhý Director. Style Mode preto len **dopĺňa** rozhodovanie existujúceho
+   * Directora o vizuálnu vrstvu — a robí to deterministicky, z reálnych dát
+   * (`wordTiming`), bez AI providera.
+   *
+   * Vracia plán s `EditDecision[]` (existujúci model). **Nič neaplikuje** —
+   * do projektu sa zapisuje až v kroku 6 (Apply) cez existujúce commands.
+   */
+  public generateStylePlan(input: StylePlanInput): StylePlan {
+    return buildStylePlan(input);
   }
 
   public conductReview(

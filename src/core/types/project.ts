@@ -3,6 +3,10 @@
  * Strictly serializable, non-destructive, immutable project schemas.
  */
 
+// Style Studio (krok 1–3): doplnkový detail vizuálneho rozhodnutia.
+// Import je **len typ** — nevzniká runtime závislosť ani druhý model.
+import type { StyleDecisionDetail } from "../style/styleDecisionTypes";
+
 export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5' | '21:9';
 export type TrackType = 'video' | 'b-roll' | 'audio' | 'sfx' | 'caption' | 'adjustment';
 export type ClipType = 'video' | 'audio' | 'image' | 'text' | 'b-roll' | 'caption' | 'adjustment';
@@ -73,12 +77,34 @@ export interface ProjectNote {
   timecode?: number; createdAt: number; updatedAt: number;
 }
 
+/**
+ * Druh zásahu. Prvé hodnoty sú pôvodné; `talking_head | typography | motion |
+ * composition` pridalo Style Studio (krok 1–3) — je to **ten istý záznam**,
+ * len iný druh zásahu, aby nevznikol druhý model rozhodnutí.
+ */
+export type EditDecisionType =
+  | 'cut'
+  | 'b_roll'
+  | 'audio_duck'
+  | 'transition'
+  | 'pacing'
+  | 'color'
+  | 'talking_head'
+  | 'typography'
+  | 'motion'
+  | 'composition';
+
 export interface EditDecision {
   id: string; timestamp: number;
-  type: 'cut' | 'b_roll' | 'audio_duck' | 'transition' | 'pacing' | 'color';
+  type: EditDecisionType;
   reason: string; alternatives?: string[]; impact: string;
   status: 'proposed' | 'accepted' | 'rejected' | 'applied';
   learningNote?: string; clipId?: string; actionPayload?: Record<string, any>;
+  /**
+   * Style Studio: WHAT / WHEN / WHY / WHEN NOT / ALTERNATIVE / CONFIDENCE.
+   * Nepovinné — existujúce rozhodnutia (cut, b_roll…) fungujú presne ako predtým.
+   */
+  style?: StyleDecisionDetail;
 }
 
 export interface ReviewComment {
