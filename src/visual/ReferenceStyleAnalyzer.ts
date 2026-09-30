@@ -1,82 +1,178 @@
-import { VisualStyleDNA, STYLE_PRESETS } from "./VisualStyleDNA";
+/**
+ * REFERENČNÝ OBRÁZOK → ŠTÝL (krok 11 Reality Gate).
+ *
+ * Trieda má rovnaké meno ako predtým, ale **obsah je iný a pravdivý**: predtým
+ * „analýza" hádala štýl podľa **mena súboru** (`if (name.includes("clean")) …`),
+ * čo je presne to, čo pravidlá zakazujú — appka tvrdila veci, ktoré nemala z čoho zistiť.
+ *
+ * Teraz:
+ *  - dostane **reálne pixely** a zmeria ich (`analyzeReferencePixels`),
+ *  - z merania vyplní len tie polia DNA, ktoré sa naozaj dajú zmerať
+ *    (farba, hustota, kontrast, teplota),
+ *  - zvyšok DNA **prevezme z vybraného receptu** a **prizná**, že je prevzatý,
+ *  - keď pixely nemá, vráti `NOT AVAILABLE` s dôvodom. Nič sa nedomýšľa.
+ */
 
-export interface ReferenceAnalysisResult {
-  dna: VisualStyleDNA;
-  extractedAttributes: {
-    dominantColors: string[];
-    typographyStyleFound: string;
-    densityScoreEstimated: number;
-    hasPaperTexture: boolean;
-    hasCollageElements: boolean;
-  };
+import { VisualStyleDNA, STYLE_PRESETS } from "./VisualStyleDNA";
+import {
+  analyzeReferencePixels,
+  buildStyleBoard,
+  type AnalyzeReferenceOptions,
+  type ReferenceAnalysis,
+  type StyleBoardData,
+} from "../core/style/referencePixels";
+
+export interface ReferenceExtractedAttributes {
+  dominantColors: string[];
+  /** Nameraná hustota (0–1) — z hustoty hrán, nie z mena súboru. */
+  densityScoreMeasured: number;
+  /** Priemerný jas 0–255. */
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  edgeDensity: number;
+  accentColor: string | null;
+}
+
+export interface ReferenceStyleAnalysisResult {
+  available: boolean;
+  /** Prečo to nejde (keď `available: false`) — po slovensky, konkrétne. */
+  reasonSk?: string;
+  dna: VisualStyleDNA | null;
+  analysis: ReferenceAnalysis | null;
+  board: StyleBoardData | null;
+  extractedAttributes: ReferenceExtractedAttributes | null;
+  /** Ktoré polia DNA sú prevzaté z receptu a nie namerané (aby sa nepovedalo viac). */
+  inheritedSk: string[];
   explanationSk: string;
 }
 
 export class ReferenceStyleAnalyzer {
   /**
-   * Analyzes reference image visual language deterministically or via heuristic signals
+   * Zmeria referenčný obrázok. **Bez pixelov sa nič nevymýšľa.**
+   *
+   * @param referenceName meno súboru — používa sa len do textov, **nikdy** na rozhodovanie.
+   * @param projectId projekt, ku ktorému sa DNA viaže.
+   * @param pixels RGBA/RGB pixely obrázka (z canvasu v prehliadači, z ffmpeg v runneri).
    */
   static analyzeReferenceStyle(
     referenceName: string,
-    projectId: string
-  ): ReferenceAnalysisResult {
-    // Heuristic analysis of reference design language
-    const nameLower = referenceName.toLowerCase();
-
-    let basePreset = STYLE_PRESETS.OMNISTRIH_EDITORIAL;
-    let extractedColors = ["#F59E0B", "#111827", "#F3F4F6"];
-    let typographyFound = "bold_condensed";
-    let density = 0.65;
-    let paper = true;
-    let collage = true;
-
-    if (nameLower.includes("clean") || nameLower.includes("minimal")) {
-      basePreset = STYLE_PRESETS.CLEAN_PROFESSIONAL;
-      extractedColors = ["#2563EB", "#FFFFFF", "#1F2937"];
-      typographyFound = "clean_sans";
-      density = 0.35;
-      paper = false;
-      collage = false;
-    } else if (nameLower.includes("cinematic") || nameLower.includes("dark")) {
-      basePreset = STYLE_PRESETS.CINEMATIC;
-      extractedColors = ["#D97706", "#0F172A", "#E2E8F0"];
-      typographyFound = "editorial_serif";
-      density = 0.4;
-      paper = false;
-      collage = false;
-    } else if (nameLower.includes("social") || nameLower.includes("fast")) {
-      basePreset = STYLE_PRESETS.SOCIAL_FAST;
-      extractedColors = ["#10B981", "#09090B", "#FAFAFA"];
-      typographyFound = "kinetic_display";
-      density = 0.85;
-      paper = true;
-      collage = true;
+    projectId: string,
+    pixels?: Uint8ClampedArray | Uint8Array | number[],
+    width?: number,
+    height?: number,
+    options: AnalyzeReferenceOptions = {},
+  ): ReferenceStyleAnalysisResult {
+    if (!pixels || !width || !height) {
+      return {
+        available: false,
+        reasonSk:
+          "NOT AVAILABLE — nemám pixely referenčného obrázka. Analýza podľa mena súboru sa už zámerne nerobí " +
+          "(tvrdila by veci, ktoré sa nedajú zmerať). Vyber obrázok znova, prosím.",
+        dna: null,
+        analysis: null,
+        board: null,
+        extractedAttributes: null,
+        inheritedSk: [],
+        explanationSk: "Analýza referencie: NOT AVAILABLE (chýbajú pixely).",
+      };
     }
 
-    const analyzedDNA: VisualStyleDNA = {
+    const outcome = analyzeReferencePixels(pixels, width, height, options);
+    if (!outcome.available) {
+      return {
+        available: false,
+        reasonSk: outcome.reasonSk,
+        dna: null,
+        analysis: null,
+        board: null,
+        extractedAttributes: null,
+        inheritedSk: [],
+        explanationSk: `Analýza referencie: NOT AVAILABLE (${outcome.reasonSk})`,
+      };
+    }
+
+    const analysis = outcome;
+    const board = buildStyleBoard(analysis, { titleSk: `Deska štýlu — ${referenceName}` });
+
+    // Základ pre „prevzaté" polia DNA. Používateľ si recept vyberá v Style Studiu;
+    // tu berieme neutrálny základ, aby DNA nepredstierala namerané hodnoty.
+    const basePreset = STYLE_PRESETS.OMNISTRIH_EDITORIAL;
+
+    const dominantColors = analysis.palette.slice(0, 5).map((c) => c.hex);
+    const accent = analysis.accent?.hex ?? null;
+    // Koľko plochy vysvetľujú namerané farby — to je poctivá „istota" analýzy.
+    const paletteCoverage = Math.min(
+      1,
+      analysis.palette.reduce((sum, c) => sum + c.coverage, 0),
+    );
+
+    const dna: VisualStyleDNA = {
       ...basePreset,
       id: `ref_${Date.now()}_${projectId}`,
-      name: `Style extracted from: ${referenceName}`,
-      description: `Reference visual DNA derived from ${referenceName}`,
-      accentColor: extractedColors[0],
-      visualDensity: density,
+      name: `Referencia: ${referenceName}`,
+      description: `Zmerané z pixelov referenčného obrázka (${analysis.width}×${analysis.height}).`,
       source: "REFERENCE",
-      confidence: 0.92,
-      evidence: `Derived from image analysis of '${referenceName}' (composition, typography, color scheme)`,
+      confidence: Math.round(paletteCoverage * 100) / 100,
+      evidence:
+        `jas ${analysis.brightness}/255, kontrast ${analysis.contrast}, sýtosť ${Math.round(analysis.saturation * 100)} %, ` +
+        `hustota hrán ${analysis.edgeDensity}, tmavé ${Math.round(analysis.darkRatio * 100)} %, ` +
+        `paleta ${dominantColors.join(" · ")}`,
       version: 1,
       projectId,
+
+      // --- NAMERANÉ (má oporu v pixeloch) ---
+      accentColor: accent ?? dominantColors[0],
+      visualDensity: analysis.edgeDensity,
+      colorMood:
+        analysis.saturation <= 0.15
+          ? "monochrome_newspaper"
+          : analysis.darkRatio >= 0.5
+            ? "dark_editorial"
+            : analysis.lightRatio >= 0.5
+              ? "clean_light"
+              : analysis.warmth > 12
+                ? "cinematic_warm"
+                : "vibrant_pop",
+      backgroundStyle:
+        analysis.darkRatio >= 0.4 ? "dark_neutral" : analysis.lightRatio >= 0.4 ? "light_clean" : "gradient_editorial",
+
+      // --- PREVZATÉ Z RECEPTU (nemerateľné z obrázka) ---
+      pacingVisual: basePreset.pacingVisual,
+      typographyStyle: basePreset.typographyStyle,
+      typographyWeight: basePreset.typographyWeight,
+      typographyScale: basePreset.typographyScale,
+      captionVisualStyle: basePreset.captionVisualStyle,
+      textureStyle: basePreset.textureStyle,
+      collageIntensity: basePreset.collageIntensity,
     };
 
+    const inheritedSk = [
+      "typografia (font, hrúbka, veľkosť) — z obrázka sa nedá určiť spoľahlivo",
+      "tempo a rytmus (pacingVisual) — na to treba video, nie obrázok",
+      "textúra a intenzita koláže — prevzaté z receptu, nie namerané",
+    ];
+
     return {
-      dna: analyzedDNA,
+      available: true,
+      dna,
+      analysis,
+      board,
       extractedAttributes: {
-        dominantColors: extractedColors,
-        typographyStyleFound: typographyFound,
-        densityScoreEstimated: density,
-        hasPaperTexture: paper,
-        hasCollageElements: collage,
+        dominantColors,
+        densityScoreMeasured: analysis.edgeDensity,
+        brightness: analysis.brightness,
+        contrast: analysis.contrast,
+        saturation: analysis.saturation,
+        edgeDensity: analysis.edgeDensity,
+        accentColor: accent,
       },
-      explanationSk: `Extrahovaný vizuálny štýl z referenčného obrázku '${referenceName}': dominantná farba ${extractedColors[0]}, typografia ${typographyFound}, hustota ${density}.`,
+      inheritedSk,
+      explanationSk:
+        `Zmerané z pixelov „${referenceName}": ${analysis.moodSk} ` +
+        `Paleta: ${dominantColors.join(" · ")}. Hustota hrán ${analysis.edgeDensity} (0 = pokojná, 1 = plná). ` +
+        `Namerané farby vysvetľujú ${Math.round(paletteCoverage * 100)} % plochy. ` +
+        `Prebraté (nemerateľné z obrázka): ${inheritedSk.length} vlastností — viď zoznam.`,
     };
   }
 }

@@ -1,0 +1,52 @@
+{
+  "source": "/home/user/referencie/ref-DXtdqsbAtEG.mp4",
+  "at": 40,
+  "analysedFrame": "480x854",
+  "measured": {
+    "palette": [
+      {
+        "hex": "#110D0B",
+        "coverage": 0.658
+      },
+      {
+        "hex": "#503932",
+        "coverage": 0.176
+      },
+      {
+        "hex": "#7D5F55",
+        "coverage": 0.053
+      }
+    ],
+    "accent": "#7D5F55",
+    "brightness": 36.66,
+    "contrast": 38.97,
+    "saturation": 0.422,
+    "warmth": 15.19,
+    "darkRatio": 0.785,
+    "lightRatio": 0.004,
+    "edgeDensity": 0.033,
+    "bands": [
+      {
+        "labelSk": "hore",
+        "brightness": 38.42
+      },
+      {
+        "labelSk": "v strede",
+        "brightness": 48.09
+      },
+      {
+        "labelSk": "dole",
+        "brightness": 23.42
+      }
+    ]
+  },
+  "moodSk": "tmavý editorial (79 % pixelov je tmavých), teplý podtón, mierne sýte farby, stredný kontrast.",
+  "notDetectableSk": [
+    "Meno ani veľkosť fontu sa z obrázka nedajú určiť spoľahlivo — preto ich netvrdím (v referenciách som ich určil len vizuálne).",
+    "Pohyb, easing a rytmus strihu sa z jedného obrázka zmerať nedajú — na to treba video.",
+    "Zvuk a hudbu z obrázka nezískam.",
+    "Sémantiku (čo je na obrázku ponuka a čo dôkaz) neviem — viem farby, jas, kontrast a hustotu hrán."
+  ],
+  "methodSk": "Reálne pixely (409920 vzoriek, krok 1): kvantovaný histogram 32×32×32, luma Rec. 709, kontrast = smerodajná odchýlka, hustota hrán = gradient lumy, pásma po tretinách výšky.",
+  "note": "Merané z reálnych pixelov (ffmpeg rawvideo → tá istá funkcia ako v prehliadači). Snímka z videa nie je dizajnérska predloha. Deska je dáta + reálne materiály, nie generovaný obrázok."
+}

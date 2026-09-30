@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { VisualStyleDNA, STYLE_PRESETS, StylePresetId } from "../visual/VisualStyleDNA";
 import { VisualStyleManager } from "../visual/VisualStyleManager";
 import { ReferenceStyleAnalyzer } from "../visual/ReferenceStyleAnalyzer";
+import type { StyleBoardData } from "../core/style/referencePixels";
 import { AIStoryboardPanel } from "./AIStoryboardPanel";
 import { VisualReviewCenter } from "./VisualReviewCenter";
 import { Sparkles, Sliders, Layers, Type, Film, Image as ImageIcon, Video, Move, FileText, CheckCircle, Upload } from "lucide-react";
@@ -25,6 +26,8 @@ export const AIVisualDirectorCenter: React.FC<AIVisualDirectorCenterProps> = ({
 
   const [refFileName, setRefFileName] = useState("");
   const [refResult, setRefResult] = useState<string | null>(null);
+  const [refBoard, setRefBoard] = useState<StyleBoardData | null>(null);
+  const [refError, setRefError] = useState<string | null>(null);
 
   useEffect(() => {
     const dna = VisualStyleManager.getActiveStyle(projectId);
@@ -44,15 +47,58 @@ export const AIVisualDirectorCenter: React.FC<AIVisualDirectorCenterProps> = ({
     if (onStyleChanged) onStyleChanged(updated);
   };
 
-  const handleRefUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setRefFileName(file.name);
-      const res = ReferenceStyleAnalyzer.analyzeReferenceStyle(file.name, projectId);
+  /**
+   * Referenčný obrázok → **reálne pixely** → meranie.
+   *
+   * Predtým sa štýl hádal podľa mena súboru. Teraz sa obrázok načíta do canvasu,
+   * vyčítajú sa z neho pixely a tie idú do `analyzeReferencePixels` — rovnakej
+   * funkcie, akú používa aj verifikačný runner (aby sa dve cesty nemohli rozísť).
+   *
+   * Poznámka k overeniu: toto je cesta v prehliadači, ktorú v tomto prostredí
+   * NEMÔŽEM overiť (nie je tu prehliadač) — overená je tá istá funkcia cez runner.
+   */
+  const handleRefUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRefFileName(file.name);
+    setRefResult(null);
+    setRefBoard(null);
+    setRefError(null);
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setRefError("NOT AVAILABLE — nepodarilo sa pripraviť plátno na čítanie pixelov.");
+        return;
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+
+      const res = ReferenceStyleAnalyzer.analyzeReferenceStyle(
+        file.name,
+        projectId,
+        data,
+        bitmap.width,
+        bitmap.height,
+      );
+
+      if (!res.available || !res.dna) {
+        setRefError(res.reasonSk ?? "NOT AVAILABLE — analýzu nebolo možné spraviť.");
+        setRefResult(res.explanationSk);
+        return;
+      }
       setStyleDNA(res.dna);
       VisualStyleManager.saveStyle(projectId, res.dna);
       setRefResult(res.explanationSk);
+      setRefBoard(res.board);
       if (onStyleChanged) onStyleChanged(res.dna);
+    } catch (err) {
+      setRefError(
+        `NOT AVAILABLE — obrázok sa nepodarilo prečítať (${(err as Error).message}). Skús iný formát (PNG/JPG).`,
+      );
     }
   };
 
@@ -273,18 +319,68 @@ export const AIVisualDirectorCenter: React.FC<AIVisualDirectorCenterProps> = ({
         {/* Tab 9: Reference Style */}
         {activeTab === "reference" && (
           <div className="space-y-4 text-xs">
-            <h4 className="font-bold text-sm text-neutral-100">Reference Image → Visual Style DNA</h4>
+            <h4 className="font-bold text-sm text-neutral-100">Referenčný obrázok → meraný štýl</h4>
             <p className="text-neutral-400">
-              Nahrajte referenčný obrázok pre extrakciu typografie, farebnosti, hustoty a kompozície.
+              Obrázok sa <strong>naozaj zmeria z pixelov</strong> (paleta, jas, kontrast, sýtosť, hustota hrán).
+              Typografiu, tempo a textúru z obrázka určiť neviem — tie sa prevezmú z receptu a appka to povie.
+              Žiadne hádanie podľa mena súboru.
             </p>
             <label className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-amber-400 font-semibold rounded-lg cursor-pointer transition border border-neutral-700">
               <Upload className="w-4 h-4" /> Nahrať referenčný obrázok
               <input type="file" accept="image/*" onChange={handleRefUpload} className="hidden" />
             </label>
             {refFileName && <p className="text-neutral-300">Vybraný súbor: <strong>{refFileName}</strong></p>}
-            {refResult && (
+            {refError && (
+              <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl text-amber-300">{refError}</div>
+            )}
+            {refResult && !refError && (
               <div className="p-4 bg-emerald-950/20 border border-emerald-800/40 rounded-xl text-emerald-300">
                 {refResult}
+              </div>
+            )}
+
+            {/* DESKA ŠTYLU — z nameraných dát, žiadne generované obrázky */}
+            {refBoard && (
+              <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl space-y-3">
+                <h5 className="font-bold text-neutral-100">{refBoard.titleSk}</h5>
+
+                <div className="flex flex-wrap gap-2">
+                  {refBoard.swatches.map((sw) => (
+                    <div key={sw.hex} className="w-32 space-y-1">
+                      <div
+                        className="h-14 rounded-lg border border-neutral-700"
+                        style={{ backgroundColor: sw.hex }}
+                        title={`${sw.hex} — ${sw.roleSk}`}
+                      />
+                      <p className="font-mono text-[11px] text-neutral-200">{sw.hex}</p>
+                      <p className="text-[10px] text-neutral-400">
+                        {sw.coveragePercent} % plochy · sýtosť {sw.saturationPercent} %
+                      </p>
+                      <p className="text-[10px] text-neutral-500">{sw.roleSk}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <table className="w-full text-[11px] border border-neutral-800 rounded-lg overflow-hidden">
+                  <tbody>
+                    {refBoard.rows.map((r) => (
+                      <tr key={r.labelSk} className="border-b border-neutral-800 last:border-0">
+                        <td className="p-2 text-neutral-400">{r.labelSk}</td>
+                        <td className="p-2 font-mono text-neutral-100">{r.valueSk}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="space-y-1">
+                  {refBoard.notesSk.map((n, i) => (
+                    <p key={i} className="text-neutral-400">
+                      {i === 0 ? <strong className="text-neutral-200">{n}</strong> : `• ${n}`}
+                    </p>
+                  ))}
+                </div>
+
+                <p className="text-[10px] text-amber-300/80 border-t border-neutral-800 pt-2">{refBoard.providerSk}</p>
               </div>
             )}
           </div>
