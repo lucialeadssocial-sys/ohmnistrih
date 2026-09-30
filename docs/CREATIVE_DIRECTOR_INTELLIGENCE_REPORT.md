@@ -422,6 +422,77 @@ Overené dnes (licencie z oficiálnych zdrojov, nie z pamäti):
 
 ---
 
+## DOPLNENIE (1. 10. 2026) — vrstvy, ktoré prvý audit prehliadol
+
+> Prvý priechod (kroky 1–10) skontroloval `src/core/**` a UI. **Neskontroloval `src/ai/**`.**
+> Keď som sa k nemu vrátil, našiel som tri veci, ktoré menia plán — a jedna z nich je **vážnejšia
+> než všetko, čo našiel prvý audit**.
+
+### D.1 Existuje lokálna AI vrstva (a je registrovaná)
+
+| Súbor | Čo robí | Model | Stav |
+|---|---|---|---|
+| `src/ai/index.ts` | `LocalAIManager` — jeden manažér, päť providerov, `unloadAllModels()` | — | **IMPLEMENTED** |
+| `src/ai/providers/LocalSpeechProvider.ts` (203 r.) | prepis reči lokálne (transformers.js) | `Xenova/whisper-tiny` | **WIRED** — `src/ai/subtitles/captionEngine.ts` ho naozaj volá |
+| `src/ai/providers/LocalEmbeddingProvider.ts` (111 r.) | embeddingy viet | `Xenova/all-MiniLM-L6-v2` | **IMPLEMENTED BUT NOT WIRED** (nikto ho nevolá) |
+| `src/ai/providers/LocalVADProvider.ts` (195 r.) | detekcia reči/ticha | — | IMPLEMENTED, mimo `aiTest.ts` nepoužitý |
+| `src/ai/providers/LocalVisionProvider.ts` (171 r.) | obrazová analýza | — | IMPLEMENTED, nepoužitý |
+| `src/ai/providers/LocalTTSProvider.ts` (161 r.) | syntéza hlasu | — | IMPLEMENTED, nepoužitý |
+| `src/ai/cache/aiCache.ts` | cache modelov/výsledkov | — | IMPLEMENTED |
+
+**Dôsledok pre report:** časť M (local-first) sa musí prepísať — **local-first vrstva v OmniStrihu už existuje**,
+nie je potrebné ju navrhovať. Chýba len napojenie: embeddingy (duplicita/témy) a VAD do analýzy.
+Poznámka k licencii: `Xenova/all-MiniLM-L6-v2` je odvodený od modelu, ktorého karta uvádza trénovacie
+dáta s otvorenou otázkou komerčného použitia (viď časť O) — pri nasadení na komerčný obsah to treba overiť.
+
+### D.2 Existuje tretia rozhodovacia cesta: `directorTools` (a je napojená na UI)
+
+`src/ai/director/directorTools.ts` (682 r.) registruje **nástroje Directora** s permissions a undo popisom:
+`getProjectInfo`, `getMediaAssets`, `getTranscript`, `getScenes`, `getSilences`, `getBeats`, `getThumbnails`,
+`searchMedia`, `getTimeline` + mutačné (`splitClip`, `trimClip`, `moveClip`, `deleteClip`, `insertClip`,
+`replaceClip`, `addCaption`, `editCaption`, `addText`…). Používa ich `src/components/DirectorStudio.tsx`
+(**je vykreslený v App**).
+
+**Dôsledok:** k dvom plánovacím cestám z prvého auditu pribúda tretia. Pri zjednocovaní (krok 1 v časti Q)
+sa musí rozhodnúť, ktorá z troch ostane — inak bude mať OmniStrih tri „hlavy“, nie jednu.
+
+### D.3 `MediaIntelligenceEngine` — analýza, ktorá je z väčšej časti VYMYSLENÁ
+
+`src/core/media/mediaIntelligenceIndex.ts` (626 r.) je DAG analýza po jednotlivých médiách
+(cache v IndexedDB, invalidácia podľa typu zmeny). Používajú ju `DirectorStudio.tsx`,
+`MediaIntelligenceInspector.tsx` a `directorTools` (cez `MediaAnalysisIndex`).
+
+| Uzol (node) | Zdroj dát | Pravda |
+|---|---|---|
+| `metadata` | `mediaEngineV1.getMetadata()` | **REÁLNE** |
+| `waveform_peaks` | `mediaEngineV1.getWaveform()` | **REÁLNE** |
+| `beat_positions` | onset detekcia nad reálnymi peakmi | **ODVODENÉ z merania** (poctivé) |
+| `silence_speech_vad` | prah (`peaks[i] < 0.15`) nad reálnymi peakmi | **ODVODENÉ z merania** (poctivé, ale je to prah, nie VAD model — v repozitári existuje `LocalVADProvider`, ktorý sa nepoužíva) |
+| `transcript` | **pevný zoznam slov** `['Vytvárame','inteligentný','index','média','bez','cloudu','v','OmniStrihu']` rovnomerne rozložený na dĺžku | **VYMYSLENÉ** |
+| `scene_boundaries` | pevné hranice: 25 % a 65 % dĺžky, skóre 0,88 / 0,94 | **VYMYSLENÉ** |
+| `representative_frames` | `brightness = 40 + (i * 45) % 185`, `blurScore = 30 + (i * 25) % 90` (v komentári priznané: „Heuristic to simulate…“), `colorVector` pevný | **VYMYSLENÉ** |
+| `duplicate_shots`, `isBestShot`, `isBRollCandidate`, `isHookCandidate` | počítané z vymyslených snímok | **VYMYSLENÉ** (aj keď výpočet je správny) |
+
+**Prečo je to najvážnejšie zistenie:** `directorTools` dáva Directorovi `getScenes`, `getSilences`,
+`getThumbnails` a `searchMedia` — takže Director „vidí“ vymyslené scény, vymyslenú kvalitu obrazu
+a vymyslené hook kandidáty. Každé rozhodnutie postavené na tomto indexe je nepravda, aj keby bol
+zvyšok logiky dokonalý. **Oprava tohto indexu je podmienkou pre akúkoľvek prácu s materiálom.**
+
+### D.4 Aktualizované poradie prác (nahrádza časť Q)
+
+| # | Krok | Prečo |
+|---|---|---|
+| 0 | ~~Honesty fix (QC, retencia, A/B, Content Pack, Director)~~ | **HOTOVÉ (#54)** |
+| **0b** | **Poctivý `MediaIntelligenceIndex`** — vymyslený transcript/scény/snímky nahradiť reálnymi alebo `NOT_AVAILABLE` | **podmienka pre všetko ostatné** — na tomto indexe stoja Director nástroje |
+| 0c | Zjednotiť tri rozhodovacie cesty (`generateDirectorPlan`, `/api/director/plan`, `directorTools`) | zadanie: jeden Director, nie tri |
+| 1 | Prepojiť existujúcu lokálnu vrstvu (`LocalEmbeddingProvider`, `LocalVADProvider`) do analýzy | duplicita a témy bez providera |
+| 2 | Content Map naprieč médiami (`assetId`) + WHY NOT | jadro editorial reasoning |
+| 3 | UI „Použité / Nepoužité / Prečo“ | používateľ musí vidieť rozhodnutia |
+| 4 | Reálne meranie zvuku (ffmpeg: `volumedetect`, `silencedetect`, `ebur128`) + do QC | QC-06/07 dnes nemajú meranie |
+| 5 | A/B varianty z reálnych zmien (iný štýl/cieľ) | dnes poctivo vypnuté |
+
+---
+
 ## ZÁVER (jedna veta na rozhodnutie)
 
 **OmniStrih už má polovicu „Creative Directora“ postavenú — a druhú polovicu má ako maketu, ktorú treba buď dorobiť meraním, alebo poctivo odstrániť.** Najväčší prínos nie je nová AI, ale **editorial reasoning nad existujúcimi dátami**: Content Map + Story Map + výber z viacerých médií + WHY NOT, s princípmi, ktoré sa opierajú o 23 nameraných videí — a bez jedinej vymyslenej vety.
