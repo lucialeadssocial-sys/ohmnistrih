@@ -34,6 +34,7 @@ import {
   type SmartCutProgress,
   type SmartCutResult,
 } from "../core/export/smartCutRenderer";
+import { BurnCaptionsPanel } from "./BurnCaptionsPanel";
 
 /** Platformy pre krátky klip — prevzaté z knižnice trendov, aby limity sedeli. */
 const TARGETS = [
@@ -484,6 +485,17 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
               )}
             </div>
           )}
+
+          {/* VYPÁLENIE TITULKOV DO OBRAZU (krok B) — ten istý klip, ale s titulkami
+              zapečenými v obraze. Beží na serveri (ffmpeg), lebo prekódovanie obrazu
+              prehliadač nevie. */}
+          <BurnCaptionsPanel
+            language={language}
+            speechSegments={speechSegments}
+            keepRanges={edl.segments.map((seg) => ({ start: seg.sourceStart, end: seg.sourceEnd }))}
+            durationSec={edl.sourceDurationSec}
+            getSourceBlob={getSourceBlob}
+          />
 
           {/* Časová os výsledku */}
           <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800">

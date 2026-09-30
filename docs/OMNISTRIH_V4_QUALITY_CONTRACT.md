@@ -20,8 +20,14 @@ a trendy. A popritom sa chcem učiť."*
 | Aplikovanie plánu = 1 klik, nie ručné prepisovanie | počet klikov od plánu k strihu | ✅ „Použiť vybrané“ → timeline |
 | Nikdy nečakám na niečo, čo som si nepýtal | analýza neštartuje pri otvorení appky | ✅ lazy load + explicitné tlačidlo |
 
-**Kde ešte strácam čas:** plán sa zatiaľ kotví na odhad z textu (nemáme časovanie slov).
-→ F2: skutočné word-level časovanie z prepisu = strihy na presnú sekundu.
+**Kde už nestrácam čas:** plán aj strih sa kotvia na **skutočné časovanie slov**
+z automatických tituliek (krok A, 29. 9. 2026) — strihy sedia na hranice slov
+a do páuz, takže divák strih nepočuje. Presnosť je vidieť v paneli („Časy sú presné
+na slová"), aj s počtom a veľkosťou posunov.
+
+**Kde ešte strácam čas:** klip treba po strihu ešte ručne otitulkovať v inej appke.
+→ **Krok B (30. 9. 2026): titulky zapečené do obrazu sú hotové** — strih + vypálenie
+v jednom prekódovaní, priamo z appky.
 
 ## 2. Profesionálny obsah pre sociálne siete, reklamu aj YouTube
 
@@ -36,6 +42,25 @@ a trendy. A popritom sa chcem učiť."*
 
 **Profesionálne znamená aj:** žiadny efekt len preto, aby tam bol. Preto má plán režim
 **PORTFÓLIO** (menej, ale kvalitnejších zásahov) a každý zásah musí obhájiť svoj dôvod.
+
+### 2.1 Titulky zapečené do obrazu (krok B) — hotové
+
+Klip pre TikTok/Reels/Shorts sa pozerá **bez zvuku** — bez titulkov v obraze je aj
+najlepší strih stratený. Preto appka vie klip vyrenderovať **s titulkami zapečenými
+do obrazu** (RAW → READY → krok 3 → panel „Titulky zapečené do obrazu"):
+
+- **strih a vypálenie v jednom prechode ffmpeg** — jedno prekódovanie, nie dve,
+- štýly: `VIRAL_BOLD` (Submagic/CapCut štýl, aktuálne slovo žlté), `CLEAN`, `MINIMAL`,
+- zvýrazňovanie slov funguje len s word-level časmi; keď nie sú, **vypne sa a povie to**,
+- pri strihu sa titulky **prepočítajú na čas klipu** (slová z vystrihnutých častí
+  vypadnú, preseknuté sa orežú — a appka to napíše),
+- server si **overí rozmery a fps zo súboru** (nepotichu nemení rám videa ani
+  nevyhadzuje snímky),
+- poctivo priznané: vypálené titulky sa nedajú vypnúť, táto cesta prekóduje,
+  preto je pred spustením vedomé potvrdenie a skutočné percentá z ffmpeg,
+- **AI stále nerenderuje** — render je ffmpeg na serveri, spúšťaný používateľom.
+
+Dokumentácia a overené čísla: `docs/BURNED_CAPTIONS.md`.
 
 ## 3. Kreatívne — ale nie náhodne
 
@@ -53,6 +78,8 @@ a trendy. A popritom sa chcem učiť."*
 | AI nič nerobí potichu — vždy povie, čo a prečo | ✅ `reason` + report „Zapísané do strihu“ + „Prečo?“ |
 | Nič sa nezmení, kým to neschválim | ✅ `status: proposed` → akcia Použiť/Zrušiť |
 | Keď niečo zlyhá, viem prečo | ✅ `fallbackReason`, `rawError`, čestné `basis` |
+| Vypálené titulky = jediné prekódovanie, a to výslovne na požiadanie | ✅ žiadne tiché prekódovanie; čistý strih kopíruje packety |
+| Pri strihu sa nič „potichu" nemení (fps, rám, čas titulkov) | ✅ fps zo sondy, rám bez cropu, titulky prepočítané na čas klipu |
 | Bez plateného API na export | ✅ export zostáva lokálny |
 | Žiadne ťažké modely pri otvorení appky | ✅ Whisper/analýza len na vyžiadanie |
 
