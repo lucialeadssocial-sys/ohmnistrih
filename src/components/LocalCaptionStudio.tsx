@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { captionEngine, CaptionSegment, WordItem, DEFAULT_CAPTION_STYLE, CaptionStyleOptions } from '../ai/subtitles/captionEngine';
 import { textBasedEditor, EditPlan } from '../ai/subtitles/textBasedEditor';
 import { coreEngine, useCoreProject, AddClipCommand, ClipModel, createCanonicalClip } from '../core';
+import { wordsToRelative } from '../core/transcript/wordTiming';
 import { localAIManager, ModelProgress } from '../ai';
 import { Subtitles, Mic, Sparkles, Scissors, Check, X, RefreshCw, Layers, Edit3, Trash2, Split, Merge, Type, AlignCenter, Sliders, Play } from 'lucide-react';
 
@@ -134,7 +135,13 @@ export const LocalCaptionStudio: React.FC<{ isOpen: boolean; onClose: () => void
           strokeColor: style.strokeColor,
           strokeWidth: style.strokeWidth,
           textAlign: style.alignment,
-          fontWeight: 'bold'
+          fontWeight: 'bold',
+          // Časovanie slov z prepisu (relatívne k začiatku klipu) — vďaka tomu
+          // náhľad zvýrazní hovorené slovo a vypálenie titulkov zvýrazňuje po slovách.
+          // Keď segment slová nemá, nič sa nedopĺňa (žiadne vymyslené časovanie).
+          ...(Array.isArray(seg.words) && seg.words.length > 0
+            ? { words: wordsToRelative(seg.words, seg.start) }
+            : {})
         },
         keyframes: []
       });

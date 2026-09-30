@@ -16,6 +16,7 @@
  *  - Bezpečné okraje: titulky nesmú skončiť pod rozhraním TikToku/Reels.
  */
 
+import { wordsShareToken } from "../transcript/wordTiming";
 import type { SpeechSegmentLike, WordTimingLike } from "../transcript/wordTiming";
 
 // ---------------------------------------------------------------------------
@@ -667,16 +668,13 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
         const end = Math.min(nextStart ?? Math.max(w.end, chunk[chunk.length - 1].end), segEnd);
         if (end <= start) continue;
 
-        const target = w.word.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+        // Porovnanie tokenu je jedna funkcia (transcript/wordTiming) — aby
+        // vypálenie titulkov aj náhľad zvýrazňovali to isté slovo.
         const rendered = safeLines
           .map((line, li) =>
             line
               .map((escapedWord, wi) => {
-                const bare = escapedWord.replace(/\\/g, "").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
-                const isActive =
-                  bare.length > 0 &&
-                  target.length > 0 &&
-                  (bare === target || target.startsWith(bare) || bare.startsWith(target));
+                const isActive = wordsShareToken(escapedWord, w.word);
                 const strong = mode === "keywords" && Boolean(strongFlags[li]?.[wi]);
                 if (strong) keywordEmphasis = true;
                 return accentWord(escapedWord, { active: isActive, strong });

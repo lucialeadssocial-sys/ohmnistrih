@@ -36,11 +36,27 @@ export interface LearningExplanationModel {
   what: string; why: string; when: string; how: string; category: string;
 }
 
+/**
+ * Časovanie jedného slova v titulku — **relatívne k začiatku klipu** (klip sa dá
+ * presúvať po osi, takže absolútny čas by po presune klamal). Vzniká z reálneho
+ * prepisu; keď chýba, nič sa nedomýšľa a zvýrazňovanie sa vypne.
+ */
+export interface TextWordTiming {
+  word: string;
+  start: number;
+  end: number;
+}
+
 export interface TextConfig {
   content: string; fontFamily: string; fontSize: number; color: string;
   backgroundColor?: string; strokeColor?: string; strokeWidth?: number;
   textAlign: 'left' | 'center' | 'right'; fontWeight?: 'normal' | 'bold' | '800';
   lineHeight?: number;
+  /**
+   * Časovanie slov z prepisu (relatívne k začiatku klipu). Keď je prítomné,
+   * náhľad zvýrazní hovorené slovo a vypálenie titulkov zvýrazňuje po slovách.
+   */
+  words?: TextWordTiming[];
 }
 
 export interface MaskConfig {

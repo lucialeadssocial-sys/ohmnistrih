@@ -13,6 +13,7 @@
  */
 
 import { ProjectModel, ClipModel } from "../types/project";
+import { clampWordsToWindow, wordsToAbsolute } from "../transcript/wordTiming";
 import type { CaptionStyleId } from "./subtitleRender";
 
 export interface CanonicalExportUpload {
@@ -96,6 +97,10 @@ export interface CanonicalBurnRequest {
 
 export interface CanonicalExportPlan {
   request: CanonicalBurnRequest;
+  /** Koľko titulkov má reálne časovanie slov (0 = zvýrazňovanie sa vynechá). */
+  captionsWithWords: number;
+  /** Koľko titulkov je bez časovania slov. */
+  captionsWithoutWords: number;
   /** Čo presne ide do videa (pre človeka). */
   notesSk: string[];
   /** Čo canonical os má, ale táto renderovacia linka to zatiaľ nevykresľuje. */
@@ -316,13 +321,33 @@ export function buildCanonicalExportPlan(
   const keepRanges = canonicalKeepRanges(project);
   const styleId = captionStyleForCanonicalClips(captionClips);
 
+  // Časovanie slov: canonical klip ho má **relatívne k začiatku klipu**, server páli
+  // titulky v **absolútnych** časoch — tu sa to prevedie a oreže na okno klipu.
+  // Keď klip slová nemá, do zadania sa nič nedopĺňa (žiadne vymyslené časovanie).
+  let captionsWithWords = 0;
   const segments = captionClips
     .map((clip) => {
       const text = (clip.textConfig?.content ?? "").trim();
+      const clipStart = clip.start;
+      const clipEnd = clip.start + clip.duration;
+      const relative = clampWordsToWindow(
+        Array.isArray(clip.textConfig?.words) ? clip.textConfig.words : [],
+        0,
+        Math.max(0, clipEnd - clipStart),
+      );
+      const absoluteWords =
+        relative.length > 0
+          ? wordsToAbsolute(relative, clipStart)
+              // Bezpečnosť pri presahu: slová musia sedieť v okne klipu na osi.
+              .map((w) => ({ ...w, start: Math.max(clipStart, w.start), end: Math.min(clipEnd, w.end) }))
+              .filter((w) => w.end > w.start)
+          : [];
+      if (absoluteWords.length > 0) captionsWithWords++;
       return {
-        start: round3(clip.start),
-        end: round3(clip.start + clip.duration),
+        start: round3(clipStart),
+        end: round3(clipEnd),
         text,
+        ...(absoluteWords.length > 0 ? { words: absoluteWords } : {}),
       };
     })
     .filter((s) => s.text.length > 0 && s.end > s.start);
@@ -339,6 +364,19 @@ export function buildCanonicalExportPlan(
     notesSk.push(
       `${segments.length} titulkov pôjde do videa priamo z canonical časovej osi (štýl ${styleId} podľa canonical presetov).`,
     );
+    const captionsWithoutWords = segments.length - captionsWithWords;
+    if (captionsWithWords > 0) {
+      notesSk.push(
+        `${captionsWithWords} z ${segments.length} titulkov majú časovanie slov z prepisu — zvýrazňovanie hovoreného slova ide do videa.` +
+          (captionsWithoutWords > 0
+            ? ` ${captionsWithoutWords} bez časovania (text sa zobrazí celý naraz).`
+            : ""),
+      );
+    } else {
+      notesSk.push(
+        `Ani jeden z ${segments.length} titulkov nemá časovanie slov — zvýrazňovanie hovoreného slova sa vynechá (nič sa nedomýšľa).`,
+      );
+    }
     // Poctivosť: canonical vrstva má 5 predvolieb titulkov, kým appka pozná 9 štýlov.
     // Cesta recept → canonical → render je preto **stratová** (napr. MINIMAL aj PODCAST
     // idú do predvoľby „minimal" a späť sa vráti PODCAST). Nech to vie aj používateľ,
@@ -591,6 +629,8 @@ export function buildCanonicalExportPlan(
 
   return {
     request,
+    captionsWithWords,
+    captionsWithoutWords: segments.length - captionsWithWords,
     notesSk,
     unsupportedSk,
     parity,
