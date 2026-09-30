@@ -354,7 +354,7 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 
   if (segmentsWithoutWords > 0) {
     notesSk.push(
-      `Pri ${segmentsWithoutWords} titulkoch nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).`,
+      `Pri ${pluralSk(segmentsWithoutWords, "titulku", "titulkoch", "titulkoch")} nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).`,
     );
   }
   if (eventCount === 0) {
@@ -371,6 +371,17 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 // ---------------------------------------------------------------------------
 // Strih → titulky: čas zdroja sa musí prepočítať na čas klipu
 // ---------------------------------------------------------------------------
+
+/**
+ * Slovenské tvary podľa počtu: 1 → „1 slovo", 2–4 → „2 slová", 5+ → „5 slov".
+ * Texty v appke číta človek — „1 titulkov ležalo" je vidieť, aj keď to nie je
+ * funkčná chyba. Preto to riešime raz a tu.
+ */
+export function pluralSk(count: number, one: string, few: string, many: string): string {
+  const n = Math.abs(Math.round(Number(count) || 0));
+  const word = n === 1 ? one : n >= 2 && n <= 4 ? few : many;
+  return `${n} ${word}`;
+}
 
 export interface KeepRange {
   start: number;
@@ -549,20 +560,34 @@ export function remapSegmentsToOutput(
 
   const notesSk: string[] = [];
   if (droppedWords > 0) {
+    const words = pluralSk(droppedWords, "slovo", "slová", "slov");
     notesSk.push(
-      `${droppedWords} slov padlo do vystrihnutých častí — zmizli spolu s nimi (titulky nič nedopovedajú, čo v klipe nie je).`,
+      `${words} ${droppedWords === 1 ? "padlo" : "padli"} do vystrihnutých častí — zmizli spolu s nimi (titulky nič nedopovedajú, čo v klipe nie je).`,
     );
   }
   if (clippedWords > 0) {
+    const words = pluralSk(clippedWords, "slovo", "slová", "slov");
     notesSk.push(
-      `${clippedWords} slov strih preskolil — orežú sa na hranicu strihu, aby nelietali cez nový začiatok klipu.`,
+      `${words} strih preskolil — ${clippedWords === 1 ? "oreže sa" : "orežú sa"} na hranicu strihu, aby nelietali cez nový začiatok klipu.`,
     );
   }
   if (splitSegments > 0) {
-    notesSk.push(`${splitSegments} titulkov strih rozdelil na dve časti — rozdelil som ich aj v titulkoch.`);
+    if (splitSegments === 1) {
+      notesSk.push("Jeden titulok ležal na oboch stranách strihu — rozdelil som ho aj v titulkoch.");
+    } else {
+      notesSk.push(
+        `${pluralSk(splitSegments, "titulky", "titulky", "titulkov")} strih rozdelil na dve časti — rozdelil som ich aj v titulkoch.`,
+      );
+    }
   }
   if (droppedSegments > 0) {
-    notesSk.push(`${droppedSegments} titulkov ležalo celé vo vystrihnutých častiach — vo výsledku nie sú.`);
+    if (droppedSegments === 1) {
+      notesSk.push("Jeden titulok ležal celý vo vystrihnutej časti — vo výsledku nie je.");
+    } else {
+      notesSk.push(
+        `${pluralSk(droppedSegments, "titulok", "titulky", "titulkov")} ležalo celé vo vystrihnutých častiach — vo výsledku nie sú.`,
+      );
+    }
   }
 
   return {

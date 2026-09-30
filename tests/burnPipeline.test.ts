@@ -18,6 +18,7 @@ import {
   buildBurnFfmpegArgs,
   getCaptionStyle,
   normalizeKeepRanges,
+  pluralSk,
   remapSegmentsToOutput,
   type KeepRange,
 } from "../src/core/export/subtitleRender";
@@ -134,7 +135,7 @@ describe("strih → titulky: čas zdroja sa prepočíta na čas klipu", () => {
     expect(third.start).toBeCloseTo(1.8, 3);
     expect(third.end).toBeCloseTo(2.9, 3);
     expect(r.droppedSegments).toBe(1);
-    expect(r.notesSk.some((n) => n.includes("vystrihnutých častiach"))).toBe(true);
+    expect(r.notesSk).toContain("Jeden titulok ležal celý vo vystrihnutej časti — vo výsledku nie je.");
   });
 
   test("slová preseknuté strihom sa orežú a appka to napočíta", () => {
@@ -173,6 +174,35 @@ describe("strih → titulky: čas zdroja sa prepočíta na čas klipu", () => {
       { start: 1, end: 3 },
       { start: 5, end: 6 },
     ]);
+  });
+});
+
+describe("texty pre človeka (slovenské tvary)", () => {
+  test("pluralSk drží tvary 1 / 2–4 / 5+", () => {
+    expect(pluralSk(1, "slovo", "slová", "slov")).toBe("1 slovo");
+    expect(pluralSk(3, "slovo", "slová", "slov")).toBe("3 slová");
+    expect(pluralSk(7, "slovo", "slová", "slov")).toBe("7 slov");
+    expect(pluralSk(0, "titulok", "titulky", "titulkov")).toBe("0 titulkov");
+  });
+
+  test("jeden vystrihnutý titulok je napísaný v jednotnom čísle", () => {
+    const r = remapSegmentsToOutput(SPEECH, [
+      { start: 0, end: 1.6 },
+      { start: 3.0, end: 4.5 },
+    ]);
+    expect(r.droppedSegments).toBe(1);
+    expect(r.notesSk).toContain("Jeden titulok ležal celý vo vystrihnutej časti — vo výsledku nie je.");
+  });
+
+  test("viac vystrihnutých titulkov je v množnom čísle", () => {
+    const many: SpeechSegmentLike[] = [
+      { start: 8.0, end: 8.5, text: "prvý" },
+      { start: 8.6, end: 9.0, text: "druhý" },
+      { start: 9.1, end: 9.5, text: "tretí" },
+    ];
+    const r = remapSegmentsToOutput(many, [{ start: 0, end: 1 }]);
+    expect(r.droppedSegments).toBe(3);
+    expect(r.notesSk.some((n) => n.includes("3 titulky ležalo celé"))).toBe(true);
   });
 });
 

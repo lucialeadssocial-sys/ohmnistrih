@@ -4,7 +4,7 @@
 > Kód: `src/core/export/subtitleRender.ts`, `src/core/export/burnJob.ts`,
 > `src/core/export/ffmpegEnv.ts`, `src/components/BurnCaptionsPanel.tsx`,
 > endpointy v `server.ts`.
-> Testy: `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` (59 testov).
+> Testy: `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` (62 testov).
 
 ## Prečo to existuje
 
@@ -61,8 +61,9 @@ zdroja do času hotového klipu:
 - titulok bez časovania slov sa priradí k úseku, kam väčšinou patrí
   (aby divák nečítal tú istú vetu dvakrát).
 
-Každá z týchto vecí sa objaví v poznámkach výsledku („1 titulkov ležalo celé vo
-vystrihnutých častiach — vo výsledku nie sú.").
+Každá z týchto vecí sa objaví v poznámkach výsledku („Jeden titulok ležal celý vo
+vystrihnutej časti — vo výsledku nie je." / „2 titulky ležalo celé vo vystrihnutých
+častiach…"). Texty sú v správnych slovenských tvaroch (`pluralSk`) — appku číta človek.
 
 ## Tichá chyba, ktorú sme našli a opravili (a prečo je tu zapísaná)
 
