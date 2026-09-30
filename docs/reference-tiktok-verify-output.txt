@@ -1,0 +1,277 @@
+==============================================================================
+tiktok-7278793134098648353.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 32.40 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:0 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 11 → 0.34/s
+dĺžka záberu (medián / priemer)............. 3.30 s / 2.70 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 1 % / 73 %
+jas / kontrast / sýtosť..................... 52.39 / 46.02 / 38 %
+teplota (R−B)............................... 7.4
+hustota hrán (0–1).......................... 0.036
+tmavé / stredné / svetlé.................... 71 % / 27 % / 2 %
+jas pásov hore/stred/dole................... 63 / 51 / 43
+podiel svetlého spodku...................... 0.25
+dynamika (0–255 na s)....................... 36.92 · pokojné vzorky 2 %
+paleta...................................... #080707 3.2 % (v 5 % vzoriek) · #0F0D0D 2.7 % (v 5 % vzoriek) · #1B1511 1.9 % (v 3 % vzoriek) · #1E1B1C 1.8 % (v 3 % vzoriek) · #100907 1.7 % (v 3 % vzoriek) · #0A0F16 1.6 % (v 3 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (71 % tmavých pixelov), neutrálna teplota, mierne sýte farby, stredný kontrast, stredný detail.
+tempo....................................... pokojný strih (0.34/s, medián záberu 3.3 s)
+podiel času v dlhých záberoch............... 73 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #080707 v 5 % · #0F0D0D v 5 % · #1B1511 v 3 % · #1E1B1C v 3 % · #100907 v 3 % · #0A0F16 v 3 %
+
+==============================================================================
+tiktok-7309925373532294432.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 56.07 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:0 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 14 → 0.25/s
+dĺžka záberu (medián / priemer)............. 3.73 s / 3.74 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 4 % / 86 %
+jas / kontrast / sýtosť..................... 114.27 / 68.39 / 22 %
+teplota (R−B)............................... 0.31
+hustota hrán (0–1).......................... 0.042
+tmavé / stredné / svetlé.................... 29 % / 55 % / 16 %
+jas pásov hore/stred/dole................... 133 / 120 / 89
+podiel svetlého spodku...................... 0.13
+dynamika (0–255 na s)....................... 107.62 · pokojné vzorky 0 %
+paleta...................................... #E1E7EE 0.9 % (v 4 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... stredne tmavý obraz (29 % tmavých), neutrálna teplota, mierne sýte farby, vysoký kontrast, stredný detail.
+tempo....................................... pokojný strih (0.25/s, medián záberu 3.73 s)
+podiel času v dlhých záberoch............... 86 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #E1E7EE v 4 %
+
+==============================================================================
+tiktok-7658368348543012118.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 57.51 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 6 → 0.10/s
+dĺžka záberu (medián / priemer)............. 6.43 s / 8.22 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 0 % / 100 %
+jas / kontrast / sýtosť..................... 120.03 / 58.54 / 31 %
+teplota (R−B)............................... 25.54
+hustota hrán (0–1).......................... 0.027
+tmavé / stredné / svetlé.................... 16 % / 69 % / 15 %
+jas pásov hore/stred/dole................... 93 / 119 / 147
+podiel svetlého spodku...................... 0.89
+dynamika (0–255 na s)....................... 35.46 · pokojné vzorky 0 %
+paleta...................................... #4A6C56 0.9 % (v 4 % vzoriek) · #576F59 0.9 % (v 4 % vzoriek) · #476651 0.8 % (v 4 % vzoriek) · #576D57 0.7 % (v 3 % vzoriek) · #486752 0.6 % (v 3 % vzoriek) · #4E6351 0.5 % (v 3 % vzoriek)
+akcent (z palety videa)..................... #4A6C56 · 0.9 % plochy · v 4 % vzoriek
+popis....................................... stredne tmavý obraz (16 % tmavých), teplý podtón, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.1/s, medián záberu 6.43 s)
+podiel času v dlhých záberoch............... 100 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #4A6C56 v 4 % · #576F59 v 4 % · #476651 v 4 % · #576D57 v 3 % · #486752 v 3 % · #4E6351 v 3 %
+
+==============================================================================
+tiktok-7659449820934884630.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 64.85 s · 30 fps · 1032×576
+video stopa / meraná plocha................. #0:0 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 49 → 0.76/s
+dĺžka záberu (medián / priemer)............. 0.67 s / 1.30 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 30 % / 45 %
+jas / kontrast / sýtosť..................... 76.44 / 50 / 37 %
+teplota (R−B)............................... 5.15
+hustota hrán (0–1).......................... 0.028
+tmavé / stredné / svetlé.................... 51 % / 41 % / 9 %
+jas pásov hore/stred/dole................... 98 / 67 / 65
+podiel svetlého spodku...................... 0.43
+dynamika (0–255 na s)....................... 73.54 · pokojné vzorky 3 %
+paleta...................................... #0D0B0D 1.4 % (v 2 % vzoriek) · #10090B 1.2 % (v 2 % vzoriek) · #0E090D 1.1 % (v 2 % vzoriek) · #0B090B 0.8 % (v 1 % vzoriek) · #0E0709 0.7 % (v 1 % vzoriek) · #0F0B0D 0.7 % (v 1 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (51 % tmavých pixelov), neutrálna teplota, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... rýchly strih (0.76/s, medián záberu 0.67 s)
+podiel času v dlhých záberoch............... 45 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #0D0B0D v 2 % · #10090B v 2 % · #0E090D v 2 % · #0B090B v 1 % · #0E0709 v 1 % · #0F0B0D v 1 %
+
+==============================================================================
+tiktok-7662872350953737495.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 35.27 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 11 → 0.31/s
+dĺžka záberu (medián / priemer)............. 3.23 s / 2.94 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 4 % / 74 %
+jas / kontrast / sýtosť..................... 118.1 / 56.1 / 37 %
+teplota (R−B)............................... -20.89
+hustota hrán (0–1).......................... 0.041
+tmavé / stredné / svetlé.................... 44 % / 26 % / 31 %
+jas pásov hore/stred/dole................... 126 / 112 / 116
+podiel svetlého spodku...................... 0.31
+dynamika (0–255 na s)....................... 47.76 · pokojné vzorky 3 %
+paleta...................................... #F5F0EE 6.5 % (v 9 % vzoriek) · #F4EEEB 6.1 % (v 9 % vzoriek) · #182550 4.9 % (v 6 % vzoriek) · #192550 3.8 % (v 4 % vzoriek) · #23315E 3.5 % (v 4 % vzoriek) · #172653 2.7 % (v 3 % vzoriek)
+akcent (z palety videa)..................... #172653 · 2.7 % plochy · v 3 % vzoriek
+popis....................................... stredne tmavý obraz (44 % tmavých), studený podtón, mierne sýte farby, stredný kontrast, stredný detail.
+tempo....................................... pokojný strih (0.31/s, medián záberu 3.23 s)
+podiel času v dlhých záberoch............... 74 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #F5F0EE v 9 % · #F4EEEB v 9 % · #182550 v 6 % · #192550 v 4 % · #23315E v 4 % · #172653 v 3 %
+
+==============================================================================
+tiktok-7665741304122445078.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 45.51 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 9 → 0.20/s
+dĺžka záberu (medián / priemer)............. 4.27 s / 4.55 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 2 % / 86 %
+jas / kontrast / sýtosť..................... 142.77 / 54.15 / 14 %
+teplota (R−B)............................... 13.83
+hustota hrán (0–1).......................... 0.035
+tmavé / stredné / svetlé.................... 13 % / 63 % / 24 %
+jas pásov hore/stred/dole................... 148 / 139 / 142
+podiel svetlého spodku...................... 0.54
+dynamika (0–255 na s)....................... 59.06 · pokojné vzorky 0 %
+paleta...................................... #D6D7D8 1.6 % (v 3 % vzoriek) · #C9CBCA 1.3 % (v 2 % vzoriek) · #968C84 1.0 % (v 2 % vzoriek) · #988E86 1.0 % (v 2 % vzoriek) · #BCB5AE 0.8 % (v 3 % vzoriek) · #D2D2D1 0.8 % (v 2 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... stredne tmavý obraz (13 % tmavých), teplý podtón, takmer bez farby, stredný kontrast, stredný detail.
+tempo....................................... pokojný strih (0.2/s, medián záberu 4.27 s)
+podiel času v dlhých záberoch............... 86 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #D6D7D8 v 3 % · #C9CBCA v 2 % · #968C84 v 2 % · #988E86 v 2 % · #BCB5AE v 3 % · #D2D2D1 v 2 %
+
+==============================================================================
+tiktok-7673961257115979030.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 42.84 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 11 → 0.26/s
+dĺžka záberu (medián / priemer)............. 4.07 s / 3.57 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 3 % / 90 %
+jas / kontrast / sýtosť..................... 162.81 / 55.79 / 19 %
+teplota (R−B)............................... 2.64
+hustota hrán (0–1).......................... 0.025
+tmavé / stredné / svetlé.................... 12 % / 46 % / 42 %
+jas pásov hore/stred/dole................... 154 / 149 / 185
+podiel svetlého spodku...................... 0.80
+dynamika (0–255 na s)....................... 48.95 · pokojné vzorky 2 %
+paleta...................................... #F4F1EE 5.4 % (v 6 % vzoriek) · #F3F0ED 3.3 % (v 4 % vzoriek) · #F5F2EE 2.9 % (v 4 % vzoriek) · #E8E5DE 2.6 % (v 4 % vzoriek) · #ECE7DD 1.8 % (v 2 % vzoriek) · #F2EBE5 1.2 % (v 1 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... stredne tmavý obraz (12 % tmavých), neutrálna teplota, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.26/s, medián záberu 4.07 s)
+podiel času v dlhých záberoch............... 90 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #F4F1EE v 6 % · #F3F0ED v 4 % · #F5F2EE v 4 % · #E8E5DE v 4 % · #ECE7DD v 2 % · #F2EBE5 v 1 %
+
+==============================================================================
+tiktok-7678009554033970454.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 25.08 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · 508×642 (vyrezané pruhy 45 % rámu)
+strihy (scene > 0.3)........................ 0 → 0.00/s
+dĺžka záberu (medián / priemer)............. 25.08 s / 25.08 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 0 % / 100 %
+jas / kontrast / sýtosť..................... 69.18 / 56.24 / 26 %
+teplota (R−B)............................... -17.21
+hustota hrán (0–1).......................... 0.03
+tmavé / stredné / svetlé.................... 59 % / 40 % / 2 %
+jas pásov hore/stred/dole................... 102 / 45 / 60
+podiel svetlého spodku...................... 0.64
+dynamika (0–255 na s)....................... 24.97 · pokojné vzorky 0 %
+paleta...................................... #0E1214 2.3 % (v 6 % vzoriek) · #0C1113 2.1 % (v 6 % vzoriek) · #0F1315 1.6 % (v 4 % vzoriek) · #0C1112 1.5 % (v 4 % vzoriek) · #0D1213 1.5 % (v 4 % vzoriek) · #0D1113 1.4 % (v 4 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (59 % tmavých pixelov), studený podtón, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... bez strihov (jeden záber 25.08 s)
+podiel času v dlhých záberoch............... 100 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #0E1214 v 6 % · #0C1113 v 6 % · #0F1315 v 4 % · #0C1112 v 4 % · #0D1213 v 4 % · #0D1113 v 4 %
+
+==============================================================================
+tiktok-7680609867467345174.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 22.24 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · 520×656 (vyrezané pruhy 42 % rámu)
+strihy (scene > 0.3)........................ 1 → 0.04/s
+dĺžka záberu (medián / priemer)............. 21.50 s / 11.12 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 3 % / 97 %
+jas / kontrast / sýtosť..................... 113.81 / 98.28 / 18 %
+teplota (R−B)............................... 2.02
+hustota hrán (0–1).......................... 0.033
+tmavé / stredné / svetlé.................... 46 % / 13 % / 41 %
+jas pásov hore/stred/dole................... 39 / 85 / 218
+podiel svetlého spodku...................... 0.98
+dynamika (0–255 na s)....................... 20.93 · pokojné vzorky 0 %
+paleta...................................... #E9E4DF 24.9 % (v 64 % vzoriek) · #EAE4DF 11.7 % (v 30 % vzoriek) · #0A090B 3.0 % (v 7 % vzoriek) · #000000 2.3 % (v 2 % vzoriek) · #07080B 2.2 % (v 5 % vzoriek) · #08090C 2.2 % (v 5 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... stredne tmavý obraz (46 % tmavých), neutrálna teplota, mierne sýte farby, vysoký kontrast, stredný detail.
+tempo....................................... pokojný strih (0.04/s, medián záberu 21.5 s)
+podiel času v dlhých záberoch............... 97 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #E9E4DF v 64 % · #EAE4DF v 30 % · #0A090B v 7 % · #000000 v 2 % · #07080B v 5 % · #08090C v 5 %
+
+==============================================================================
+tiktok-7685413335948397846.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 71.17 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 15 → 0.21/s
+dĺžka záberu (medián / priemer)............. 3.90 s / 4.45 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 2 % / 92 %
+jas / kontrast / sýtosť..................... 83.74 / 55.81 / 28 %
+teplota (R−B)............................... 17.94
+hustota hrán (0–1).......................... 0.024
+tmavé / stredné / svetlé.................... 49 % / 48 % / 3 %
+jas pásov hore/stred/dole................... 101 / 90 / 60
+podiel svetlého spodku...................... 0.12
+dynamika (0–255 na s)....................... 35.27 · pokojné vzorky 5 %
+paleta...................................... #0B0A0E 3.2 % (v 4 % vzoriek) · #0F0D0F 2.9 % (v 4 % vzoriek) · #0C0E13 2.5 % (v 3 % vzoriek) · #161416 1.5 % (v 3 % vzoriek) · #0A0A0E 1.2 % (v 4 % vzoriek) · #131317 1.2 % (v 2 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... stredne tmavý obraz (49 % tmavých), teplý podtón, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.21/s, medián záberu 3.9 s)
+podiel času v dlhých záberoch............... 92 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #0B0A0E v 4 % · #0F0D0F v 4 % · #0C0E13 v 3 % · #161416 v 3 % · #0A0A0E v 4 % · #131317 v 2 %
+
+==============================================================================
+tiktok-7689405350226775318.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 35.04 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 1 → 0.03/s
+dĺžka záberu (medián / priemer)............. 30.23 s / 17.52 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 0 % / 100 %
+jas / kontrast / sýtosť..................... 64.99 / 47.8 / 37 %
+teplota (R−B)............................... 15.71
+hustota hrán (0–1).......................... 0.022
+tmavé / stredné / svetlé.................... 59 % / 39 % / 3 %
+jas pásov hore/stred/dole................... 69 / 70 / 56
+podiel svetlého spodku...................... 0.00
+dynamika (0–255 na s)....................... 38.71 · pokojné vzorky 0 %
+paleta...................................... #161A1E 2.8 % (v 7 % vzoriek) · #131A1E 2.6 % (v 6 % vzoriek) · #10171B 2.4 % (v 7 % vzoriek) · #14181C 2.2 % (v 6 % vzoriek) · #14191D 2.2 % (v 6 % vzoriek) · #15191D 2.2 % (v 6 % vzoriek)
+akcent (z palety videa)..................... — žiadna sýta farba s rozumným výskytom
+popis....................................... tmavý obraz (59 % tmavých pixelov), teplý podtón, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.03/s, medián záberu 30.23 s)
+podiel času v dlhých záberoch............... 100 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #161A1E v 7 % · #131A1E v 6 % · #10171B v 7 % · #14181C v 6 % · #14191D v 6 % · #15191D v 6 %
+
+==============================================================================
+tiktok-7690550368333499650.mp4
+==============================================================================
+trvanie / fps / rozmer...................... 31.87 s · 30 fps · 576×1024
+video stopa / meraná plocha................. #0:1 · celý rám (bez pruhov)
+strihy (scene > 0.3)........................ 2 → 0.06/s
+dĺžka záberu (medián / priemer)............. 9.33 s / 10.62 s
+krátke ≤1,2 s / dlhé ≥2,5 s................. 0 % / 100 %
+jas / kontrast / sýtosť..................... 116.71 / 53.98 / 41 %
+teplota (R−B)............................... 68.38
+hustota hrán (0–1).......................... 0.025
+tmavé / stredné / svetlé.................... 43 % / 18 % / 39 %
+jas pásov hore/stred/dole................... 130 / 110 / 110
+podiel svetlého spodku...................... 0.45
+dynamika (0–255 na s)....................... 53.74 · pokojné vzorky 3 %
+paleta...................................... #110D11 17.2 % (v 20 % vzoriek) · #FEC903 11.9 % (v 14 % vzoriek) · #FCF8FC 9.7 % (v 13 % vzoriek) · #161216 8.6 % (v 9 % vzoriek) · #FEC904 6.6 % (v 8 % vzoriek) · #110C11 2.5 % (v 5 % vzoriek)
+akcent (z palety videa)..................... #FEC903 · 11.9 % plochy · v 14 % vzoriek
+popis....................................... stredne tmavý obraz (43 % tmavých), teplý podtón, mierne sýte farby, stredný kontrast, málo detailov.
+tempo....................................... pokojný strih (0.06/s, medián záberu 9.33 s)
+podiel času v dlhých záberoch............... 100 % (dĺžka záberu, NIE podiel rečníka)
+stála farba vs. občasná..................... #110D11 v 20 % · #FEC903 v 14 % · #FCF8FC v 13 % · #161216 v 9 % · #FEC904 v 8 % · #110C11 v 5 %
+
+==============================================================================
+SÚHRN CEZ 12 VIDEÍ (medián — jeden klip neprebije ostatné)
+==============================================================================
+celkové trvanie............................. 519.85 s
+strihy za sekundu (medián).................. 0.21
+dĺžka záberu (medián)....................... 4.17 s
+jas / kontrast / sýtosť (medián)............ 114.04 / 55.8 / 30 %
+hustota hrán / dynamika (medián)............ 0.029 / 43.24
+videá so svetlým spodkom.................... 42 % (5/12)
+stála paleta (≥ 50 % videí)................. — žiadna farba sa neopakuje vo väčšine videí
+občasná paleta.............................. #E9E4DF · #110D11 · #EAE4DF · #FEC903 · #FCF8FC · #161216
+
+Meranie zapísané: /home/user/referencie/analyza-tiktok.json
