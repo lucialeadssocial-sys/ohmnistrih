@@ -27,7 +27,7 @@ import type {
   TransitionConfig,
 } from "../types/project";
 import { createCanonicalClip } from "../types/project";
-import type { StyleDecisionKind } from "./styleDecisionTypes";
+import type { CompositionKind, MotionKind, StyleDecisionKind, SupportingElementType } from "./styleDecisionTypes";
 import { GENERATED_VISUALS_STATUS_SK } from "./styleDecisionTypes";
 import { getStyleRecipe } from "./styleRecipes";
 import type { StylePlan } from "./styleIntelligence";
@@ -61,6 +61,12 @@ export interface StyleApplyHost {
   addMarker(marker: MarkerModel): boolean;
   addClip(trackId: string, clip: ClipModel, ripple?: boolean): boolean;
   setTransform(clipId: string, props: StyleTransformProps): boolean;
+  /**
+   * Voliteľné: vráti poslednú zmenu (existujúce `CommandManager.undo()`).
+   * Používa sa, keď sa zmena vykonala, ale **nepodarilo sa zapísať rozhodnutie** —
+   * appka potom zmenu vráti, aby v projekte neostala zmena bez záznamu.
+   */
+  undoLastCommand?: () => boolean;
 }
 
 export type StyleStepStatus = "APPLIED" | "HONORED" | "SKIPPED";
@@ -251,11 +257,155 @@ const CAPTION_PRESET_BY_STYLE: Record<string, "clean" | "bold" | "social" | "min
 export interface StyleApplyOptions {
   /** Ktoré rozhodnutia aplikovať (z obrazovky: tie, ktoré človek označil). */
   decisionIds?: string[];
+  /**
+   * **Upravené rozhodnutia z Review** (Accept / Edit / Reject) — krok 16.
+   * Aplikujú sa **len hodnoty, ktoré zadal človek**; čo nie je v mape, ostáva z plánu.
+   * Nič sa nedomýšľa a nič sa negeneruje.
+   */
+  edits?: Record<string, StyleDecisionEdit>;
   /** Fixný čas pre deterministické testy. */
   now?: number;
   /** Popis snapshotu (aby bolo v histórii vidieť, čo sa dialo). */
   snapshotLabelSk?: string;
 }
+
+/**
+ * **Čo smie človek v Review upraviť** (a čo zámerne nie).
+ *
+ * Pravidlo: upraviť sa dá to, čo je **voľba štýlu**. Čas (WHEN) sa needituje, lebo
+ * pochádza z reálnych dát (wordTiming) — vymyslené časovanie by bolo klamstvo.
+ */
+export interface StyleDecisionEdit {
+  /** Doslovný text do obrazu — prepíše text z vety. Nikdy sa nevymýšľa, len prepisuje. */
+  typographyText?: string;
+  /** Priblíženie (napr. 1.12 = 112 %). Clampne sa na 1,00–1,60. */
+  punchInScale?: number;
+  /** Druh pohybu (pop / slide / punch / jemný zoom…). */
+  motion?: MotionKind;
+  /** Typ podporného prvku z existujúcich médií (generated_visual sa nikdy neprijme). */
+  elementType?: SupportingElementType;
+  /** Kompozícia scény. */
+  composition?: CompositionKind;
+  /** Poznámka človeka k úprave (uloží sa do dôkazov rozhodnutia). */
+  noteSk?: string;
+}
+
+/** Výsledok úpravy jedného rozhodnutia: efektívne rozhodnutie + čo sa zmenilo a čo sa odmietlo. */
+export interface StyleDecisionReview {
+  decision: EditDecision;
+  /** Ľudsky: „text: … → …", „priblíženie: 1,12 → 1,30". */
+  changedSk: string[];
+  /** Čo appka zámerne neprijala (napr. generovaný vizuál alebo nezmyselné číslo). */
+  ignoredSk: string[];
+}
+
+function fmtNum(v: number): string {
+  return v.toFixed(2).replace(".", ",");
+}
+
+/**
+ * Použije úpravu človeka na rozhodnutie — **deterministicky, bez providera**.
+ * Vracia nové rozhodnutie (nemutuje vstup) a povie, čo zmenila a čo odmietla.
+ */
+export function reviewStyleDecision(decision: EditDecision, edit?: StyleDecisionEdit): StyleDecisionReview {
+  const changedSk: string[] = [];
+  const ignoredSk: string[] = [];
+  if (!edit || typeof edit !== "object") return { decision, changedSk, ignoredSk };
+
+  const next = cloneDecision(decision);
+  const detail = next.style;
+  if (!detail) {
+    ignoredSk.push("Rozhodnutie nemá vizuálny detail — úpravu nie je kam zapísať.");
+    return { decision, changedSk, ignoredSk };
+  }
+  const action = (detail.action ?? {}) as Record<string, unknown>;
+  const payload = (next.actionPayload ?? {}) as Record<string, unknown>;
+
+  const applyToBoth = (key: string, value: unknown) => {
+    action[key] = value;
+    payload[key] = value;
+  };
+
+  // 1) Doslovný text — len neprázdny reťazec (nikdy sa nič nedopisuje).
+  if (edit.typographyText !== undefined) {
+    const text = typeof edit.typographyText === "string" ? edit.typographyText.trim() : "";
+    if (text.length === 0) {
+      ignoredSk.push("Prázdny text som neprijal — text sa nikdy nevymýšľa ani nedopĺňa.");
+    } else if (text.length > 240) {
+      ignoredSk.push("Text je dlhší než 240 znakov — nechal som pôvodný (dlhý text sa do obrazu nezmestí).");
+    } else {
+      const before = typeof payload.typographyText === "string" ? String(payload.typographyText) : "";
+      if (before !== text) {
+        applyToBoth("typographyText", text);
+        changedSk.push(`text: „${before}" → „${text}"`);
+      }
+    }
+  }
+
+  // 2) Priblíženie — clamp na rozumný rozsah (nikdy 5× zoom).
+  if (edit.punchInScale !== undefined) {
+    const raw = Number(edit.punchInScale);
+    if (!Number.isFinite(raw)) {
+      ignoredSk.push("Priblíženie nebolo číslo — nechal som pôvodné.");
+    } else {
+      const clamped = Math.min(1.6, Math.max(1.0, Math.round(raw * 100) / 100));
+      if (clamped !== raw) ignoredSk.push(`Priblíženie som upravil na bezpečný rozsah 1,00–1,60 (zadal si ${fmtNum(raw)}).`);
+      const before = typeof payload.punchInScale === "number" ? Number(payload.punchInScale) : undefined;
+      if (before !== clamped) {
+        applyToBoth("punchInScale", clamped);
+        changedSk.push(`priblíženie: ${before === undefined ? "—" : fmtNum(before)} → ${fmtNum(clamped)}`);
+      }
+    }
+  }
+
+  // 3) Druh pohybu.
+  if (edit.motion !== undefined) {
+    const allowed: MotionKind[] = ["pop", "slide", "punch", "paper_movement", "subtle_zoom", "whip_transition"];
+    if (!allowed.includes(edit.motion)) {
+      ignoredSk.push(`Pohyb „${String(edit.motion)}" nepoznám — nechal som pôvodný.`);
+    } else if (payload.motion !== edit.motion) {
+      const before = String(payload.motion ?? "—");
+      applyToBoth("motion", edit.motion);
+      changedSk.push(`pohyb: ${before} → ${edit.motion}`);
+    }
+  }
+
+  // 4) Typ podporného prvku — generovaný vizuál sa NIKDY neprijme (provider neexistuje).
+  if (edit.elementType !== undefined) {
+    if (edit.elementType === "generated_visual") {
+      ignoredSk.push(`${GENERATED_VISUALS_STATUS_SK} Generovaný prvok neprijímam (ani na požiadanie).`);
+    } else if (payload.elementType !== edit.elementType) {
+      const before = String(payload.elementType ?? "—");
+      applyToBoth("elementType", edit.elementType);
+      changedSk.push(`typ prvku: ${before} → ${edit.elementType}`);
+    }
+  }
+
+  // 5) Kompozícia.
+  if (edit.composition !== undefined) {
+    const allowed: CompositionKind[] = ["full_screen", "split", "layered_collage", "picture_in_picture", "asymmetric"];
+    if (!allowed.includes(edit.composition)) {
+      ignoredSk.push(`Kompozíciu „${String(edit.composition)}" nepoznám — nechal som pôvodnú.`);
+    } else if (payload.composition !== edit.composition) {
+      const before = String(payload.composition ?? "—");
+      applyToBoth("composition", edit.composition);
+      changedSk.push(`kompozícia: ${before} → ${edit.composition}`);
+    }
+  }
+
+  if (changedSk.length > 0) {
+    // Dôkaz o úprave ide do rozhodnutia — aby bolo vidieť, že hodnoty zadal človek, nie AI.
+    const note = typeof edit.noteSk === "string" && edit.noteSk.trim().length > 0 ? ` Poznámka: ${edit.noteSk.trim()}` : "";
+    detail.evidenceSk = [
+      ...(detail.evidenceSk ?? []),
+      `Upravené používateľom v Review (nie AI, nie odhad): ${changedSk.join("; ")}.${note}`,
+    ];
+    detail.whySk = `${detail.whySk} (Hodnoty upravené používateľom pred aplikovaním.)`;
+  }
+
+  return { decision: next, changedSk, ignoredSk };
+}
+
 
 export function styleApplyCanRunSk(plan: StylePlan | null, selectedCount: number, consentGiven: boolean): { ready: boolean; reasonSk: string } {
   if (!plan || plan.decisions.length === 0) {
@@ -336,8 +486,16 @@ export function applyStylePlan(host: StyleApplyHost, plan: StylePlan, options: S
     (project.tracks ?? []).some((t) => t.clips.some((c) => c.id === clipId));
 
   // --- 2. Aplikovanie po rozhodnutiach -------------------------------------
-  for (const decision of plan.decisions) {
-    if (!selected.has(decision.id)) continue;
+  for (const rawDecision of plan.decisions) {
+    if (!selected.has(rawDecision.id)) continue;
+    // Review (krok 16): ak človek rozhodnutie upravil, aplikujú sa JEHO hodnoty.
+    // Nevybrané (rejected) rozhodnutia sa sem vôbec nedostanú → žiadna zmena canonical osi.
+    const review = reviewStyleDecision(rawDecision, options.edits?.[rawDecision.id]);
+    if (review.changedSk.length > 0) {
+      notesSk.push(`Rozhodnutie ${rawDecision.id} som aplikoval s TVOJIMI hodnotami: ${review.changedSk.join("; ")}.`);
+    }
+    for (const ignored of review.ignoredSk) notesSk.push(`Rozhodnutie ${rawDecision.id}: ${ignored}`);
+    const decision = review.decision;
     const detail = decision.style;
     if (!detail) {
       steps.push(skipStep(decision, "Rozhodnutie nemá vizuálny detail (starý formát) — neaplikujem naslepo.", "nothing", "—"));
@@ -352,6 +510,22 @@ export function applyStylePlan(host: StyleApplyHost, plan: StylePlan, options: S
       const success = host.createEditDecision({ ...cloneDecision(decision), timestamp: now, status });
       if (!success) notesSk.push(`Rozhodnutie ${decision.id} sa nepodarilo zapísať do projektu (CommandManager vrátil false).`);
       return success;
+    };
+
+    /**
+     * Zapíše rozhodnutie po vykonanej zmene. Keď sa zápis nepodarí, appka zmenu **vráti**
+     * (`undoLastCommand`) — v projekte tak nikdy neostane zmena bez záznamu.
+     * Keď host undo nepodporuje, appka to **prizná** (žiadne tiché prejdenie).
+     */
+    const recordOrRevert = (status: EditDecision["status"]): boolean => {
+      if (recordDecision(status)) return true;
+      const reverted = host.undoLastCommand ? host.undoLastCommand() : false;
+      notesSk.push(
+        reverted
+          ? `Rozhodnutie ${decision.id}: zmenu som VRÁTIL — nepodarilo sa zapísať rozhodnutie (žiadna zmena potichu).`
+          : `Rozhodnutie ${decision.id}: rozhodnutie sa nepodarilo zapísať a host nevie vrátiť zmenu — upozorňujem na to (zmena môže ostať bez záznamu).`,
+      );
+      return false;
     };
 
     switch (detail.kind) {
@@ -429,7 +603,10 @@ export function applyStylePlan(host: StyleApplyHost, plan: StylePlan, options: S
         });
         const ok = host.addClip(captionTrackId, clip);
         if (ok) {
-          recordDecision("applied");
+          if (!recordOrRevert("applied")) {
+            steps.push(skipStep(decision, "Titulok sa podarilo pridať, ale rozhodnutie sa nepodarilo zapísať — text som preto vrátil (zmena bez záznamu sa nepočíta).", "nothing", `caption clip ${captionClipId}`));
+            continue;
+          }
           appliedNow.value = true;
           steps.push({
             decisionId: decision.id,
@@ -470,7 +647,10 @@ export function applyStylePlan(host: StyleApplyHost, plan: StylePlan, options: S
         }
         const ok = host.setTransform(clip.id, { scale: targetScale });
         if (ok) {
-          recordDecision("applied");
+          if (!recordOrRevert("applied")) {
+            steps.push(skipStep(decision, "Transformáciu sa podarilo zmeniť, ale rozhodnutie sa nepodarilo zapísať — priblíženie som preto vrátil (zmena bez záznamu sa nepočíta).", "nothing", `video clip ${clip.id}`));
+            continue;
+          }
           appliedNow.value = true;
           steps.push({
             decisionId: decision.id,
@@ -564,7 +744,10 @@ export function applyStylePlan(host: StyleApplyHost, plan: StylePlan, options: S
         });
         const ok = host.addClip(brollTrackId, clip);
         if (ok) {
-          recordDecision("applied");
+          if (!recordOrRevert("applied")) {
+            steps.push(skipStep(decision, "Vizuál sa podarilo vložiť, ale rozhodnutie sa nepodarilo zapísať — vloženie som preto vrátil (zmena bez záznamu sa nepočíta).", "nothing", `b-roll clip ${visualClipId}`));
+            continue;
+          }
           appliedNow.value = true;
           steps.push({
             decisionId: decision.id,

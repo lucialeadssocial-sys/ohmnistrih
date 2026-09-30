@@ -14,6 +14,7 @@ import {
   Copy,
   ChevronDown,
   ChevronRight,
+  Pencil,
   AlertTriangle,
   Info,
   Wand2,
@@ -32,6 +33,7 @@ import {
   styleApplyCanRunSk,
   styleApplyReportTextSk,
   type StyleApplyReport,
+  type StyleDecisionEdit,
   type StyleRollbackReport,
 } from "../core/style/styleApply";
 import {
@@ -88,7 +90,11 @@ export interface StyleStudioPanelProps {
    * APPLY (krok 5–6): skutočná zmena projektu cez existujúci CommandManager.
    * Bez tohto callbacku obrazovka **neaplikuje nič** a len to povie (statický náhľad).
    */
-  onApplyStylePlan?: (plan: StylePlan, decisionIds: string[]) => StyleApplyReport | null;
+  /**
+   * Apply. `decisionIds` = prijaté rozhodnutia, `edits` = hodnoty, ktoré si v Review
+   * prepísal (Accept / Edit / Reject). Aplikujú sa len tie; nič sa nedomýšľa.
+   */
+  onApplyStylePlan?: (plan: StylePlan, decisionIds: string[], edits: Record<string, StyleDecisionEdit>) => StyleApplyReport | null;
   /** Rollback na verziu vytvorenú pred aplikovaním (presne pôvodný stav). */
   onRollbackStyleApply?: (report: StyleApplyReport) => StyleRollbackReport | null;
   /** Hotový report z aplikovania (pre statický náhľad a testy). */
@@ -145,6 +151,9 @@ export function StyleStudioPanel({
   const [customPreview, setCustomPreview] = useState<ReturnType<typeof customRecipeFromBrief> | null>(null);
   const [plan, setPlan] = useState<StylePlan | null>(initialPlan);
   const [marks, setMarks] = useState<Record<string, DecisionStatus>>({});
+  // Review: hodnoty, ktoré človek prepísal (krok 16). Prázdne = nič sa needituje.
+  const [edits, setEdits] = useState<Record<string, StyleDecisionEdit>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showConsidered, setShowConsidered] = useState(false);
@@ -220,7 +229,7 @@ export function StyleStudioPanel({
     if (!plan || !onApplyStylePlan) return;
     setApplying(true);
     try {
-      const report = onApplyStylePlan(plan, ids);
+      const report = onApplyStylePlan(plan, ids, edits);
       setApplyReport(report);
       setRollbackReport(null);
       if (report?.ok) {
@@ -673,6 +682,20 @@ export function StyleStudioPanel({
                           {isSk ? "Zamietnuť" : "Reject"}
                         </button>
                         <button
+                          onClick={() => setEditingId((prev) => (prev === r.id ? null : r.id))}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 ${
+                            edits[r.id] ? "bg-sky-500 text-white" : "bg-neutral-800 hover:bg-neutral-700 text-sky-300"
+                          }`}
+                          title={
+                            isSk
+                              ? "Upraví hodnoty pred aplikovaním (text, priblíženie, pohyb). Čas sa needituje — pochádza z reálneho prepisu."
+                              : "Edit values before apply."
+                          }
+                        >
+                          <Pencil className="w-3 h-3" />
+                          {edits[r.id] ? (isSk ? "Upravené" : "Edited") : isSk ? "Upraviť" : "Edit"}
+                        </button>
+                        <button
                           onClick={() => setExpanded((prev) => ({ ...prev, [r.id]: !isOpen }))}
                           className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold flex items-center gap-1"
                         >
@@ -680,6 +703,111 @@ export function StyleStudioPanel({
                           {isSk ? "Detaily a dôkazy" : "Details"}
                         </button>
                       </div>
+
+
+                      {editingId === r.id && (
+                        <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 space-y-2">
+                          <p className="text-[10px] font-black uppercase text-sky-300">
+                            {isSk ? "Upraviť pred aplikovaním" : "Edit before apply"}
+                          </p>
+                          <p className="text-[10px] text-neutral-400">
+                            {isSk
+                              ? "Zmení sa len to, čo tu prepíšeš. Čas (kedy) sa needituje — pochádza z reálneho prepisu, nie z odhadu."
+                              : "Only what you change here is applied."}
+                          </p>
+                          {r.kind === "typography" && (
+                            <label className="block">
+                              <span className="text-[10px] text-neutral-300 font-bold">{isSk ? "Text v obraze" : "On-screen text"}</span>
+                              <input
+                                type="text"
+                                value={edits[r.id]?.typographyText ?? r.textSk ?? ""}
+                                onChange={(e) => setEdits((prev) => ({ ...prev, [r.id]: { ...prev[r.id], typographyText: e.target.value } }))}
+                                className="mt-1 w-full rounded-lg bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-[11px] text-white"
+                              />
+                            </label>
+                          )}
+                          {r.kind === "motion" && (
+                            <label className="block">
+                              <span className="text-[10px] text-neutral-300 font-bold">
+                                {isSk ? "Priblíženie (%)" : "Punch-in (%)"}
+                              </span>
+                              <input
+                                type="number"
+                                min={100}
+                                max={160}
+                                step={1}
+                                value={Math.round((edits[r.id]?.punchInScale ?? 1.12) * 100)}
+                                onChange={(e) =>
+                                  setEdits((prev) => ({
+                                    ...prev,
+                                    [r.id]: { ...prev[r.id], punchInScale: Number(e.target.value) / 100 },
+                                  }))
+                                }
+                                className="mt-1 w-28 rounded-lg bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-[11px] text-white"
+                              />
+                              <span className="ml-2 text-[10px] text-neutral-500">{isSk ? "rozsah 100–160 %" : "range 100–160 %"}</span>
+                            </label>
+                          )}
+                          {r.kind === "supporting_visual" && (
+                            <label className="block">
+                              <span className="text-[10px] text-neutral-300 font-bold">{isSk ? "Typ prvku (len z existujúcich médií)" : "Element type"}</span>
+                              <select
+                                value={edits[r.id]?.elementType ?? "existing_media"}
+                                onChange={(e) =>
+                                  setEdits((prev) => ({
+                                    ...prev,
+                                    [r.id]: { ...prev[r.id], elementType: e.target.value as StyleDecisionEdit["elementType"] },
+                                  }))
+                                }
+                                className="mt-1 w-full rounded-lg bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-[11px] text-white"
+                              >
+                                <option value="existing_media">{isSk ? "Existujúce médium" : "Existing media"}</option>
+                                <option value="photo">{isSk ? "Fotografia (z tvojich médií)" : "Photo"}</option>
+                                <option value="diagram">{isSk ? "Diagram (z tvojich médií)" : "Diagram"}</option>
+                                <option value="illustration">{isSk ? "Ilustrácia (z tvojich médií)" : "Illustration"}</option>
+                              </select>
+                              <span className="text-[10px] text-amber-300/80">
+                                {isSk
+                                  ? "Generované obrázky sa nedajú vybrať — appka nemá provider a nič nepredstiera."
+                                  : "Generated visuals unavailable (no provider)."}
+                              </span>
+                            </label>
+                          )}
+                          <label className="block">
+                            <span className="text-[10px] text-neutral-300 font-bold">{isSk ? "Tvoja poznámka (nepovinná)" : "Your note"}</span>
+                            <input
+                              type="text"
+                              value={edits[r.id]?.noteSk ?? ""}
+                              onChange={(e) => setEdits((prev) => ({ ...prev, [r.id]: { ...prev[r.id], noteSk: e.target.value } }))}
+                              className="mt-1 w-full rounded-lg bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-[11px] text-white"
+                            />
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                mark(r.id, "accepted");
+                                setEditingId(null);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold"
+                            >
+                              {isSk ? "Uložiť a prijať" : "Save & accept"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEdits((prev) => {
+                                  const next = { ...prev };
+                                  delete next[r.id];
+                                  return next;
+                                });
+                                setEditingId(null);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold"
+                            >
+                              {isSk ? "Zrušiť úpravu" : "Discard edit"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {isOpen && (
                         <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-2">

@@ -4054,7 +4054,7 @@ function MainApp() {
                         onSeek={handleSeek}
                         onOpenCaptions={() => setActiveTab("captions")}
                         showToast={showToast}
-                        onApplyStylePlan={(plan, decisionIds) => applyStylePlan(coreEngine, plan, { decisionIds })}
+                        onApplyStylePlan={(plan, decisionIds, edits) => applyStylePlan(coreEngine, plan, { decisionIds, edits })}
                         onRollbackStyleApply={(report) => rollbackStyleApply(coreEngine, report)}
                         // KROK 7: náhľad aj export idú z TEJ ISTEJ canonical časovej osi.
                         // Projekt sa číta naživo a zmeny osi odoberá priamo panel —

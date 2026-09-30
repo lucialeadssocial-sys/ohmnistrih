@@ -1,0 +1,168 @@
+
+================================================================================================
+1) REAL VIDEO (skutočný súbor, nie syntetický)
+================================================================================================
+súbor............................................. real_speech.mp4
+veľkosť........................................... 345651 B
+dĺžka (meraná ffmpeg)............................. 20.27 s
+
+================================================================================================
+2) EXISTING TRANSCRIPT / wordTiming (reálne dáta)
+================================================================================================
+audio pre prepis.................................. 163155 B (16 kHz mono)
+prepis (HTTP)..................................... 200 | success=true | hasSpeech=true
+prepis uložený.................................... /tmp/style-to-timeline-wIKUOR/segments.json (+ /home/user/real-media/segments-krok16.json)
+zdroj............................................. reálny prepis z tohto videa (HTTP /api/transcribe-speech)
+viet / slov....................................... 10 / 50
+prvá veta......................................... Za 5 minút denne ti ukážem,
+
+================================================================================================
+3) STYLE RECIPE + STYLE INTELLIGENCE (lokálne, žiadny AI provider)
+================================================================================================
+recept............................................ Editoriálna koláž (EDITORIAL_COLLAGE)
+je v presets...................................... true
+provider receptu.................................. NONE (deterministické)
+rozhodnutí........................................ 15
+podiel rečníka.................................... 30 % (recept 30 %)
+presnosť časov z dát.............................. words
+použité signály................................... časovanie po slovách
+chýbajúce signály................................. zmena rečníka (diarizácia sa nerobí); hranice záberov / scén (scene detection neexistuje)
+
+  Prvé 3 rozhodnutia (WHAT / WHEN / WHY / WHEN NOT / ALTERNATIVE / CONFIDENCE):
+  • [motion] WHEN 0–4.8 s
+      WHAT:        krátke priblíženie na rečníka (112 %)
+      WHY:         Prvá veta (hook) — krátke priblíženie pridá dôraz.
+      WHEN NOT:    Nepoužiť, ak je v zábere statický text alebo rozhranie, ktoré musí zostať čitateľné.
+      ALTERNATIVE: Použi len pop-in prvku bez pohybu kamery.
+      CONFIDENCE:  60 % — lokálna heuristika z reálnych časov (nie AI confidence)
+      DÔKAZ:       dĺžka vety 4.8 s
+  • [talking_head] WHEN 0–4.8 s
+      WHAT:        Nechaj rečníka v plnom obraze a pridaj len krátky titulok (bez podporného vizuálu).
+      WHY:         Prvá veta rozhoduje, či divák zostane — rečníka nezakrývam.
+      WHEN NOT:    Nepoužiť, ak je rečník mimo záberu alebo ak ide o čisto textovú pasáž bez tváre v obraze.
+      ALTERNATIVE: Pridaj len papierový rám alebo okraj mimo tváre (rečník zostane viditeľný).
+      CONFIDENCE:  55 % — lokálna heuristika z reálnych časov (nie AI confidence)
+      DÔKAZ:       veta 1: 4.8 s | hustota 2.71 slova/s
+  • [typography] WHEN 0–4.8 s
+      WHAT:        Text „Za 5 minút denne“ ako veľké číslo (objaví sa postupne).
+      WHY:         Vo vete je číslo (5) — čísla si divák musí prečítať, nie dopočítať.
+      WHEN NOT:    Nepoužiť, ak je text už v titulkoch na tom istom mieste alebo ak by prekryl tvár.
+      ALTERNATIVE: Nechaj text len v titulkoch (bez samostatného grafického textu).
+      CONFIDENCE:  70 % — lokálna heuristika z reálnych časov (nie AI confidence)
+      DÔKAZ:       čísla: 5 | silné slová: 5
+
+  Klasifikácia rozhodnutí: LOCAL DETERMINISTIC HEURISTIC (nie AI confidence)
+
+================================================================================================
+4) REVIEW — Accept / Edit / Reject (pred akýmkoľvek zápisom do osi)
+================================================================================================
+ACCEPT (prijaté).................................. 2
+EDIT (upravené)................................... style-editorial_collage-0.00-typography (text) + style-editorial_collage-0.00-motion (priblíženie 130 %)
+REJECT (zamietnuté)............................... style-editorial_collage-0.00-talking_head
+apply sa spustí len na............................ prijaté rozhodnutia (zamietnuté sa do osi nedostane)
+kontrola úpravy (čistá funkcia)................... text: „Za 5 minút denne" → „UPRAVENÉ POUŽÍVATEĽOM: 3 000 €"
+
+================================================================================================
+5) SNAPSHOT (existujúca verzia projektu) + stav PRED
+================================================================================================
+stopy / klipy pred................................ 5 / 2
+klipy video/b-roll/titulky pred................... 1/0/0
+rozhodnutia pred.................................. 0
+
+(Snapshot vytvorí Apply ako prvý krok — bez verzie sa neaplikuje nič.)
+
+================================================================================================
+6) APPLY → COMMAND MANAGER → CANONICAL TIMELINE
+================================================================================================
+ok................................................ true
+chyba............................................. —
+snapshot verzia................................... ver_5da8cfa2-d813-42e0-bc50-67a1271d053c
+aplikované / dodržané / nevykonané................ 2 / 0 / 0
+časová os zmenená (podľa reportu)................. true
+audio nedotknuté (bajty).......................... true
+  • [APPLIED] motion — Nastavil som priblíženie 130 % na klip v čase 0–4.8 s.
+      cieľ: video clip clip_main_video
+  • [APPLIED] typography — Pridal som text „UPRAVENÉ POUŽÍVATEĽOM: 3 000 €“ na stopu tituliek (0–4.8 s).
+      cieľ: caption track „track_caption“
+  poznámka: Rozhodnutie style-editorial_collage-0.00-motion som aplikoval s TVOJIMI hodnotami: priblíženie: 1,12 → 1,30.
+  poznámka: Rozhodnutie style-editorial_collage-0.00-typography som aplikoval s TVOJIMI hodnotami: text: „Za 5 minút denne" → „UPRAVENÉ POUŽÍVATEĽOM: 3 000 €".
+  poznámka: PROVIDER UNAVAILABLE — generovanie vizuálov nie je dostupné (žiadny provider).
+  poznámka: Provider: žiadny (deterministické, lokálne). AI sa na Apply nepoužíva.
+
+================================================================================================
+7) CANONICAL TIMELINE PO ZMENE — konkrétny rozdiel PRED/PO
+================================================================================================
+klipy video/b-roll/titulky po..................... 1/0/1
+rozhodnutia po.................................... 2
+markery po........................................ 0
+
+  Pridané klipy:
+    + style_caption_6oakkb [caption] 0–4.8 s · text „UPRAVENÉ POUŽÍVATEĽOM: 3 000 €“
+  Odobrané klipy:
+  Zmenené transformácie:
+    ~ clip_main_video: scale 100 → 130
+BEFORE ≠ AFTER.................................... true
+visualJson zmenený................................ true
+audioJson nezmenený (bajty)....................... true
+zamietnuté rozhodnutie v osi...................... žiadny klip / žiadny efekt
+upravený text v canonical klipe................... áno (style_caption_6oakkb)
+upravené priblíženie 130 % v klipe................ áno (clip_main_video)
+
+================================================================================================
+8) PREVIEW PARITY — náhľad číta canonical os (žiadny skrytý stav)
+================================================================================================
+snímka testovaná v čase........................... 0.4 s
+vrstvy pred apply................................. 1
+vrstvy po apply @ 0.4 s........................... 2 (text: Style Studio: UPRAVENÉ POUŽÍVATEĽOM: 3; obraz: /home/user/real-media/real_speech.mp4)
+náhľad obsahuje upravený text..................... true
+rovnaká funkcia ako export........................ buildCanonicalFramePlan (renderEngine ju používa pre náhľad aj pre export)
+parita............................................ PREVIEW PARITY — OK (vrstvy pochádzajú z canonical osi)
+
+================================================================================================
+8b) EXPORTNÝ PLÁN Z TEJ ISTEJ CANONICAL OSI (pred rollbackom)
+================================================================================================
+export plán — segmentov titulkov.................. 1
+export plán — rozmery............................. 1080×1920
+kontrola zhody (parity)........................... sedí | canonical klipov: 1, segmentov: 1, chýbajúce texty: 0, navyše: 0
+upravený text v export pláne...................... áno
+dá sa exportovať.................................. true
+blokery exportu................................... žiadne
+nevyrába táto linka............................... nič (všetko z osi sa vykreslí)
+poznámka.......................................... 1 titulkov pôjde do videa priamo z canonical časovej osi (štýl VIRAL_BOLD podľa canonical presetov). | Strih: žiadny — ide celé video. Zvuk sa kopíruje bez prekódovania (bajtovo rovnaký ako zdroj).
+ten istý zdroj ako náhľad......................... áno — náhľad aj export idú z canonical projektu
+
+================================================================================================
+9) ROLLBACK — presne pôvodný stav
+================================================================================================
+ok................................................ true
+obnovené presne (bajty)........................... true
+časová os späť (visualJson)....................... true
+audio späť (audioJson)............................ true
+klipy video/b-roll/titulky po rollbacku........... 1/0/0
+celý stav zhoda................................... false
+  Líšia sa polia: verzie
+    verzie:
+      pred   : []
+      po     : [{"id":"ver_5da8cfa2-d813-42e0-bc50-67a1271d053c","label":"Krok 16 — dôkaz Style → Timeline"}]
+  Vysvetlenie: obsah osi (klipy, časy, transformácie, texty, médiá) je zhodný; líši sa LEN zoznam verzií —
+  projekt si ponecháva odkaz na verziu, ktorá vznikla pred aplikovaním (aby bolo vidieť, čo sa dialo).
+
+================================================================================================
+10) VERDIKT
+================================================================================================
+Apply prešiel..................................... true
+canonical os sa zmenila........................... true
+odpoveď na otázku zadania......................... ÁNO — Apply mení SKUTOČNÚ canonical časovú os
+
+Odpoveď na zadanie: „Keď vyberiem Editorial Collage a stlačím Apply Style,
+zmení sa skutočný canonical timeline projektu?“
+→ ÁNO (dôkaz vyššie: BEFORE ≠ AFTER, konkrétne klipy a transformácie)
+
+Klasifikácia:
+  • EditDecision + Apply + CommandManager + Snapshot/Rollback .... REAL MEDIA VERIFIED (tento beh)
+  • Náhľad a export čítajú ten istý canonical plán snímky ....... PREVIEW PARITY (dátová cesta v Node)
+  • Prehliadačové UI (tlačidlá, canvas) .......................... NOT VERIFIED (v prostredí nie je DOM)
+  • Export do súboru ............................................. samostatný runner: tools/verify-canonical-export.ts
+  • Generované obrázky/video ..................................... PROVIDER UNAVAILABLE (nič sa negenerovalo)
+
+Dôkaz uložený: /home/user/kontrola-krok16-style-to-timeline.json
