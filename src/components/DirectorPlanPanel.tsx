@@ -41,7 +41,7 @@ import {
 } from "../core/learning/editDna";
 
 /**
- * DirectorPlanPanel — „RAW → READY" jadro OmniStrihu (Fáza F1)
+ * DirectorPlanPanel — „RAW → READY“ jadro OmniStrihu (Fáza F1)
  *
  * Princíp: AI IBA ROZHODUJE. Tento panel zavolá /api/director/plan, zobrazí
  * navrhnuté zásahy s odôvodnením a nechá používateľa každý schváliť, vysvetliť
@@ -247,7 +247,7 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
         return;
       }
       setResult(data);
-      // „Použiť všetko" nie je predvolené — človek má posledné slovo.
+      // „Použiť všetko“ nie je predvolené — človek má posledné slovo.
     } catch (err: any) {
       setError(
         isSk

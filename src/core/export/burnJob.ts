@@ -19,6 +19,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
+  normalizeOverrides,
+  type CaptionOverrides,
   CAPTION_STYLES,
   type CaptionStyleId,
   type KeepRange,
@@ -87,6 +89,13 @@ export interface BurnSpec {
   outputName: string;
   segments: SpeechSegmentLike[];
   styleId: CaptionStyleId;
+  /**
+   * Odchýlky vlastného štýlu klienta (brand kit). Server ich oreže do rozsahov
+   * a vráti späť, čo upravil — aby vo videu nebolo nič „potichu iné“.
+   */
+  overrides?: CaptionOverrides;
+  /** Poznámky k úpravám odchýlok (pre človeka, po slovensky). */
+  overrideNotesSk?: string[];
   width: number;
   height: number;
   keepRanges: KeepRange[];
@@ -182,6 +191,8 @@ export function validateBurnRequest(body: any): BurnValidation {
       ? body.fontFamily.trim().slice(0, 40)
       : undefined;
 
+  const normalized = normalizeOverrides(body.overrides);
+
   return {
     ok: true,
     spec: {
@@ -193,6 +204,8 @@ export function validateBurnRequest(body: any): BurnValidation {
       width,
       height,
       keepRanges,
+      ...(Object.keys(normalized.overrides).length > 0 ? { overrides: normalized.overrides } : {}),
+      ...(normalized.notesSk.length > 0 ? { overrideNotesSk: normalized.notesSk } : {}),
       ...(fontFamily ? { fontFamily } : {}),
     },
   };

@@ -8,9 +8,9 @@
  * Ako to funguje (a čo to NIE je):
  *  - **Žiadna AI, žiadne tokeny.** Je to čitateľné pravidlo: platforma, formát,
  *    tempo strihu, rýchlosť reči, obsah videa. Preto sa dá každé odporúčanie
- *    vysvetliť a otestovať — a preto sa nemôže „vymyslieť".
+ *    vysvetliť a otestovať — a preto sa nemôže „vymyslieť“.
  *  - **Žiadne sľuby o virálnosti.** Odporúčanie hovorí, čo je vhodné pre daný
- *    formát (hook, čítanie bez zvuku, čitateľnosť). Nie „toto bude virálne".
+ *    formát (hook, čítanie bez zvuku, čitateľnosť). Nie „toto bude virálne“.
  *  - **Nikdy neúčinkuje potichu.** Vráti dôvody pre aj proti, ktoré UI zobrazí
  *    presne v tomto texte.
  *  - Čo nevieme, nepovieme: keď chýbajú dáta (napr. tempo strihu), odporúčanie
@@ -33,7 +33,7 @@ import { PLATFORMS } from "../trends/trendLibrary";
 export interface CaptionAdviceInput {
   /** Platforma, pre ktorú klip je (rovnaké id ako v Trend Radare). */
   platform?: string;
-  /** Oblastníček / typ klienta (id z knižnice trendov, napr. „b2b", „fitness"). */
+  /** Oblastníček / typ klienta (id z knižnice trendov, napr. „b2b“, „fitness“). */
   niche?: string;
   /** Rozmery výsledného videa. */
   width?: number;
@@ -53,7 +53,7 @@ export interface CaptionAdviceInput {
 export interface CaptionReason {
   /** Pre koho/za akých okolností platí. */
   textSk: string;
-  /** O koľko bodov posunul skóre (vidno, že nič nie je „z čista jasna"). */
+  /** O koľko bodov posunul skóre (vidno, že nič nie je „z čista jasna“). */
   weight: number;
 }
 
@@ -79,7 +79,7 @@ export interface CaptionAdvice {
 // Pomocné pravidlá
 // ---------------------------------------------------------------------------
 
-/** Rýchle tempo strihu: nad 25 strihov za minútu je klip „hustý". */
+/** Rýchle tempo strihu: nad 25 strihov za minútu je klip „hustý“. */
 const FAST_CUTS = 25;
 const MEDIUM_CUTS = 12;
 /** Rýchla reč: nad 3,2 slova za sekundu sa dlhšie bloky nestíhajú čítať. */
@@ -92,7 +92,7 @@ const PLATFORM_LABEL: Record<string, string> = Object.fromEntries(
   PLATFORMS.map((p) => [p.id.toUpperCase(), p.labelSk]),
 );
 
-/** Známe „obaly", ktoré zdieľajú rovnaké pravidlá (TikTok ≈ Reels ≈ Shorts). */
+/** Známe „obaly“, ktoré zdieľajú rovnaké pravidlá (TikTok ≈ Reels ≈ Shorts). */
 function platformGroup(platform?: string): "short" | "long" | "ads" | "brand" | "unknown" {
   const p = String(platform ?? "").toUpperCase();
   if (!p) return "unknown";
@@ -130,7 +130,7 @@ const NICHE_FAVOURITES: Record<string, { ids: CaptionStyleId[]; reasonSk: string
 
 /**
  * Vráti odporúčanie štýlu s dôvodmi. Poradie a body sú deterministické:
- * rovnaký vstup = rovnaké odporúčanie (žiadne „raz tak, raz tak").
+ * rovnaký vstup = rovnaké odporúčanie (žiadne „raz tak, raz tak“).
  */
 export function adviseCaptionStyle(input: CaptionAdviceInput = {}): CaptionAdvice {
   const group = platformGroup(input.platform);

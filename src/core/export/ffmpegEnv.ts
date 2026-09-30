@@ -3,7 +3,7 @@
  *
  * Prečo samostatný modul: vypálenie titulkov je jediná vec v appke, ktorá
  * **naozaj potrebuje ffmpeg na serveri**. Keď tam nie je, nesmie sa stať, že
- * tlačidlo „vypáliť" len tak zlyhá bez vysvetlenia — appka to musí povedať
+ * tlačidlo „vypáliť“ len tak zlyhá bez vysvetlenia — appka to musí povedať
  * vopred, sobotným dôvodom a s cestou, ako to spraviť.
  *
  * Poradie hľadania (od najspoľahlivejšieho):
@@ -102,7 +102,7 @@ interface FontCandidate {
 /**
  * Kandidáti v tomto poradí. Zámerne DejaVu (má úplnú slovenskú diakritiku a je
  * overené testom) — Montserrat tu existuje len v Medium/BoldItalic, takže ako
- * predvolené „tučné virálne" písmo nesedí.
+ * predvolené „tučné virálne“ písmo nesedí.
  */
 const FONT_CANDIDATES: FontCandidate[] = [
   {

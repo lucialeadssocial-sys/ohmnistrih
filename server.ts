@@ -18,6 +18,7 @@ import {
   buildBurnFfmpegArgs,
   burnSummarySk,
   getCaptionStyle,
+  applyCaptionOverrides,
   BURN_HONESTY_SK,
 } from "./src/core/export/subtitleRender";
 import {
@@ -33,6 +34,14 @@ import {
   uploadStorageName,
   validateBurnRequest,
 } from "./src/core/export/burnJob";
+import {
+  PROFILE_LIMITS,
+  PROFILE_TEMPLATES,
+  describeProfileSk,
+  isSafeProfileId,
+  validateProfile,
+  type CaptionProfile,
+} from "./src/core/export/captionProfiles";
 import {
   FFMPEG_MISSING_SK,
   findFfmpegPath,
@@ -698,7 +707,7 @@ app.post("/api/keys/test", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DIRECTOR ENGINE — „RAW → READY" Edit Plan
+// DIRECTOR ENGINE — „RAW → READY“ Edit Plan
 //
 // Princíp celého OmniStrihu: AI IBA ROZHODUJE, nič nerenderuje a nič neaplikuje.
 // Výstupom je Edit Plan (zoznam zásahov s odôvodnením), ktorý ide používateľovi
@@ -938,7 +947,7 @@ function isFillerSentence(sentence: TranscriptSentence): boolean {
 }
 
 /**
- * Výplň na ZAČIATKU vety („Takže, ehm, dnes si ukážeme…").
+ * Výplň na ZAČIATKU vety („Takže, ehm, dnes si ukážeme…“).
  * V praxi editor najčastejšie nestrihá celú vetu, ale práve tento rozbeh.
  * Čas odhadneme podielom dĺžky výplne na dĺžke vety (max 2,5 s), aby zásah
  * nebol nikdy väčší, než je reálne bezpečné.
@@ -3054,7 +3063,7 @@ process.on("unhandledRejection", (reason, promise) => {
 // ===========================================================================
 // Zásady, ktoré tu platia:
 //  - **Nič sa nespúšťa samo.** Načítanie signálov je vždy výslovná akcia
-//    používateľky (tlačidlo „Obnoviť"). Otvorenie appky len číta cache.
+//    používateľky (tlačidlo „Obnoviť“). Otvorenie appky len číta cache.
 //  - **Každé zlyhanie má dôvod** a ide do odpovede, nikdy sa nemlčí.
 //  - **Kľúč k YouTube (ak je) nikdy neopustí server** — von ide len to,
 //    či je nastavený.
@@ -3294,7 +3303,7 @@ async function fetchYouTubeChart(geo: string, apiKey: string): Promise<SourceFet
 }
 
 /**
- * Z „youtube.com/@meno" alebo z odkazu spraví kanonické ID kanála.
+ * Z „youtube.com/@meno“ alebo z odkazu spraví kanonické ID kanála.
  * Postup je zámerne overený: najprv priama zhoda (URL /channel/UC…), potom
  * kanonický odkaz na stránke kanála a **spätná kontrola** cez RSS — aby sa
  * nestalo, že pridáme iný kanál, než si človek myslí.
@@ -3398,7 +3407,7 @@ app.post("/api/trends/refresh", async (req, res) => {
         fromCache: true,
         ageMinutes: age,
         bundle: cached,
-        messageSk: `Signály mám spred ${age} min (čerstvé do ${TREND_CACHE_TTL_MIN} min), takže som nič nestahoval. Ak chceš naozaj obnoviť, daj „obnoviť aj tak".`,
+        messageSk: `Signály mám spred ${age} min (čerstvé do ${TREND_CACHE_TTL_MIN} min), takže som nič nestahoval. Ak chceš naozaj obnoviť, daj „obnoviť aj tak“.`,
       });
     }
 
@@ -3467,7 +3476,7 @@ app.post("/api/trends/settings", async (req, res) => {
         added: { id: resolved.id, title: resolved.title || null },
         channels: s.channels,
         messageSk: resolved.title
-          ? `Pridal som kanál „${resolved.title}".`
+          ? `Pridal som kanál „${resolved.title}“.`
           : "Kanál pridaný.",
       });
     }
@@ -3496,6 +3505,110 @@ app.post("/api/trends/settings", async (req, res) => {
 //   3. GET  /api/export/burn-captions/status?id=… — priebeh a výsledok
 //      GET  /api/export/file/<meno>      — stiahnutie / prehratie hotového klipu
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VLASTNÝ ŠTÝL KLIENTA (brand kit) — profily sa ukladajú na disk servera
+//    GET    /api/captions/profiles          — uložené profily + štartovacie šablóny
+//    POST   /api/captions/profiles          — uložiť/aktualizovať profil
+//    DELETE /api/captions/profiles/:id      — zmazať profil
+//  Prečo na server a nie do prehliadača: profil musí prežiť vyčistenie úložiska
+//  aj iné zariadenie a musí sa dostať do renderu na serveri.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROFILES_FILE = path.join(DATA_DIR, "caption-profiles.json");
+
+/** Načíta profily z disku. Poškodený súbor = prázdny zoznam (nie pád appky). */
+function loadCaptionProfiles(): CaptionProfile[] {
+  try {
+    if (!fs.existsSync(PROFILES_FILE)) return [];
+    const raw = JSON.parse(fs.readFileSync(PROFILES_FILE, "utf-8"));
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => {
+        const v = validateProfile(item);
+        if (!v.ok) return null;
+        const created = typeof item?.createdAt === "string" ? item.createdAt : new Date().toISOString();
+        const updated = typeof item?.updatedAt === "string" ? item.updatedAt : created;
+        return { ...v.profile, createdAt: created, updatedAt: updated } as CaptionProfile;
+      })
+      .filter((x): x is CaptionProfile => x !== null);
+  } catch {
+    return [];
+  }
+}
+
+function saveCaptionProfiles(list: CaptionProfile[]): void {
+  ensureDir(DATA_DIR);
+  const tmp = `${PROFILES_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(list, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, PROFILES_FILE);
+}
+
+app.get("/api/captions/profiles", (_req, res) => {
+  const profiles = loadCaptionProfiles();
+  res.json({
+    success: true,
+    profiles,
+    templates: PROFILE_TEMPLATES,
+    limits: PROFILE_LIMITS,
+    /** Každý profil so vetou, čo mení — aby sa dal vybrať bez skúšania. */
+    descriptionSk: Object.fromEntries(profiles.map((p) => [p.id, describeProfileSk(p)])),
+  });
+});
+
+app.post("/api/captions/profiles", (req, res) => {
+  const validation = validateProfile(req.body);
+  if (!validation.ok) return res.status(400).json({ success: false, errorSk: validation.errorSk });
+
+  const list = loadCaptionProfiles();
+  const wanted = validation.profile;
+  const now = new Date().toISOString();
+  const existing = list.find((p) => p.id === wanted.id);
+
+  if (!existing && list.length >= PROFILE_LIMITS.maxProfiles) {
+    return res.status(400).json({
+      success: false,
+      errorSk: `Profilov je už ${list.length} (maximum ${PROFILE_LIMITS.maxProfiles}). Zmaž taký, ktorý už nepoužívaš.`,
+    });
+  }
+
+  const profile: CaptionProfile = {
+    ...wanted,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  const next = existing ? list.map((p) => (p.id === wanted.id ? profile : p)) : [...list, profile];
+  try {
+    saveCaptionProfiles(next);
+  } catch {
+    return res.status(500).json({ success: false, errorSk: "Profil sa nepodarilo zapísať na disk servera." });
+  }
+
+  res.json({
+    success: true,
+    profile,
+    descriptionSk: describeProfileSk(profile),
+    /** Čo sa počas ukladania orezalo (ak vôbec niečo) — bez tichých úprav. */
+    notesSk: validation.notesSk,
+  });
+});
+
+app.delete("/api/captions/profiles/:id", (req, res) => {
+  const id = String(req.params.id ?? "");
+  if (!isSafeProfileId(id)) {
+    return res.status(400).json({ success: false, errorSk: "Neplatný identifikátor profilu." });
+  }
+  const list = loadCaptionProfiles();
+  if (!list.some((p) => p.id === id)) {
+    return res.status(404).json({ success: false, errorSk: "Taký profil už neexistuje (možno bol zmazaný inde)." });
+  }
+  try {
+    saveCaptionProfiles(list.filter((p) => p.id !== id));
+  } catch {
+    return res.status(500).json({ success: false, errorSk: "Profil sa nepodarilo zmazať z disku servera." });
+  }
+  res.json({ success: true, removedId: id });
+});
 
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const EXPORT_DIR = path.join(DATA_DIR, "exports");
@@ -3598,7 +3711,8 @@ app.post("/api/export/burn-captions", (req, res) => {
   pruneDir(EXPORT_DIR, BURN_LIMITS.maxStoredExports);
   pruneDir(FONT_DIR, 40);
 
-  const style = getCaptionStyle(spec.styleId);
+  // Vlastný štýl klienta: základný štýl + odchýlky (farby, veľkosť, animácia).
+  const style = applyCaptionOverrides(getCaptionStyle(spec.styleId), spec.overrides);
   const font = prepareCaptionFont(FONT_DIR, spec.fontFamily);
 
   // Rozmery a snímkovú frekvenciu **overíme sami** (ffmpeg prečíta súbor).
@@ -3619,6 +3733,7 @@ app.post("/api/export/burn-captions", (req, res) => {
   });
 
   const probeNotesSk: string[] = [];
+  for (const n of spec.overrideNotesSk ?? []) probeNotesSk.push(n);
   if (probe && probe.width && probe.height) {
     const claimed =
       probe.width !== spec.width || probe.height !== spec.height

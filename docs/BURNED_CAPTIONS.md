@@ -153,3 +153,18 @@ Ukážky: `/home/user/ukazka-vypaleny-klip.mp4`, `/home/user/ukazka-vypalene-tit
 - **Jeden render naraz na klipe** — appka nezakazuje spustiť dva, ale `.data`
   upratuje podľa veku, takže pri dvoch veľkých render naraz môže prvý zmiznúť
   (upratovanie drží 25 najnovších klipov).
+
+## Tretie kolo: animácie a vlastný štýl klienta (krok B++)
+
+Pribudli **animácie vstupu titulkov** (pop / punch / fade, animuje sa len
+objavenie — text počas čítania stojí) a **vlastný štýl klienta**: profil =
+základný štýl + farby, veľkosť, okraj, animácia a umiestnenie. Profily sa ukladajú
+na serveri (`/api/captions/profiles`), takže sa dajú prepínať podľa zakázky na
+jeden klik a prežijú nové nahranie videa.
+
+Nič sa nemení ticho: hodnota mimo rozsahu sa oreže **a povie sa na akú**, zlá
+farba sa vynechá (nie nahradí náhodnou), a keď štýl zväčšuje aktívne slovo
+(libass by animáciu veľkosti ticho zrušil — merané), appka animáciu nahradí
+jemným objavením a **napíše prečo**.
+
+Podrobnosti: `docs/CAPTION_BRAND_KIT.md`. Testy: 275 (z toho 47 nových).

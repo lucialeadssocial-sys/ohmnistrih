@@ -449,8 +449,8 @@ export function parseYouTubeChart(json: unknown, geo: string): TrendSignal[] {
  *   10 tis. → 50 · 100 tis. → 63 · 1 mil. → 75 · 10 mil. → 88 · 100 mil. → 100
  */
 export function scoreChartVideo(views: number | undefined, publishedAt?: string, now: Date = new Date()): number {
-  // Rozlišujeme „nevieme koľko" (views === undefined → neutrálnych 45) od
-  // „naozaj nula zhliadnutí" (→ 10). Bez toho by video s nulou dostalo viac
+  // Rozlišujeme „nevieme koľko“ (views === undefined → neutrálnych 45) od
+  // „naozaj nula zhliadnutí“ (→ 10). Bez toho by video s nulou dostalo viac
   // než video s 1 000 zhliadnutiami, čo je nezmysel.
   let base = 45;
   if (typeof views === "number" && Number.isFinite(views)) {
