@@ -210,15 +210,36 @@ evidence.plan = {
 head("4) REVIEW — Accept / Edit / Reject (pred akýmkoľvek zápisom do osi)");
 const byKind = (kind: string) => plan.decisions.find((d) => d.style?.kind === kind);
 const textDecision = byKind("typography") ?? plan.decisions[0];
-const motionDecision = plan.decisions.find((d) => d.style?.kind === "motion" && d.id !== textDecision.id) ?? textDecision;
-const rejectedDecision = plan.decisions.find((d) => d.id !== textDecision.id && d.id !== motionDecision.id) ?? plan.decisions[plan.decisions.length - 1];
+/**
+ * POZOR (priznaná chyba merania, krok 23): nie každý recept má rozhodnutie typu
+ * „motion". Keď ho nemá, stará verzia runnera vzala TEXTové rozhodnutie a zapísala
+ * do toho istého kľúča druhú úpravu — tým sa textová úprava ticho stratila a beh
+ * hlásil PREVIEW PARITY — FAIL, hoci appka bola v poriadku. Teraz:
+ *  - pohybové rozhodnutie musí byť INÉ ako textové (inak žiadna pohybová úprava),
+ *  - úpravy sa skladajú cez merge, takže sa nemôžu navzájom prepísať.
+ */
+const motionDecision =
+  plan.decisions.find((d) => d.style?.kind === "motion" && d.id !== textDecision.id) ??
+  plan.decisions.find((d) => d.id !== textDecision.id && typeof (d.style?.action as { punchInScale?: number } | undefined)?.punchInScale === "number");
+const rejectedDecision =
+  plan.decisions.find((d) => d.id !== textDecision.id && d.id !== motionDecision?.id) ??
+  plan.decisions[plan.decisions.length - 1];
 
-const edits = {
+const edits: Record<string, { typographyText?: string; punchInScale?: number; noteSk?: string }> = {
   [textDecision.id]: { typographyText: "UPRAVENÉ POUŽÍVATEĽOM: 3 000 €", noteSk: "kratšie, bez bodky" },
-  [motionDecision.id]: { punchInScale: 1.3 },
 };
+if (motionDecision && motionDecision.id !== textDecision.id) {
+  edits[motionDecision.id] = { ...(edits[motionDecision.id] ?? {}), punchInScale: 1.3 };
+}
+line("pohybové rozhodnutie (samostatné od textu)", motionDecision ? motionDecision.id : "žiadne — recept ho nemá (nevymýšľam ho)");
+/**
+ * Pohybovú úpravu (priblíženie 130 %) vyžadujem LEN vtedy, keď recept naozaj má
+ * samostatné pohybové rozhodnutie. Recepty z meraných referencií (napr. AI_CINEMATIC_TAKE)
+ * pohybový krok nemajú — vtedy by jej absencia nebola chyba, ale výmysel.
+ */
+const motionEditRequested = Boolean(motionDecision && motionDecision.id !== textDecision.id);
 line("ACCEPT (prijaté)", 2);
-line("EDIT (upravené)", `${textDecision.id} (text) + ${motionDecision.id} (priblíženie 130 %)`);
+line("EDIT (upravené)", `${textDecision.id} (text)` + (motionDecision && motionDecision.id !== textDecision.id ? ` + ${motionDecision.id} (priblíženie 130 %)` : " — pohyb recept nemá, preto žiadna pohybová úprava"));
 line("REJECT (zamietnuté)", rejectedDecision.id);
 line("apply sa spustí len na", "prijaté rozhodnutia (zamietnuté sa do osi nedostane)");
 
@@ -229,7 +250,7 @@ const previewReview = reviewStyleDecision(
 );
 line("kontrola úpravy (čistá funkcia)", previewReview.changedSk.join("; ") || "—");
 evidence.review = {
-  prijate: [textDecision.id, motionDecision.id],
+  prijate: motionDecision && motionDecision.id !== textDecision.id ? [textDecision.id, motionDecision.id] : [textDecision.id],
   upravene: edits,
   zamietnute: [rejectedDecision.id],
 };
@@ -295,7 +316,7 @@ say("\n(Snapshot vytvorí Apply ako prvý krok — bez verzie sa neaplikuje nič
 
 head("6) APPLY → COMMAND MANAGER → CANONICAL TIMELINE");
 const report = applyStylePlan(coreEngine, plan, {
-  decisionIds: [textDecision.id, motionDecision.id],
+  decisionIds: motionDecision && motionDecision.id !== textDecision.id ? [textDecision.id, motionDecision.id] : [textDecision.id],
   edits,
   snapshotLabelSk: "Krok 16 — dôkaz Style → Timeline",
   now: 1759219200000,
@@ -370,7 +391,7 @@ line("zamietnuté rozhodnutie v osi", rejectedEffect.length === 0 ? "žiadny kli
 const editedTextClip = (afterDetail.klipy as { id: string; text: string | null }[]).find((c) => c.text === "UPRAVENÉ POUŽÍVATEĽOM: 3 000 €");
 line("upravený text v canonical klipe", editedTextClip ? `áno (${editedTextClip.id})` : "NIE");
 const editedScaleClip = (afterDetail.klipy as { id: string; scale: number }[]).find((c) => c.scale === 130);
-line("upravené priblíženie 130 % v klipe", editedScaleClip ? `áno (${editedScaleClip.id})` : "NIE");
+line("upravené priblíženie 130 % v klipe", editedScaleClip ? `áno (${editedScaleClip.id})` : (motionEditRequested ? "NIE" : "nepožadované — recept nemá pohybové rozhodnutie"));
 
 evidence.po = {
   fingerprint: describe(after),
@@ -512,7 +533,7 @@ const chainOk =
   changed &&
   before.audioJson === after.audioJson &&
   Boolean(editedTextClip) &&
-  Boolean(editedScaleClip) &&
+  (!motionEditRequested || Boolean(editedScaleClip)) &&
   rejectedEffect.length === 0 &&
   previewHasEditedText &&
   rollback.ok &&
