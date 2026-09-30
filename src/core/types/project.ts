@@ -73,7 +73,15 @@ export interface TransformConfig {
 }
 
 export interface TransitionConfig {
-  type: 'cut' | 'fade' | 'crossfade' | 'dissolve' | 'wipeLeft' | 'wipeRight' | 'zoomIn' | 'zoomOut' | 'slideLeft' | 'slideRight';
+  /**
+   * Typ prechodu. Prvá časť je pôvodný canonical slovník; druhá časť (krok 25)
+   * sú typy, ktoré používa rozhranie „Prechody“ a ktoré vieme vykresliť do
+   * videa cez ffmpeg `xfade`. Kinematické efekty (glitch, otras kamery…) tu
+   * zámerne NIE sú — tie sa vykresliť nedajú a appka to povie.
+   */
+  type:
+    | 'cut' | 'fade' | 'crossfade' | 'dissolve' | 'wipeLeft' | 'wipeRight' | 'zoomIn' | 'zoomOut' | 'slideLeft' | 'slideRight'
+    | 'slide_up' | 'slide_down' | 'slide_up_left' | 'flash_white' | 'flash_black' | 'iris_circle' | 'film_burn';
   duration: number;
 }
 

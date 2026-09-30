@@ -3853,6 +3853,17 @@ app.post("/api/export/burn-captions", (req, res) => {
   const width = probe?.width ?? spec.width;
   const height = probe?.height ?? spec.height;
 
+  // KROK 25 — prechody potrebujú konštantnú snímkovú frekvenciu (ffmpeg `xfade`
+  // inak odmietne pracovať). Keď ju nevieme zistiť, radšej jasná chyba vopred
+  // než rozbitý render na konci.
+  if (spec.transitions && spec.transitions.length > 0 && !probe?.fps) {
+    return res.status(400).json({
+      success: false,
+      errorSk:
+        "Prechody sa nedajú vykresliť: nepodarilo sa zistiť snímkovú frekvenciu videa (ffmpeg ju potrebuje). Skús to znova alebo použi video s bežnou frekvenciou (25/30/50/60 fps).",
+    });
+  }
+
   const built = buildAssForCut({
     segments: spec.segments,
     keepRanges: spec.keepRanges,
@@ -3974,6 +3985,8 @@ app.post("/api/export/burn-captions", (req, res) => {
       // KROK 24 — merané zosúladenie svetla z ich videí. Keď prišla vypočítaná
       // korekcia, ide do linky; keď nie, render vyzerá presne ako doteraz.
       ...(spec.lightCorrection ? { lightCorrection: spec.lightCorrection } : {}),
+      // KROK 25 — prechody na spojoch (ffmpeg `xfade`). Bez nich sa nemení nič.
+      ...(spec.transitions && spec.transitions.length > 0 ? { transitions: spec.transitions } : {}),
       ...(built.clipDurationSec > 0 ? { outputDurationSec: built.clipDurationSec } : {}),
       ...(probe?.fps ? { sourceFps: probe.fps } : {}),
       // Rozmery rámu idú do linky LEN pre priblíženie (aby orezalo na presne tie
@@ -3991,6 +4004,11 @@ app.post("/api/export/burn-captions", (req, res) => {
   const extraParts: string[] = [];
   if (overlayInputs.length > 0) extraParts.push(`${overlayInputs.length} vrstiev`);
   if (spec.zoom.length > 0) extraParts.push(`${spec.zoom.length} priblížení`);
+  if (spec.transitions && spec.transitions.length > 0) {
+    extraParts.push(
+      `${spec.transitions.length} prechodov (${[...new Set(spec.transitions.map((t: any) => t.ffmpeg))].join(", ")})`,
+    );
+  }
   if (spec.lightCorrection) {
     extraParts.push(
       `svetlo podľa referencie (jas ${spec.lightCorrection.ffmpegBrightness >= 0 ? "+" : ""}${spec.lightCorrection.ffmpegBrightness.toFixed(3)}, kontrast ×${spec.lightCorrection.ffmpegContrast.toFixed(3)})`,

@@ -1,0 +1,90 @@
+
+Zdroj: /home/user/referencie/aikt-Db6EKCpOpLo.mp4
+Appka: http://127.0.0.1:3000
+
+================================================================================================
+1) CANONICAL OS — reálne video, dva skutočné strihy
+================================================================================================
+úseky na video stope ................................ 0–4 s, 6–10 s, 12–16 s
+očakávaná dĺžka bez prechodov ....................... 12.00 s
+titulkov na osi ..................................... 6
+
+================================================================================================
+2) PRECHODY CEZ COMMANDMANAGER (canonical zmena, nie plán)
+================================================================================================
+prechod na seg-1 .................................... crossfade (0.4 s)
+prechod na seg-2 .................................... dissolve (0.5 s)
+zmenila sa canonical os ............................. true
+očakávané prekrytie ................................. 0,90 s (0,40 + 0,50) → video má byť kratšie
+
+================================================================================================
+3) ZADANIE PRE RENDER + FFMPEG LINKA
+================================================================================================
+zdroj nahraný v appke ............................... 28335214-bfad-484b-9258-ce635e8c4ae0__aikt-Db6EKCpOpLo.mp4
+dá sa exportovať .................................... áno
+prechody v zadaní ................................... [{"junctionIndex":0,"ffmpeg":"fade","durationSec":0.4},{"junctionIndex":1,"ffmpeg":"dissolve","durationSec":0.5}]
+  • Prechody: 2 sa vykreslí (fade, dissolve), spolu prekrytie 0.90 s.
+  • – prechod „crossfade“ na spoji 01 (0.40 s)
+  • – prechod „dissolve“ na spoji 12 (0.50 s)
+  • Zvuk na spojoch s prechodom sa prelína (acrossfade) — je to dôsledok prechodu, ktorý si nastavil; spoj bez prechodu necháva zvuk nedotknutý.
+xffade v linke (s prechodmi) ........................ áno
+acrossfade v linke (s prechodmi) .................... áno
+xfade v linke (kontrolný beh) ....................... NIE (správne)
+  • xfade=transition=fade:duration=0.400:offset=3.600
+  • xfade=transition=dissolve:duration=0.500:offset=7.100
+
+================================================================================================
+4) DVA BEHY — s prechodmi a bez nich (inak totožné zadanie)
+================================================================================================
+
+  ▸ A) KONTROLNÝ BEH — bez prechodov (obyčajné strihy)
+    jobId ........................................... d3e17e72-0e8b-481c-9d2a-291dfd94368f
+      • server: Rozmery som si overil zo súboru: 720×1280 (prehliadač hlásil 1080×1920) — titulky sa kreslia v skutočnom rozmere videa.
+      • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+      • server: Pri 1 titulku nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).
+      • server: Zvýrazňovanie hovoreného slova je zapnuté — mám časovanie slov z automatických tituliek.
+      • server: Titulky majú animáciu vstupu (pop) — týka sa objavenia titulku. Počas čítania text stojí.
+      • server: 11 slov padli do vystrihnutých častí — zmizli spolu s nimi (titulky nič nedopovedajú, čo v klipe nie je).
+      • server: 3 slová strih preskolil — orežú sa na hranicu strihu, aby nelietali cez nový začiatok klipu.
+      • server: Jeden titulok ležal celý vo vystrihnutej časti — vo výsledku nie je.
+    stav renderu .................................... done
+    súbor ........................................... /home/user/kontrola-prechody/bez-prechodov.mp4 (2702916 B)
+    dĺžka podľa ffmpeg .............................. 12.000 s
+
+  ▸ B) BEH S PRECHODMI (crossfade 0,4 s + dissolve 0,5 s)
+    jobId ........................................... a7918837-71ab-45bd-9fa4-e2c9ef4991d6
+      • server: Rozmery som si overil zo súboru: 720×1280 (prehliadač hlásil 1080×1920) — titulky sa kreslia v skutočnom rozmere videa.
+      • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+      • server: Pri 1 titulku nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).
+      • server: Zvýrazňovanie hovoreného slova je zapnuté — mám časovanie slov z automatických tituliek.
+      • server: Titulky majú animáciu vstupu (pop) — týka sa objavenia titulku. Počas čítania text stojí.
+      • server: 11 slov padli do vystrihnutých častí — zmizli spolu s nimi (titulky nič nedopovedajú, čo v klipe nie je).
+      • server: 3 slová strih preskolil — orežú sa na hranicu strihu, aby nelietali cez nový začiatok klipu.
+      • server: Jeden titulok ležal celý vo vystrihnutej časti — vo výsledku nie je.
+    stav renderu .................................... done
+    súbor ........................................... /home/user/kontrola-prechody/s-prechodmi.mp4 (5135063 B)
+    dĺžka podľa ffmpeg .............................. 11.100 s
+
+================================================================================================
+5) MERANIE — čo prechody naozaj spravili
+================================================================================================
+dĺžka bez prechodov ................................. 12.000 s
+dĺžka s prechodmi ................................... 11.100 s
+rozdiel (meraný) .................................... 0.900 s
+rozdiel (očakávaný = súčet prekrytí) ................ 0.900 s
+sedí to (prechod naozaj skrátil video) .............. ÁNO
+
+bez prechodov: rozdiel susedov / stred .............. 13848 / 7369
+s prechodmi: rozdiel susedov / stred ................ 13634 / 4294
+stred je zmes oboch (menší rozdiel než susedia) ..... ÁNO (prelína sa)
+
+================================================================================================
+6) VERDIKT
+================================================================================================
+Prechody sa dostali z canonical osi do hotového videa: xfade je v linke a video je kratšie presne o súčet prekrytí.
+Klasifikácia:
+  • prechod v canonical osi (CommandManager) ............... UNIT/REAL (tento beh)
+  • xfade + acrossfade v renderi ........................... REAL EXPORT VERIFIED (tento beh)
+  • dĺžka a obsah na spoji (merané z MP4) .................. REAL MEDIA (tento beh)
+  • náhľad v prehliadači ................................... NOT VERIFIED (v prostredí nie je DOM)
+dôkaz ..................................................... /home/user/kontrola-prechody/prechody-merania.json

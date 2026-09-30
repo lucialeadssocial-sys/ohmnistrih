@@ -13,6 +13,7 @@
  */
 
 import { ProjectModel, ClipModel } from "../types/project";
+import { buildTransitionPlan, segmentsForTransitions, type CanonicalSegmentForTransitions } from "./transitions";
 import { clampWordsToWindow, wordsToAbsolute } from "../transcript/wordTiming";
 import type { CaptionStyleId } from "./subtitleRender";
 
@@ -86,6 +87,8 @@ export interface CanonicalBurnRequest {
   height: number;
   segments: { start: number; end: number; text: string; words?: { word: string; start: number; end: number }[] }[];
   keepRanges: { start: number; end: number; scalePercent?: number; keyframes?: CanonicalZoomKeyframe[] }[];
+  /** KROK 25 — prechody na spojoch úsekov (prechody z canonical klipoch). */
+  transitions?: { junctionIndex: number; ffmpeg: string; durationSec: number }[];
   fontFamily?: string;
   /** Priblíženia z canonical osi (reálne sa vykreslia v obraze). */
   zoom?: CanonicalZoomSpec[];
@@ -611,6 +614,30 @@ export function buildCanonicalExportPlan(
   }
   const zoomWindows = keepRanges.length === 0 && zoom.length > 0 ? zoom : [];
 
+  // KROK 25 — prechody: čítajú sa z canonical klipov (`transitions.in` na
+  // vstupe úseku). Nič sa nevykladá z rozhrania — zdrojom pravdy je os.
+  const videoClipsForTransitions: any[] = [];
+  for (const track of project.tracks) {
+    if (track.type !== "video" || !track.visible) continue;
+    for (const clip of track.clips) {
+      if (clip.type === "video") videoClipsForTransitions.push(clip);
+    }
+  }
+  const transitionPlan = buildTransitionPlan(segmentsForTransitions(videoClipsForTransitions));
+  for (const reason of transitionPlan.unsupportedSk) unsupportedSk.push(reason);
+  if (transitionPlan.transitions.length > 0) {
+    notesSk.push(transitionPlan.summarySk);
+    for (const t of transitionPlan.transitions) notesSk.push(`– ${t.labelSk}`);
+    notesSk.push(
+      "Zvuk na spojoch s prechodom sa prelína (acrossfade) — je to dôsledok prechodu, ktorý si nastavil; spoj bez prechodu necháva zvuk nedotknutý.",
+    );
+  } else if (
+    transitionPlan.unsupportedSk.length === 0 &&
+    segmentsForTransitions(videoClipsForTransitions).some((seg: CanonicalSegmentForTransitions) => seg.transitionIn)
+  ) {
+    notesSk.push(transitionPlan.summarySk);
+  }
+
   const request: CanonicalBurnRequest = {
     uploadId: upload.uploadId,
     uploadName: upload.uploadName,
@@ -623,6 +650,15 @@ export function buildCanonicalExportPlan(
     ...(zoomWindows.length > 0 ? { zoom: zoomWindows } : {}),
     ...(baseFilter !== "NONE" ? { baseFilter } : {}),
     ...(overlays.length > 0 ? { overlays } : {}),
+    ...(transitionPlan.transitions.length > 0
+      ? {
+          transitions: transitionPlan.transitions.map((t) => ({
+            junctionIndex: t.junctionIndex,
+            ffmpeg: t.ffmpeg,
+            durationSec: t.durationSec,
+          })),
+        }
+      : {}),
   };
 
   const parity = canonicalExportParity(project, request);

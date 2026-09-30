@@ -99,6 +99,7 @@ import { computeSignals, flowDoneCount, nextFlowTool, type LiveSignal } from "./
 import { canonicalCaptionClips } from "./core/export/canonicalExport";
 import { mediaEngine } from "./core/media/mediaEngine";
 import { coreEngine } from "./core";
+import { mapStudioTransitionsToClips } from "./core/export/transitions";
 import { applyStylePlan, rollbackStyleApply } from "./core/style/styleApply";
 import {
   VideoProjectSettings,
@@ -2521,6 +2522,54 @@ function MainApp() {
     setTimeout(() => setToastMessage(null), 3800);
   };
 
+  /**
+   * KROK 25 — prechody z rozhrania sa ukladajú AJ do canonical osi.
+   *
+   * Dovtedy žili len v stave rozhrania (a prehrávač ich vedel prehrať), ale do
+   * videa sa nedostali. Tu sa prechod na strih zapíše na klip (`transitions.in`)
+   * cez CommandManager — takže ho vidí náhľad aj export. Keď na tom čase strih
+   * na osi nie je, appka to povie a nič nepredstiera.
+   */
+  const applyTransitionsToTimeline = useCallback((next: VideoTransition[]) => {
+    setTransitions(next);
+    const project = coreEngine.getProject();
+    if (!project) return;
+    const videoClips: any[] = [];
+    for (const track of project.tracks) {
+      if (track.type !== "video" || !(track as any).visible) continue;
+      for (const clip of track.clips) {
+        if (clip.type === "video") videoClips.push(clip);
+      }
+    }
+    if (videoClips.length < 2) {
+      showToast(
+        language === "sk"
+          ? "Prechody: zatiaľ nie je čo spájať — na videu treba aspoň dva úseky (najprv použi prestrihy)."
+          : "Transitions: need at least two segments on the video track.",
+      );
+      return;
+    }
+    const mapping = mapStudioTransitionsToClips(
+      videoClips as any,
+      next.map((t) => ({ timestamp: t.timestamp, duration: t.duration, type: t.type })),
+    );
+    let applied = 0;
+    for (const update of mapping.updates) {
+      const clip = videoClips.find((c) => c.id === update.clipId);
+      if (!clip) continue;
+      const existing = (clip.transitions ?? {}) as any;
+      const merged = update.transitionIn
+        ? { ...existing, in: { type: update.transitionIn.type, duration: update.transitionIn.duration } }
+        : { ...(existing.out ? { out: existing.out } : {}) };
+      const ok = coreEngine.updateClipProps(update.clipId, { transitions: merged } as any);
+      if (ok) applied++;
+    }
+    const messages = [mapping.summarySk, ...mapping.unsupportedSk, ...mapping.unmatchedSk];
+    if (messages.length > 0) showToast(messages.join(" "));
+    return applied;
+  }, [language, showToast]);
+
+
   // Handle Play/Pause with robust playback state checks
   const handleTogglePlay = useCallback((forceState?: boolean) => {
     const video = videoRef.current;
@@ -3959,7 +4008,7 @@ function MainApp() {
                         duration={duration}
                         onSeek={handleSeek}
                         transitions={transitions}
-                        onChangeTransitions={setTransitions}
+                        onChangeTransitions={applyTransitionsToTimeline}
                         language={language}
                         cuts={jumpSequence ? jumpSequence.markers.map((m: AICutMarker) => ({ id: m.id, time: m.start, label: m.reasonSk })) : []}
                       />
