@@ -501,6 +501,19 @@ export const TOOL_GUIDES: ToolGuide[] = [
     ],
   },
   {
+    id: "own_visual",
+    title: "Vlastný vizuál (obrázok do videa)",
+    category: "toolbox",
+    what: "Vytvorí alebo prinesie obrázok do videa: nakreslí kartu v štýle tvojho štýlu, nájde obrázok vo voľnej knižnici, vezme súbor z disku/telefónu, alebo skúsi AI obrázok (a povie pravdu, ak provider nemôže).",
+    when: "Keď chceš do videa vizuál (kartu s číslom, fotku, ilustráciu) a nemáš ho poruke — alebo keď chceš, aby vizuál sedel s paletou a typografiou tvojho štýlu.",
+    need: ["text alebo číslo (môže byť z tvojho prepisu) alebo obrázok/súbor", "podľa cesty aj internet (voľná knižnica)"],
+    steps: [
+      "Otvor Vlastný vizuál a vyber cestu: vytvoriť, knižnica, súbor, alebo AI.",
+      "Pri karte si vyber štýl a napíš text (alebo klikni na slovo z videa).",
+      "Klikni na Pridať do videa — vizuál sa zapíše do tvojej časovej osi.",
+    ],
+  },
+  {
     id: "pro_toolbox",
     title: "Toolbox (veľa nástrojov v jednom)",
     category: "toolbox",
@@ -647,6 +660,7 @@ export function guideFor(id: string): ToolGuide | undefined {
 /** Nástroje, ktoré stačia na bežné video (jednoduchý režim). Ostatné ostávajú dostupné — nič sa neruší. */
 export const SIMPLE_MODE_TABS: string[] = [
   "media_manager",
+  "own_visual",
   "raw",
   "jump",
   "captions",

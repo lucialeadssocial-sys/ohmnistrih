@@ -56,6 +56,17 @@ import {
   probeVideoFile,
 } from "./src/core/export/ffmpegEnv";
 import {
+  buildStyleCardSpec,
+  STYLE_CARD_KINDS,
+  type StyleCardKind,
+} from "./src/core/visual/styleCard";
+import {
+  openverseDetailUrl,
+  openverseSearchUrl,
+  processOpenverseResponse,
+  type LibrarySearchResult,
+} from "./src/core/visual/freeLibrary";
+import {
   LIGHT_MEASURE,
   computeLightCorrection,
   lightMeasureSummarySk,
@@ -4134,6 +4145,277 @@ app.post("/api/export/burn-captions/cancel", (req, res) => {
 });
 
 /** 3c) Stiahnutie / prehratie hotového klipu (len z adresára exportov). */
+/**
+ * KROK 27 — VLASTNÝ VIZUÁL (tri reálne cesty).
+ *
+ * 1) `POST /api/visual/card` — lokálne vygenerovaná karta v štýle videa (ffmpeg).
+ * 2) `GET  /api/library/search` — voľná knižnica (Openverse, licencie komerčne použiteľné).
+ * 3) `POST /api/library/fetch`  — stiahne vybraný obrázok (server overí voči knižnici).
+ * 4) `POST /api/visual/ai-generate` — reálny pokus o AI obrázok; keď provider nemôže,
+ *    vráti PRESNÚ chybu (žiadne predstieranie, žiadny fake úspech).
+ */
+const VISUAL_DIR = path.join(DATA_DIR, "visuals");
+if (!fs.existsSync(VISUAL_DIR)) fs.mkdirSync(VISUAL_DIR, { recursive: true });
+
+const VISUAL_LIMITS = {
+  textMax: 180,
+  minSize: 256,
+  maxSize: 2160,
+  libraryPageSize: 12,
+} as const;
+
+app.post("/api/visual/card", (req, res) => {
+  const found = findFfmpegPath();
+  if (!found) return res.status(503).json({ success: false, errorSk: FFMPEG_MISSING_SK });
+
+  const kind = String(req.body?.kind ?? "headline") as StyleCardKind;
+  const recipeId = String(req.body?.recipeId ?? "");
+  const text = String(req.body?.text ?? "");
+  const subText = String(req.body?.subText ?? "");
+  const width = Number(req.body?.width ?? 1080);
+  const height = Number(req.body?.height ?? 1920);
+
+  if (text.length > VISUAL_LIMITS.textMax || subText.length > VISUAL_LIMITS.textMax) {
+    return res.status(400).json({
+      success: false,
+      errorSk: `Text je dlhý (${Math.max(text.length, subText.length)} znakov). Karta unesie najviac ${VISUAL_LIMITS.textMax} — dlhý text patrí do titulkov, nie na kartu.`,
+    });
+  }
+  if (
+    !Number.isFinite(width) || !Number.isFinite(height) ||
+    width < VISUAL_LIMITS.minSize || height < VISUAL_LIMITS.minSize ||
+    width > VISUAL_LIMITS.maxSize || height > VISUAL_LIMITS.maxSize
+  ) {
+    return res.status(400).json({
+      success: false,
+      errorSk: `Veľkosť karty musí byť ${VISUAL_LIMITS.minSize}–${VISUAL_LIMITS.maxSize} px (dostal som ${width}×${height}).`,
+    });
+  }
+
+  const spec = buildStyleCardSpec({ recipeId, kind, text, subText, width, height, measured: req.body?.measured ?? null });
+  if (!spec.ok) {
+    return res.status(400).json({ success: false, errorSk: spec.errorSk, spec });
+  }
+
+  const stamp = randomUUID().slice(0, 8);
+  const assPath = path.join(VISUAL_DIR, `card-${stamp}.ass`);
+  const outPath = path.join(VISUAL_DIR, `card-${stamp}.png`);
+  const bg = spec.palette.background.replace("#", "0x");
+
+  const filters: string[] = [];
+  // Vzor (halftone) — deterministická mriežka v akcentnej farbe.
+  if (spec.pattern.boxCount > 0) {
+    const cols = Math.ceil(Math.sqrt(spec.pattern.boxCount * (width / height)));
+    const rows = Math.ceil(spec.pattern.boxCount / cols);
+    const cellW = width / cols;
+    const cellH = height / rows;
+    const size = Math.max(2, Math.round(Math.min(cellW, cellH) * 0.34));
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = Math.round(c * cellW + cellW / 2 - size / 2);
+        const y = Math.round(r * cellH + cellH / 2 - size / 2);
+        filters.push(`drawbox=x=${x}:y=${y}:w=${size}:h=${size}:color=${spec.palette.accent}@0.18:t=fill`);
+      }
+    }
+  }
+  if (spec.assContent) {
+    fs.writeFileSync(assPath, spec.assContent, "utf-8");
+    filters.push(`ass=${assPath.replace(/\\/g, "/")}`);
+  }
+  if (filters.length === 0) filters.push("null");
+
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel", "error",
+    "-f", "lavfi",
+    "-i", `color=c=${bg}:s=${width}x${height}`,
+    "-vf", filters.join(","),
+    "-frames:v", "1",
+    outPath,
+  ];
+  const run = spawnSync(found.path, args, { encoding: "utf-8", timeout: 120_000 });
+  const ok = run.status === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
+
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      errorSk: `Kartu sa nepodarilo vygenerovať (ffmpeg kód ${run.status}). ${String(run.stderr ?? "").split("\n").slice(-2).join(" ").trim()}`,
+      spec: { ...spec, assContent: "" },
+    });
+  }
+
+  const bytes = fs.readFileSync(outPath);
+  const name = `karta-${recipeId.toLowerCase()}-${kind}-${stamp}.png`;
+  res.json({
+    success: true,
+    name,
+    bytes: bytes.length,
+    mimeType: "image/png",
+    pngBase64: bytes.toString("base64"),
+    width,
+    height,
+    spec: { ...spec, assContent: "" },
+    honestySk: "Karta je nakreslená z palety a typografie receptu — nie je to fotografia ani AI obrázok. Text si dodal ty (alebo je z tvojho prepisu).",
+  });
+});
+
+/** Stav AI generovania obrázkov — appka ho zisťuje reálnym pokusom, nič nepredstiera. */
+app.post("/api/visual/ai-generate", async (req, res) => {
+  const prompt = String(req.body?.prompt ?? "").trim();
+  if (prompt.length < 3) {
+    return res.status(400).json({ success: false, errorSk: "Napíš, čo má obrázok zobrazovať (aspoň 3 znaky)." });
+  }
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
+  if (!apiKey) {
+    return res.status(503).json({
+      success: false,
+      providerAvailable: false,
+      errorSk: "AI generovanie obrázkov nemá kľúč — v .env nie je GEMINI_API_KEY. Appka ti preto žiadny obrázok nevygeneruje (a nebude predstierať, že áno).",
+    });
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const answer = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+    const payload: any = await answer.json().catch(() => null);
+    if (!answer.ok || payload?.error) {
+      const status = payload?.error?.code ?? answer.status;
+      const message = String(payload?.error?.message ?? answer.statusText ?? "");
+      const limitZero = /limit: 0/.test(message);
+      return res.status(200).json({
+        success: false,
+        providerAvailable: false,
+        providerStatus: status,
+        errorSk: limitZero
+          ? "AI generovanie obrázkov je na tvojom kľúči nedostupné: obrázkové modely majú limit 0 (free tier). Použi lokálny generátor kariet alebo voľnú knižnicu — tie fungujú bez providera."
+          : `AI generovanie zlyhalo (kód ${status}): ${message.slice(0, 300)}`,
+        providerMessage: message.slice(0, 500),
+      });
+    }
+
+    const parts = payload?.candidates?.[0]?.content?.parts ?? [];
+    const imagePart = parts.find((p: any) => p?.inlineData?.data);
+    if (!imagePart) {
+      return res.status(200).json({
+        success: false,
+        providerAvailable: true,
+        errorSk: "Provider odpovedal, ale neposlal obrázok — nič ti nepodstrčím.",
+      });
+    }
+    return res.json({
+      success: true,
+      providerAvailable: true,
+      model: "gemini-3.1-flash-image",
+      mimeType: imagePart.inlineData.mimeType ?? "image/png",
+      base64: imagePart.inlineData.data,
+      honestySk: "Toto je AI-generovaný obrázok z modelu gemini-3.1-flash-image — nie tvoje médium.",
+    });
+  } catch (error: any) {
+    return res.status(200).json({
+      success: false,
+      providerAvailable: false,
+      errorSk: `AI generovanie neprešlo (sieť/chyba): ${String(error?.message ?? error).slice(0, 200)}`,
+    });
+  }
+});
+
+/** Voľná knižnica: hľadanie obrázkov, ktoré sa smú použiť komerčne a upraviť. */
+app.get("/api/library/search", async (req, res) => {
+  const query = String(req.query.q ?? "").trim();
+  if (query.length < 2) {
+    return res.status(400).json({ success: false, errorSk: "Napíš, čo hľadáš (aspoň 2 znaky)." });
+  }
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+
+  try {
+    const answer = await fetch(openverseSearchUrl(query, page, VISUAL_LIMITS.libraryPageSize), {
+      headers: { "Accept": "application/json", "User-Agent": "OmniStrih/1.0 (local editor)" },
+    });
+    if (!answer.ok) {
+      return res.status(200).json({
+        success: false,
+        provider: "openverse",
+        errorSk: `Knižnica Openverse odpovedala kódom ${answer.status} — skús inú otázku alebo neskôr. Nič som nestrhol.`,
+      } satisfies Partial<LibrarySearchResult> & { success: boolean });
+    }
+    const payload = await answer.json();
+    const processed = processOpenverseResponse(payload, query);
+    return res.json({ success: true, ...processed });
+  } catch (error: any) {
+    return res.status(200).json({
+      success: false,
+      provider: "openverse",
+      errorSk: `Knižnicu sa nepodarilo osloviť: ${String(error?.message ?? error).slice(0, 200)}`,
+    });
+  }
+});
+
+/**
+ * Stiahnutie vybraného obrázka z knižnice.
+ * Bezpečnosť: appka **nesťahuje ľubovoľnú adresu** z prehliadača — pošle sa len
+ * `id`, server si adresu vyžiada znovu od knižnice a stiahne len tú.
+ */
+app.post("/api/library/fetch", async (req, res) => {
+  const id = String(req.body?.id ?? "").trim();
+  if (!id) return res.status(400).json({ success: false, errorSk: "Chýba identifikátor obrázka." });
+
+  try {
+    const detail = await fetch(openverseDetailUrl(id), {
+      headers: { "Accept": "application/json", "User-Agent": "OmniStrih/1.0 (local editor)" },
+    });
+    if (!detail.ok) {
+      return res.status(200).json({
+        success: false,
+        errorSk: `Obrázok sa v knižnici nenašiel (kód ${detail.status}) — nič som nestrhol.`,
+      });
+    }
+    const raw: any = await detail.json();
+    const mapped = processOpenverseResponse({ results: [raw] }, "").items[0] ?? null;
+    if (!mapped) {
+      return res.status(200).json({ success: false, errorSk: "Tento obrázok nemá licenciu, ktorú môžeš použiť — nestrhávam ho." });
+    }
+
+    const file = await fetch(mapped.imageUrl, {
+      headers: { "User-Agent": "OmniStrih/1.0 (local editor)" },
+    });
+    if (!file.ok) {
+      return res.status(200).json({
+        success: false,
+        errorSk: `Súbor sa nepodarilo stiahnuť (kód ${file.status}) — nič som nepridal.`,
+      });
+    }
+    const buffer = Buffer.from(await file.arrayBuffer());
+    if (buffer.length === 0) {
+      return res.status(200).json({ success: false, errorSk: "Stiahnutý súbor je prázdny — nič som nepridal." });
+    }
+    const safeExt = (mapped.imageUrl.split(".").pop() ?? "jpg").split("?")[0].slice(0, 4).toLowerCase();
+    const extension = ["jpg", "jpeg", "png", "webp"].includes(safeExt) ? safeExt : "jpg";
+    const name = `kniznica-${id.slice(0, 8)}.${extension}`;
+
+    return res.json({
+      success: true,
+      name,
+      bytes: buffer.length,
+      mimeType: extension === "png" ? "image/png" : extension === "webp" ? "image/webp" : "image/jpeg",
+      base64: buffer.toString("base64"),
+      item: mapped,
+      attributionRequiredSk: mapped.attributionRequired
+        ? `Tento obrázok vyžaduje uvedenie autora — do popisu videa pridaj: ${mapped.attributionSk}`
+        : `Licencia ${mapped.license.toUpperCase()} autora uvádzať nemusíš, ale zdroj je slušné uviesť: ${mapped.attributionSk}`,
+    });
+  } catch (error: any) {
+    return res.status(200).json({
+      success: false,
+      errorSk: `Sťahovanie zlyhalo: ${String(error?.message ?? error).slice(0, 200)}`,
+    });
+  }
+});
+
 app.get("/api/export/file/:name", (req, res) => {
   const name = String(req.params.name ?? "");
   if (!isSafeStoredName(name)) {

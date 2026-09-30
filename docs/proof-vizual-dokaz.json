@@ -1,0 +1,87 @@
+{
+  "krok": 27,
+  "vstup": {
+    "source": "/home/user/real-media/real_speech.mp4",
+    "segments": "/home/user/real-media/segments-krok18.json",
+    "durationSec": 19.9,
+    "recipe": "AI_CARD_DEMO"
+  },
+  "generovany": {
+    "name": "karta-ai_card_demo-statistic-9df65ac4.png",
+    "bytes": 39139,
+    "spec": {
+      "ok": true,
+      "width": 1080,
+      "height": 1920,
+      "kind": "statistic",
+      "recipeId": "AI_CARD_DEMO",
+      "recipeLabelSk": "AI karta (zadaj → výsledok)",
+      "palette": {
+        "background": "#111111",
+        "text": "#FFFFFF",
+        "accent": "#F08A24"
+      },
+      "paletteSourceSk": "paleta receptu „AI karta (zadaj → výsledok)“ (4 farieb): pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia",
+      "fontName": "DejaVu Sans",
+      "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "uppercase": true,
+      "pattern": {
+        "boxCount": 0,
+        "reasonSk": "recept je čistý (clean) → bez vzoru"
+      },
+      "assContent": "",
+      "ffmpegArgs": [],
+      "notesSk": [
+        "Farby: paleta receptu „AI karta (zadaj → výsledok)“ (4 farieb): pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia.",
+        "Typografia: bold-condensed → DejaVu Sans (VEĽKÉ PÍSMENÁ podľa receptu).",
+        "Vzor: recept je čistý (clean) → bez vzoru."
+      ]
+    }
+  },
+  "kniznica": {
+    "totalFromProvider": 240,
+    "pouzitelnych": 12,
+    "vyradene": 0,
+    "vybrany": {
+      "id": "8131c6a2-91d5-41bc-8a06-1b0da8bc76a8",
+      "title": "The New Study",
+      "creator": "KevinJump",
+      "license": "by",
+      "licenseVersion": "2.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/2.0/",
+      "sourceUrl": "https://www.flickr.com/photos/84199233@N00/3885239844",
+      "imageUrl": "https://live.staticflickr.com/3461/3885239844_2d5311e565_b.jpg",
+      "thumbnailUrl": "https://api.openverse.org/v1/images/8131c6a2-91d5-41bc-8a06-1b0da8bc76a8/thumb/",
+      "width": 1024,
+      "height": 768,
+      "attributionSk": "„The New Study“ — KevinJump, licencia BY 2.0, zdroj: https://www.flickr.com/photos/84199233@N00/3885239844",
+      "attributionRequired": true
+    }
+  },
+  "aiGenerovanie": {
+    "success": false,
+    "providerAvailable": false,
+    "providerStatus": 429,
+    "errorSk": "AI generovanie obrázkov je na tvojom kľúči nedostupné: obrázkové modely majú limit 0 (free tier). Použi lokálny generátor kariet alebo voľnú knižnicu — tie fungujú bez providera.",
+    "providerMessage": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3.1-flash-image\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, "
+  },
+  "importovane": [
+    {
+      "name": "karta-ai_card_demo-statistic-9df65ac4.png",
+      "clipId": "clip_23d8df6d-82ce-45b4-86e2-b2e40836f600",
+      "assetId": "asset_eaa6e5d3-ae26-4f7e-9d86-b272200aafc0"
+    },
+    {
+      "name": "kniznica-8131c6a2.jpg",
+      "clipId": "clip_1fc996c1-5899-409e-85f0-c61378d529d7",
+      "assetId": "asset_4fe76978-c2ba-4ad6-9167-6f55fcbb2769"
+    }
+  ],
+  "apply": {
+    "ok": true,
+    "appliedCount": 7,
+    "brollBefore": 2,
+    "brollAfter": 3
+  },
+  "poznamka": "Render beží existujúcim render engine (žiadny paralelný). AI generovanie obrázkov je závislé na providerovi — appka hlási presnú odpoveď, nič nepredstiera."
+}

@@ -41,7 +41,8 @@ describe("A) kroky sa odškrtávajú len podľa skutočnosti", () => {
   test("A1 — na začiatku nie je hotový ani jeden krok", () => {
     const s = sig();
     const values = Object.values(s);
-    expect(values.length).toBe(10); // 8 pôvodných + 2 z kroku 21 (B-roll, hlas)
+    // 8 pôvodných + 2 z kroku 21 (B-roll, hlas) + 1 z kroku 27 (vlastný vizuál)
+    expect(values.length).toBe(11);
     expect(values.every((v) => v === false)).toBe(true);
   });
 
