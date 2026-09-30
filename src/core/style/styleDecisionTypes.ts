@@ -63,6 +63,13 @@ export interface StyleActionPayload {
   composition?: CompositionKind;
   /** Prepis pre existujúcu transition štruktúru (`TransitionConfig`), keď príde Apply. */
   transitionHint?: "whip_pan" | "punch" | "dissolve" | "none";
+  /**
+   * Ochranné rozhodnutie (rečník zostáva v obraze): smie sa v tomto čase pridať
+   * text? `true` = áno (napr. hook: „pridaj len krátky titulok“),
+   * `false`/neurčené = nie (napr. emocionálna veta — nič cez tvár).
+   * Apply podľa toho vie, čo je ešte v poriadku a čo by pravidlo porušilo.
+   */
+  allowTypography?: boolean;
   /** Poznámka pre človeka (napr. „počas pauzy nepridávaj nové prvky“). */
   noteSk?: string;
 }

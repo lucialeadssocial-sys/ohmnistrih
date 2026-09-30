@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyNoticeSk,
+  applySectionNoticeSk,
   confidenceViewSk,
   consideredRowsSk,
   controlValueLabelSk,
@@ -209,9 +210,13 @@ describe("H) poctivé hlášky obrazovky", () => {
     expect(notice).toMatch(/scén/);
   });
 
-  test("notice o Apply je jednoznačný a je v ňom, že sa nič neukladá", () => {
+  test("notice o Apply je jednoznačný: nič sa nezmení, kým človek neklikne", () => {
     expect(applyNoticeSk()).toMatch(/nie zmenený projekt/);
-    expect(applyNoticeSk()).toMatch(/krok 5–6/);
+    expect(applyNoticeSk()).toMatch(/nezmení/);
+    expect(applyNoticeSk()).toMatch(/snapshot|verzia/);
+    expect(applyNoticeSk()).toMatch(/CommandManager/);
+    expect(applySectionNoticeSk(true)).toMatch(/existujúce príkazy/);
+    expect(applySectionNoticeSk(false)).toMatch(/nie je v tomto náhľade pripojený/);
   });
 });
 

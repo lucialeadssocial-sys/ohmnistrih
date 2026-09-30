@@ -2,6 +2,8 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StyleStudioPanel } from "../src/components/StyleStudioPanel";
 import { STYLE_FIXTURE_NOW, STYLE_FIXTURE_SEGMENTS, styleFixturePlan } from "./fixtures/styleFixture";
+import { coreEngine, createInitialProject } from "../src/core";
+import { applyStylePlan } from "../src/core/style/styleApply";
 import { buildStylePlan } from "../src/core/style/styleIntelligence";
 import { getStyleRecipe } from "../src/core/style/styleRecipes";
 
@@ -33,6 +35,12 @@ const plan = buildStylePlan({
 });
 
 let originalFetch: typeof globalThis.fetch;
+
+/** Report z **reálneho** aplikovania cez reálny CommandManager (nie vymyslený objekt). */
+const APPLY_REPORT = (() => {
+  coreEngine.commandManager.setProject(createInitialProject("Render test — Style Apply"));
+  return applyStylePlan(coreEngine, plan, { now: STYLE_FIXTURE_NOW });
+})();
 beforeEach(() => {
   originalFetch = globalThis.fetch;
   globalThis.fetch = (() => {
@@ -54,11 +62,12 @@ describe("I) obrazovka sa vykreslí a hovorí pravdu", () => {
     expect(out).toContain("Vypočítať návrh (lokálne, bez AI)");
   });
 
-  test("na obrazovke je viditeľné, že sa nič neaplikuje (a nič neukladá)", () => {
+  test("na obrazovke je viditeľné, že plán sa sám neaplikuje", () => {
     const out = html();
     expect(out).toContain("Toto je plán, nie zmenený projekt");
-    expect(out).toContain("krok 5–6");
+    expect(out).toContain("Kým v sekcii");
     expect(out).toContain("Čo tu (zatiaľ) NIE JE");
+    expect(out).toContain("krok 7");
   });
 
   test("generované vizuály sú označené ako nedostupné, nie ako funkcia", () => {
@@ -126,5 +135,32 @@ describe("I) plán sa vykreslí s WHY / WHEN NOT / alternatívou a dôkazmi", ()
     // `fetch` je v tomto teste nastavený tak, že pri volaní vyhodí chybu
     expect(() => html({ initialPlan: plan })).not.toThrow();
     expect(() => html()).not.toThrow();
+  });
+});
+
+describe("J) Apply je v obrazovke poctivo zapojený", () => {
+  test("bez pripojeného CommandManageru obrazovka NEaplikuje a povie to", () => {
+    const out = html({ initialPlan: plan });
+    expect(out).toContain("Apply nie je v tomto náhľade pripojený");
+  });
+
+  test("s pripojeným Apply je vidieť súhlas, výber a počet vybraných", () => {
+    const out = html({ initialPlan: plan, onApplyStylePlan: () => null, onRollbackStyleApply: () => null });
+    expect(out).toContain("Aplikovať do projektu (snapshot → CommandManager)");
+    expect(out).toContain("Rozumiem: aplikovaním sa zmení projekt");
+    expect(out).toContain("Vybrané na aplikovanie");
+    expect(out).toContain("Vybrať všetky");
+    // bez súhlasu je tlačidlo vypnuté a dôvod je napísaný
+    expect(out).toContain("Vyber aspoň jedno rozhodnutie");
+    expect(out).toContain("Apply zapisuje do projektu len cez existujúce príkazy");
+  });
+
+  test("report z aplikovania sa vykreslí s číslami pred/po a stavom audia", () => {
+    const out = html({ initialPlan: plan, initialApplyReport: APPLY_REPORT, onApplyStylePlan: () => null, onRollbackStyleApply: () => null });
+    expect(out).toContain("Aplikované:");
+    expect(out).toContain("Časová os zmenená");
+    expect(out).toContain("NEDOTKNUTÉ");
+    expect(out).toContain("Vrátiť späť (rollback)");
+    expect(out).toContain("Verzia pred zmenou");
   });
 });

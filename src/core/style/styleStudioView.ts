@@ -477,9 +477,19 @@ export function unavailableSignalsSk(): string[] {
   ];
 }
 
-/** Jedna veta, ktorú musí mať každá obrazovka Style Studia na viditeľnom mieste. */
+/**
+ * Jedna veta, ktorá musí byť viditeľná vždy: plán sa **sám** neaplikuje.
+ * Apply existuje (krok 5–6), ale spustí ho len človek — a vždy so snapshotom.
+ */
 export function applyNoticeSk(): string {
-  return "Toto je plán, nie zmenený projekt. Apply (zápis do timeline cez CommandManager so snapshotom a možnosťou vrátenia) je krok 5–6 a zatiaľ nie je implementovaný — preto tu nič neaplikujem ani neukladám.";
+  return "Toto je plán, nie zmenený projekt. Kým v sekcii „4. Aplikovať“ nepotvrdíš súhlas a neklikneš na Aplikovať, nič sa nezmení. Až vtedy vznikne verzia projektu (snapshot) a zmeny idú cez existujúci CommandManager — a dajú sa vrátiť (rollback aj Undo).";
+}
+
+/** Sekcia apply sa v appke správa takto — text pre človeka. */
+export function applySectionNoticeSk(wired: boolean): string {
+  return wired
+    ? "Apply zapisuje do projektu len cez existujúce príkazy: pridať klip (text/vizuál z tvojich médií), zmeniť transformáciu (priblíženie), pridať marker a zapísať rozhodnutie. Žiadny druhý command systém ani render path nevzniká."
+    : "Apply nie je v tomto náhľade pripojený — preto nič neaplikujem. V appke je napojený na existujúci CommandManager.";
 }
 
 export function marksNoticeSk(): string {
