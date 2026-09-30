@@ -15,6 +15,7 @@ import {
   Edit3
 } from "lucide-react";
 import { CaptionProject, CaptionSegment, WordTiming } from "../types";
+import { interpretTranscriptionClientResponse } from "../core/transcript/transcriptionGuard";
 
 interface AutoVideoCaptionsPanelProps {
   currentVideoUrl: string;
@@ -180,10 +181,21 @@ export const AutoVideoCaptionsPanel: React.FC<AutoVideoCaptionsPanelProps> = ({
       setProgress(80);
       const data = await res.json();
 
-      if (!data.success || !data.hasSpeech || !data.segments || data.segments.length === 0) {
+      // Poctivo: CHYBA (preťažený model, sieť, nečitateľná odpoveď) NIE JE to isté ako
+      // "v audio nie je reč". Rozhoduje o tom testovaný modul, nie vetva v komponente.
+      const view = interpretTranscriptionClientResponse(data, isSk);
+
+      if (view.kind === "ERROR") {
+        setIsAnalyzing(false);
+        setNoSpeechDetected(false);
+        showToast(view.toastSk);
+        return;
+      }
+
+      if (view.kind === "NO_SPEECH") {
         setIsAnalyzing(false);
         setNoSpeechDetected(true);
-        showToast(isSk ? "V tomto videu sa nepodarilo nájsť hovorené slovo." : "No spoken speech found in this video.");
+        showToast(view.toastSk);
         return;
       }
 
@@ -191,7 +203,7 @@ export const AutoVideoCaptionsPanel: React.FC<AutoVideoCaptionsPanelProps> = ({
       setStageText(isSk ? "Titulky úspešne vygenerované!" : "Captions generated successfully!");
 
       // 3. Update caption project with new auto-generated segments
-      const newSegments: CaptionSegment[] = data.segments.map((s: any, idx: number) => ({
+      const newSegments: CaptionSegment[] = view.segments.map((s: any, idx: number) => ({
         id: `auto-cap-${Date.now()}-${idx}`,
         start: Number(s.start) || 0,
         end: Number(s.end) || 2,

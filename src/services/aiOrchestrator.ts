@@ -76,8 +76,10 @@ export const INITIAL_PROVIDERS: ProviderQuotaState[] = [
     remainingCreditsPercent: 88,
     consecutiveErrors: 0,
     supportsLocalFallback: true,
-    availableModels: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-8b"],
-    activeModel: "gemini-2.5-flash",
+    // Poznámka (30. 9. 2026): `gemini-2.5-flash` a `gemini-2.5-flash-8b` sú pre nových
+    // používateľov nedostupné (HTTP 404) → orchestrátor ukazuje na aktuálne modely.
+    availableModels: ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"],
+    activeModel: "gemini-3.8-flash",
   },
   {
     providerId: "anthropic",
@@ -319,7 +321,7 @@ export class AIOrchestratorService {
         type: "HOOK_ANALYSIS",
         classification: "AI",
         provider: "gemini",
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         priority: "USER_ACTION",
         status: "COMPLETED",
         progress: 100,
@@ -418,7 +420,7 @@ export class AIOrchestratorService {
     if (this.budgetMode === "ECONOMY") {
       const gemini = this.providers.find(p => p.providerId === "gemini");
       if (gemini && gemini.status === "HEALTHY") {
-        return { provider: "gemini", model: "gemini-2.5-flash-8b", fallbackProvider: "openai" };
+        return { provider: "gemini", model: "gemini-3.5-flash-lite", fallbackProvider: "openai" };
       }
       const openai = this.providers.find(p => p.providerId === "openai");
       if (openai && openai.status === "HEALTHY") {

@@ -1,4 +1,11 @@
 import express from "express";
+import {
+  buildTranscriptionModelChain,
+  classifyTranscriptionResponse,
+  describeTranscriptionErrorSk,
+  isRetryableTranscriptionError,
+  transcriptionOutcomeToResponse,
+} from "./src/core/transcript/transcriptionGuard";
 import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -577,8 +584,9 @@ app.post("/api/keys/test", async (req, res) => {
       const testModels = Array.from(new Set([
         requestedModel,
         "gemini-3.8-flash",
+        "gemini-3.7-flash",
         "gemini-3.5-flash",
-        "gemini-2.5-flash",
+        "gemini-3.5-flash-lite",
       ]));
 
       let lastErrStr = "";
@@ -1470,7 +1478,7 @@ app.post("/api/director/plan", async (req, res) => {
     const candidateKeys = selectCandidateKeysForTask("gemini", "TEXT_REASONING", "gemini-3.8-flash");
 
     if (candidateKeys.length > 0) {
-      const modelCandidates = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+      const modelCandidates = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"];
       const styleRule = qualityMode === "PORTFOLIO"
         ? sk
           ? "Režim PROFESSIONAL PORTFOLIO: rob radšej MENEJ, ale kvalitnejších zásahov. Žiadny efekt len preto, aby tam bol."
@@ -1697,46 +1705,75 @@ Vráť striktne čiste JSON bez markdownu v tomto formáte:
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: keyItem.model || "gemini-3.8-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: audioBase64
+    // Model fallback + retry: preťažený model (503) NESMIE vyzerať ako "žiadna reč".
+    // Rozhodovanie o výsledku je v `src/core/transcript/transcriptionGuard.ts` (testované).
+    const transcriptionModels = buildTranscriptionModelChain(keyItem.model);
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    let response: any = null;
+    let modelUsed: string | undefined;
+    const modelErrors: string[] = [];
+    let lastError: unknown = null;
+
+    for (const model of transcriptionModels) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { inlineData: { mimeType: mimeType, data: audioBase64 } },
+                  { text: promptText }
+                ]
               }
-            },
-            {
-              text: promptText
-            }
-          ]
+            ],
+            config: { responseMimeType: "application/json" }
+          });
+          modelUsed = model;
+          keyItem.lastSuccessfulUse = new Date().toISOString();
+          break;
+        } catch (err: any) {
+          lastError = err;
+          modelErrors.push(`${model}${attempt > 1 ? ` (pokus ${attempt})` : ""}: ${describeTranscriptionErrorSk(err)}`);
+          console.error(`[Transcribe] model ${model}, pokus ${attempt} zlyhal:`, describeTranscriptionErrorSk(err));
+          if (!isRetryableTranscriptionError(err)) break; // iná chyba → skús iný model
+          if (attempt < 2) await sleep(1200);
         }
-      ],
-      config: {
-        responseMimeType: "application/json"
       }
-    });
+      if (response) break;
+    }
+
+    // Nič sa nepredstiera: keď zlyhali všetky modely, vrátime CHYBU s dôvodom.
+    if (!response) {
+      const outcome = {
+        kind: "ERROR" as const,
+        httpStatus: 502,
+        code: "TRANSCRIPTION_FAILED" as const,
+        errorSk: `Prepis zlyhal na strane AI (nie preto, že by v audio nebola reč). Dôvod: ${describeTranscriptionErrorSk(lastError)}`,
+        modelsTried: transcriptionModels
+      };
+      const { httpStatus, body } = transcriptionOutcomeToResponse(outcome);
+      return res.status(httpStatus).json(body);
+    }
 
     const rawText = response.text || "";
     let parsed: any = null;
     try {
       parsed = JSON.parse(rawText);
     } catch (e) {
-      const cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      try {
+        parsed = JSON.parse(rawText.replace(/```json/gi, "").replace(/```/g, "").trim());
+      } catch (e2) {
+        parsed = null;
+      }
     }
 
-    if (!parsed || !parsed.hasSpeech || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
-      return res.json({
-        success: true,
-        hasSpeech: false,
-        message: "V tomto videu sa nepodarilo nájsť hovorené slovo.",
-        segments: []
-      });
-    }
+    const outcome = classifyTranscriptionResponse(parsed, rawText, transcriptionModels, modelUsed);
+    const { httpStatus, body } = transcriptionOutcomeToResponse(outcome);
+    return res.status(httpStatus).json(body);
 
     keyItem.lastSuccessfulUse = new Date().toISOString();
 
@@ -1747,10 +1784,12 @@ Vráť striktne čiste JSON bez markdownu v tomto formáte:
     });
   } catch (err: any) {
     console.error("Error in /api/transcribe-speech:", err);
-    return res.json({
-      success: true,
+    // Poctivo: chyba je chyba. Nikdy ju nevydávame za "v audio nie je reč".
+    return res.status(500).json({
+      success: false,
       hasSpeech: false,
-      message: "V tomto videu sa nepodarilo nájsť hovorené slovo.",
+      error: "TRANSCRIPTION_FAILED",
+      errorSk: `Prepis zlyhal: ${describeTranscriptionErrorSk(err)}`,
       segments: []
     });
   }
