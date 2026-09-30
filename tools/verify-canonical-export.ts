@@ -30,6 +30,9 @@ const recipeArg = valueOf("--recipe");
 // Skúška animovaného priblíženia: keyframy sa do canonical osi zapíšu **cez
 // existujúci CommandManager** (žiadna tichá mutácia modelu).
 const animatedZoomArg = args.includes("--animated-zoom");
+// Skúška vzhľadu vrstvy (otočenie, priesvitnosť, farebný filter) — hodnoty sa
+// zapisujú **cez existujúci CommandManager**, nie tichou zmenou modelu.
+const styledOverlayArg = args.includes("--styled-overlay");
 const outPath = valueOf("--out") ?? "/home/user/export-z-canonical-os.mp4";
 
 /** Podporuje oba tvary: `--plan subor.json` aj `--plan=subor.json`. */
@@ -217,6 +220,37 @@ function diffTwoImagesTop(ff: string, a: string, b: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** Priama zmena dvoch obrázkov vo zvolenom výreze (`crop` syntax ffmpeg). */
+function diffTwoImagesInRegion(ff: string, a: string, b: string, crop: string): number | null {
+  const ex = spawnSync(
+    ff,
+    ["-hide_banner", "-loglevel", "info", "-i", a, "-i", b, "-lavfi",
+     `[0:v][1:v]blend=all_mode=difference,crop=${crop},format=gray,signalstats,metadata=print:file=-`,
+     "-frames:v", "1", "-f", "null", "-"],
+    { encoding: "utf-8" },
+  );
+  const m = `${ex.stdout ?? ""}\n${ex.stderr ?? ""}`.match(/lavfi\.signalstats\.YAVG=([\d.]+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Odchýlka farby (chroma) od šedej vo výreze: |U−128| + |V−128|.
+ * Sivý obraz → nula; výrazne farebný → veľké číslo. Tak sa meria farebný filter.
+ */
+function chromaDeviation(ff: string, image: string, crop: string): number | null {
+  const ex = spawnSync(
+    ff,
+    ["-hide_banner", "-loglevel", "info", "-i", image, "-lavfi",
+     `crop=${crop},signalstats,metadata=print:file=-`, "-frames:v", "1", "-f", "null", "-"],
+    { encoding: "utf-8" },
+  );
+  const text = `${ex.stdout ?? ""}\n${ex.stderr ?? ""}`;
+  const u = text.match(/lavfi\.signalstats\.UAVG=([\d.]+)/);
+  const v = text.match(/lavfi\.signalstats\.VAVG=([\d.]+)/);
+  if (!u || !v) return null;
+  return Math.abs(Number(u[1]) - 128) + Math.abs(Number(v[1]) - 128);
+}
+
 /** Priama zmena dvoch obrázkov v dolnej časti (tam sú titulky). */
 function diffTwoImagesBottom(ff: string, a: string, b: string, workDir: string, tag: string): number | null {
   const ex = spawnSync(
@@ -296,10 +330,10 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   const synth = join(workDir, "synthetic.mp4");
   const gen = spawnSync(ff, [
     "-y", "-hide_banner", "-loglevel", "error",
-    "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30:duration=8",
-    "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+    "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30:duration=12",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
-    "-t", "8", synth,
+    "-t", "12", synth,
   ]);
   if (gen.status !== 0 || !existsSync(synth)) {
     line("syntetický podklad", "NEPODARILO SA vygenerovať (skúška sa preskakuje)");
@@ -307,11 +341,16 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   }
 
   const assPath = join(workDir, "probe.ass");
-  writeFileSync(assPath, "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,OutlineColour,BackColour,Bold,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,DejaVu Sans,72,&H00FFFFFF,&H00000000,&H00000000,-1,100,100,0,0,1,4,0,2,40,40,120,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.50,0:00:07.50,Default,,0,0,0,,SKUSKA LINKY\n", "utf8");
+  writeFileSync(assPath, "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,OutlineColour,BackColour,Bold,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,DejaVu Sans,72,&H00FFFFFF,&H00000000,&H00000000,-1,100,100,0,0,1,4,0,2,40,40,120,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.50,0:00:11.50,Default,,0,0,0,,SKUSKA LINKY\n", "utf8");
 
   const overlayPng = join(workDir, "probe-overlay.png");
   spawnSync(ff, ["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=240x240:d=1", "-frames:v", "1", overlayPng]);
   const overlayOk = existsSync(overlayPng);
+
+  // Lišta na skúšku OTOČENIA: bez otočenia leží vodorovne, pootočená o 90° zvislo.
+  const barPng = join(workDir, "probe-bar.png");
+  spawnSync(ff, ["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=600x120:d=1", "-frames:v", "1", barPng]);
+  const barOk = existsSync(barPng);
 
   const outPath = join(workDir, "synthetic-zoom.mp4");
   const args = buildBurnFfmpegArgs({
@@ -320,7 +359,7 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
     assPath,
     frameSize: { width: 1080, height: 1920 },
     sourceFps: 30,
-    outputDurationSec: 8,
+    outputDurationSec: 12,
     // Dve okná naraz, aby sa dali oddeliť:
     //   2–4 s  … statické priblíženie 130 % (kontrola, že orez funguje),
     //   5–7 s  … animované priblíženie 100 % → 150 % (kontrola, že sa mení v čase).
@@ -336,9 +375,24 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
         ],
       },
     ],
-    ...(overlayOk
-      ? { overlays: [{ path: overlayPng, kind: "image" as const, startSec: 4.2, endSec: 4.8, scalePercent: 100, positionX: 0, positionY: -300 }] }
-      : {}),
+    overlays: [
+      // 4,2–4,8 s: nepriehľadný červený štvorec (referencia pre priesvitnosť aj filter)
+      ...(overlayOk
+        ? [{ path: overlayPng, kind: "image" as const, startSec: 4.2, endSec: 4.8, scalePercent: 100, positionX: 0, positionY: -300 }]
+        : []),
+      // 7–8 s: lišta pootočená o 90° (skúška otočenia)
+      ...(barOk
+        ? [{ path: barPng, kind: "image" as const, startSec: 7, endSec: 8, scalePercent: 100, positionX: 0, positionY: 0, rotation: 90 }]
+        : []),
+      // 8,6–9,4 s: ten istý štvorec, ale na 50 % priesvitný
+      ...(overlayOk
+        ? [{ path: overlayPng, kind: "image" as const, startSec: 8.6, endSec: 9.4, scalePercent: 100, positionX: 0, positionY: -300, opacity: 50 }]
+        : []),
+      // 9,8–10,6 s: ten istý štvorec s čiernobielym filtrom
+      ...(overlayOk
+        ? [{ path: overlayPng, kind: "image" as const, startSec: 9.8, endSec: 10.6, scalePercent: 100, positionX: 0, positionY: -300, filter: "BW" }]
+        : []),
+    ],
   });
   const render = spawnSync(ff, args, { encoding: "utf-8" });
   if (render.status !== 0 || !existsSync(outPath)) {
@@ -416,6 +470,73 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
     }
   }
 
+  // --- Otočenie vrstvy ------------------------------------------------------
+  // Lišta 600×120 pootočená o 90° musí siahať HORE (zvislo), nie do strán.
+  let rotationOk = false;
+  if (barOk) {
+    const srcR = join(workDir, "syn-rot-src.png");
+    const outR = join(workDir, "syn-rot-out.png");
+    if (extractFrame(ff, synth, 7.5, srcR) && extractFrame(ff, outPath, 7.5, outR)) {
+      // Lišta je 600×120 v strede. Zvislá (pootočená) zasiahne pásmo x 44–55 % / y 36–44 %,
+      // vodorovná (nepootočená) pásmo x 60–70 % / y 47–53 %. Presne tie dve porovnávame.
+      const verticalBand = diffTwoImagesInRegion(ff, srcR, outR, "iw*0.11:ih*0.08:iw*0.44:ih*0.36");
+      const horizontalBand = diffTwoImagesInRegion(ff, srcR, outR, "iw*0.10:ih*0.06:iw*0.60:ih*0.47");
+      if (verticalBand !== null && horizontalBand !== null) {
+        line("otočenie 90°: zmena v zvislom pásme (kde má lišta byť)", verticalBand.toFixed(2));
+        line("otočenie 90°: zmena vo vodorovnom pásme (kde byť nemá)", horizontalBand.toFixed(2));
+        rotationOk = verticalBand > 1 && horizontalBand < verticalBand * 0.5;
+      } else {
+        line("otočenie vrstvy", "nedá sa zmerať");
+      }
+    }
+  }
+
+  // --- Priesvitnosť vrstvy --------------------------------------------------
+  // Ten istý štvorec raz nepriehľadný (4,55 s), raz na 50 % (9,0 s):
+  // zmena oproti zdroju musí byť zhruba polovičná.
+  let opacityRatio: number | null = null;
+  if (overlayOk) {
+    const srcO = join(workDir, "syn-op-src.png");
+    const outFull = join(workDir, "syn-op-full.png");
+    const outHalf = join(workDir, "syn-op-half.png");
+    const srcHalf = join(workDir, "syn-op-src-half.png");
+    if (
+      extractFrame(ff, synth, 4.55, srcO) &&
+      extractFrame(ff, outPath, 4.55, outFull) &&
+      extractFrame(ff, synth, 9.0, srcHalf) &&
+      extractFrame(ff, outPath, 9.0, outHalf)
+    ) {
+      // Každý čas sa porovnáva s vlastnou snímkou zdroja — inak meranie porovnáva
+      // dva rôzne okamihy videa a vyjde nezmysel (naozaj sa to stalo: 1,11 namiesto 0,5).
+      const full = diffTwoImages(ff, srcO, outFull);
+      const half = diffTwoImages(ff, srcHalf, outHalf);
+      if (full !== null && half !== null && full > 0) {
+        opacityRatio = half / full;
+        line("priesvitnosť 50 %: zmena oproti zdroju voči nepriehľadnej", `${half.toFixed(2)} / ${full.toFixed(2)} = ${opacityRatio.toFixed(2)} (má byť ~0,5)`);
+      } else {
+        line("priesvitnosť vrstvy", "nedá sa zmerať");
+      }
+    }
+  }
+
+  // --- Farebný filter vrstvy ----------------------------------------------
+  // Červený štvorec: nepriehľadný je výrazne farebný, s filtrom BW je sivý.
+  let filterOk = false;
+  if (overlayOk) {
+    const outFull = join(workDir, "syn-op-full.png");
+    const outBw = join(workDir, "syn-op-bw.png");
+    if (existsSync(outFull) && extractFrame(ff, outPath, 10.2, outBw)) {
+      const chromaFull = chromaDeviation(ff, outFull, "iw*0.15:ih*0.10:iw*0.425:ih*0.28");
+      const chromaBw = chromaDeviation(ff, outBw, "iw*0.15:ih*0.10:iw*0.425:ih*0.28");
+      if (chromaFull !== null && chromaBw !== null) {
+        line("farebný filter BW: odchýlka farby od sivej", `${chromaBw.toFixed(2)} (bez filtra ${chromaFull.toFixed(2)})`);
+        filterOk = chromaFull > 3 && chromaBw < chromaFull * 0.4;
+      } else {
+        line("farebný filter vrstvy", "nedá sa zmerať");
+      }
+    }
+  }
+
   const captionCheck = (() => {
     const srcFrame = join(workDir, "syn-cap-src.png");
     const outFrame = join(workDir, "syn-cap-out.png");
@@ -426,14 +547,24 @@ async function zoomProbeOnSynthetic(ff: string, workDir: string) {
   })();
   line("titulky v obraze (dole) na syntetickom podklade", captionCheck === null ? "nedá sa zmerať" : captionCheck.toFixed(2));
 
-  const pass = sizeOk && zoomOk && animatedOk && (!overlayOk || overlayOkMeasured) && captionCheck !== null && captionCheck > 2;
+  const opacityOk = opacityRatio === null || (opacityRatio > 0.3 && opacityRatio < 0.75);
+  const pass =
+    sizeOk &&
+    zoomOk &&
+    animatedOk &&
+    (!overlayOk || overlayOkMeasured) &&
+    (!barOk || rotationOk) &&
+    opacityOk &&
+    (!overlayOk || filterOk) &&
+    captionCheck !== null &&
+    captionCheck > 2;
   line(
     "VÝSLEDOK SKÚŠKY LINKY",
     pass
-      ? "PASS (statické aj animované priblíženie, vrstva aj titulky naozaj idú do obrazu)"
+      ? "PASS (priblíženie statické aj animované, vrstva, otočenie, priesvitnosť, filter aj titulky idú do obrazu)"
       : "NEPREŠLA — pozri čísla vyššie",
   );
-  return { pass, sizeOk, zoomOk, animatedOk, overlayOkMeasured, captionCheck };
+  return { pass, sizeOk, zoomOk, animatedOk, overlayOkMeasured, rotationOk, opacityRatio, filterOk, captionCheck };
 }
 
 async function main() {
@@ -538,6 +669,30 @@ async function main() {
         okA && okB
           ? `áno — klip „${videoClip.name}“: 100 % → 145 % za ${b.timeOffset.toFixed(2)} s`
           : "NEPODARILO SA zapísať keyframy (command ich odmietol)",
+      );
+    }
+  }
+
+  if (styledOverlayArg) {
+    const { UpdateClipPropsCommand } = await import(join(REPO, "src/core/command/commandSystem.ts"));
+    const projectNow = coreEngine.getProject();
+    const overlayClip = projectNow.tracks
+      .filter((t: any) => t.type === "b-roll" || t.type === "video")
+      .flatMap((t: any) => t.clips)
+      .find((c: any) => c.type === "b-roll" || c.type === "image");
+    if (!overlayClip) {
+      line("vzhľad vrstvy", "PRESKOČENÉ — v canonical osi nie je obrazová vrstva");
+    } else {
+      const okOverlay = coreEngine.commandManager.executeCommand(
+        new UpdateClipPropsCommand("Skúška: vzhľad obrazovej vrstvy (otočenie, priesvitnosť, filter)", overlayClip.id, {
+          rotation: 12,
+          opacity: 60,
+          filter: "BW",
+        }),
+      );
+      line(
+        "vzhľad vrstvy v canonical osi (cez CommandManager)",
+        okOverlay ? `áno — „${overlayClip.name}“: otočenie 12°, priesvitnosť 60 %, filter BW` : "NEPODARILO SA zapísať (command odmietol)",
       );
     }
   }
@@ -653,6 +808,27 @@ async function main() {
     console.log("  POZOR (táto linka nevykresľuje):");
     for (const note of exportPlan.unsupportedSk) console.log(`    – ${note}`);
   }
+  const styledOverlays = (exportPlan.request.overlays ?? []).filter(
+    (o: { rotation?: number; opacity?: number; filter?: string }) =>
+      Math.abs(o.rotation ?? 0) > 0.01 || (o.opacity ?? 100) < 99.5 || (o.filter ?? "NONE") !== "NONE",
+  );
+  if (styledOverlays.length > 0) {
+    line(
+      "vzhľad vrstiev ide do linky",
+      styledOverlays
+        .map(
+          (o: { name: string; rotation?: number; opacity?: number; filter?: string }) =>
+            `„${o.name}“: ${Math.round(o.rotation ?? 0)}°, ${Math.round(o.opacity ?? 100)} %, ${o.filter ?? "NONE"}`,
+        )
+        .join(" · "),
+    );
+  } else if (styledOverlayArg) {
+    line("vzhľad vrstiev ide do linky", "NIE — plán nič také neobsahuje (pozri poznámky vyššie)");
+  }
+  if (exportPlan.request.baseFilter) {
+    line("farebný filter základného videa ide do linky", exportPlan.request.baseFilter);
+  }
+
   const animatedZooms = (exportPlan.request.zoom ?? []).filter((z: { animated?: boolean }) => z.animated) as {
     startSec: number;
     endSec: number;
@@ -712,16 +888,54 @@ async function main() {
       outputPath: "/vystup.mp4",
       assPath: "/titulky.ass",
       keepSegments: exportPlan.request.keepRanges,
-      ...(exportPlan.request.zoom ? { zoomWindows: exportPlan.request.zoom.map((z: any) => ({ clipId: z.clipId, startSec: z.startSec, endSec: z.endSec, scalePercent: z.scale })) } : {}),
+      ...(exportPlan.request.zoom
+        ? {
+            zoomWindows: exportPlan.request.zoom.map((z: any) => ({
+              clipId: z.clipId,
+              startSec: z.startSec,
+              endSec: z.endSec,
+              scalePercent: z.scale,
+              // Pozor: keď sa vynechajú keyframy, náhľad grafu by ukazoval statický
+              // orez a klamal o tom, čo ide do videa (tá istá trieda chyby ako
+              // nezhoda `scale`/`scalePercent` v kroku 9).
+              ...(z.keyframes && z.keyframes.length >= 2
+                ? { keyframes: z.keyframes.map((k: any) => ({ timeSec: k.timeSec, scalePercent: k.scale })) }
+                : {}),
+            })),
+          }
+        : {}),
+      ...(exportPlan.request.baseFilter && exportPlan.request.baseFilter !== "NONE"
+        ? { baseFilter: exportPlan.request.baseFilter }
+        : {}),
       ...((exportPlan.request.overlays ?? []).length > 0
-        ? { overlays: exportPlan.request.overlays!.map((o: any) => ({ path: "/vrstva", kind: o.kind, startSec: o.startSec, endSec: o.endSec, scalePercent: o.scalePercent, positionX: o.positionX, positionY: o.positionY })) }
+        ? {
+            overlays: exportPlan.request.overlays!.map((o: any) => ({
+              path: "/vrstva",
+              kind: o.kind,
+              startSec: o.startSec,
+              endSec: o.endSec,
+              scalePercent: o.scalePercent,
+              positionX: o.positionX,
+              positionY: o.positionY,
+              rotation: o.rotation,
+              opacity: o.opacity,
+              filter: o.filter,
+            })),
+          }
         : {}),
       outputDurationSec: mediaDurationSec,
       frameSize: srcSizeForPreview ?? undefined,
       ...(probeFpsForPreview ? { sourceFps: probeFpsForPreview } : {}),
     });
     const g = graphPreview[graphPreview.indexOf("-filter_complex") + 1] ?? "";
-    console.log(`    vidím v ňom: priblíženie=${/scale=iw\*1\.[0-9]+/.test(g) ? "áno" : "nie"} · vrstvy=${/overlay=/.test(g) ? "áno" : "nie"} · titulky=${/ass=/.test(g) ? "áno" : "nie"}`);
+    console.log(
+      `    vidím v ňom: priblíženie=${/scale=iw\*1\.[0-9]+/.test(g) || /zoompan=/.test(g) ? "áno" : "nie"}` +
+        ` · vrstvy=${/overlay=/.test(g) ? "áno" : "nie"}` +
+        ` · otočenie=${/rotate=/.test(g) ? "áno" : "nie"}` +
+        ` · priesvitnosť=${/colorchannelmixer=aa=/.test(g) ? "áno" : "nie"}` +
+        ` · farebný filter=${/\beq=|hue=|colorchannelmixer=rr=/.test(g) ? "áno" : "nie"}` +
+        ` · titulky=${/ass=/.test(g) ? "áno" : "nie"}`,
+    );
   } catch (err) {
     console.log(`    filter graf sa nedá zobraziť: ${(err as Error).message}`);
   }
@@ -907,7 +1121,8 @@ async function main() {
   );
   console.log("Čo tento výsledok NEznamená:");
   console.log("  • nie je to dôkaz o prehliadači (runner obchádza UI a volá API appky)");
-  console.log("  • farebné filtre, rotácia a priesvitnosť vrstiev sa stále nevykresľujú — viď zoznam vyššie");
+  console.log("  • farebný filter je aproximácia (CSS filtre sú percepčné, ffmpeg lineárne — jas je pripočítanie, nie násobenie)");
+  console.log("  • easing medzi krokmi animovaného priblíženia sa nezohľadňuje (priebeh je lineárny)");
   console.log("  • zvuk sa porovnáva obsahovo (PCM 16 kHz mono), nie bajtovo vo formáte AAC");
   console.log("=".repeat(78));
 

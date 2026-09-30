@@ -63,6 +63,12 @@ export interface CanonicalOverlaySpec {
   scalePercent: number;
   positionX: number;
   positionY: number;
+  /** Otočenie v stupňoch okolo stredu (0 = bez otočenia). */
+  rotation: number;
+  /** Priesvitnosť v percentách (100 = plne nepriehľadné). */
+  opacity: number;
+  /** Farebný filter (`NONE` = nič). */
+  filter: string;
 }
 
 export interface CanonicalExportExtras {
@@ -84,6 +90,8 @@ export interface CanonicalBurnRequest {
   zoom?: CanonicalZoomSpec[];
   /** Obrazové vrstvy z canonical osi (reálne sa vykreslia v obraze). */
   overlays?: CanonicalOverlaySpec[];
+  /** Farebný filter základného videa (`NONE` = nič). */
+  baseFilter?: string;
 }
 
 export interface CanonicalExportPlan {
@@ -422,12 +430,6 @@ export function buildCanonicalExportPlan(
       `${pannedZoomClips} klipov má priblíženie spojené s posunom obrazu — takú kompozíciu táto linka (statický stredový orez) nevie verne vykresliť, preto ide bez priblíženia.`,
     );
   }
-  if (filteredClipsList.length > 0) {
-    unsupportedSk.push(
-      `Farebný filter na ${filteredClipsList.length} klipoch (${filteredClipsList.slice(0, 3).join(", ")}) sa ZATIAĽ nevykresľuje.`,
-    );
-  }
-
   // --- Obrazové vrstvy (b-roll / fotky) ---------------------------------------
   const overlays: CanonicalOverlaySpec[] = [];
   const missingAssetBytes: string[] = [];
@@ -457,11 +459,10 @@ export function buildCanonicalExportPlan(
       missingAssetBytes.push(clip.name);
       continue;
     }
-    if (Math.abs((clip.rotation ?? 0)) > 0.01) {
-      rotatedOverlays++;
-      continue;
-    }
-    if ((clip.opacity ?? 100) < 99.5) {
+    // Otočené a priesvitné vrstvy sa už vykresľujú (krok 10) — len s veľmi
+    // malou priesvitnosťou by vrstva v obraze nebola vidieť vôbec, a to je
+    // skôr chyba v pláne než zámer; takú priznáme.
+    if ((clip.opacity ?? 100) < 1) {
       fadedOverlays++;
       continue;
     }
@@ -481,6 +482,9 @@ export function buildCanonicalExportPlan(
       scalePercent: round3(clip.scale ?? 100),
       positionX: round3(clip.positionX ?? 0),
       positionY: round3(clip.positionY ?? 0),
+      rotation: round3(clip.rotation ?? 0),
+      opacity: round3(clip.opacity ?? 100),
+      filter: clip.filter && clip.filter !== "NONE" ? clip.filter : "NONE",
     });
   }
 
@@ -531,6 +535,32 @@ export function buildCanonicalExportPlan(
           ...(r.keyframes ? { keyframes: r.keyframes } : {}),
         }))
       : [];
+  // Farebný filter základného videa (krok 10): vykreslí sa, ale je to aproximácia.
+  let baseFilter: string = "NONE";
+  for (const track of project.tracks) {
+    if (track.type !== "video" || !track.visible) continue;
+    for (const clip of track.clips) {
+      if (clip.type === "video" && clip.filter && clip.filter !== "NONE") {
+        baseFilter = clip.filter;
+        break;
+      }
+    }
+    if (baseFilter !== "NONE") break;
+  }
+  if (baseFilter !== "NONE") {
+    notesSk.push(
+      `Farebný filter „${baseFilter}" sa vykreslí na celé video (prepis z prostredia prehliadača do ffmpeg je aproximácia — jas je pripočítanie, nie násobenie).`,
+    );
+  }
+  // Klipy s filtrom, ktoré nie sú ani základné video, ani obrazová vrstva —
+  // také sa nevykreslia a appka to povie (nič potichu).
+  const unknownFilters =
+    filteredClipsList.length - (baseFilter !== "NONE" ? 1 : 0) - overlays.filter((o) => o.filter !== "NONE").length;
+  if (unknownFilters > 0) {
+    unsupportedSk.push(
+      `Farebný filter na ${unknownFilters} klipoch (${filteredClipsList.slice(0, 3).join(", ")}) sa nevykreslí — nie je to ani základné video, ani obrazová vrstva.`,
+    );
+  }
   const zoomWindows = keepRanges.length === 0 && zoom.length > 0 ? zoom : [];
 
   const request: CanonicalBurnRequest = {
@@ -543,6 +573,7 @@ export function buildCanonicalExportPlan(
     keepRanges: keepRanges.length > 0 ? keepRangesWithScale : keepRanges,
     ...(upload.fontFamily ? { fontFamily: upload.fontFamily } : {}),
     ...(zoomWindows.length > 0 ? { zoom: zoomWindows } : {}),
+    ...(baseFilter !== "NONE" ? { baseFilter } : {}),
     ...(overlays.length > 0 ? { overlays } : {}),
   };
 
