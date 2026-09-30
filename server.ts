@@ -11,7 +11,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import {
   buildSentenceTimings,
@@ -55,6 +55,13 @@ import {
   prepareCaptionFont,
   probeVideoFile,
 } from "./src/core/export/ffmpegEnv";
+import {
+  LIGHT_MEASURE,
+  computeLightCorrection,
+  lightMeasureSummarySk,
+  lightStatsFromGrayFrames,
+} from "./src/core/export/lightMatch";
+import { STYLE_RECIPES } from "./src/core/style/styleRecipes";
 import {
   buildBundle,
   DEFAULT_GEOS,
@@ -3721,6 +3728,90 @@ app.post(
   },
 );
 
+/**
+ * 1b) MERANIE SVETLA NAHRAÉHO VIDEA (krok 24).
+ *
+ * Prečo to je na serveri: jas a kontrast sa musia merať z pixelov celého videa
+ * (ffmpeg) — a to prehliadač pri veľkom videe nezvládne. Meria sa **tou istou
+ * metódou**, akou boli merané referenčné videá (analýza ich klipov), aby boli
+ * čísla porovnateľné. Nič sa neodhaduje: keď sa merať nedá, vráti sa chyba.
+ *
+ * Voliteľne hneď vráti aj korekciu na svetlo referencie:
+ *  - `recipeId` — recept z ich videa (namerané hodnoty sú v recepte),
+ *  - alebo `reference: { brightness, contrast }` — vlastné namerané čísla.
+ */
+app.post("/api/media/light-stats", (req, res) => {
+  const found = findFfmpegPath();
+  if (!found) return res.status(503).json({ success: false, errorSk: FFMPEG_MISSING_SK });
+
+  const uploadId = String(req.body?.uploadId ?? "");
+  if (!isSafeStoredName(uploadId)) {
+    return res.status(400).json({ success: false, errorSk: "Chýba alebo je neplatný identifikátor nahraného videa." });
+  }
+  const filePath = path.join(UPLOAD_DIR, uploadId);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, errorSk: "Toto video už na serveri nie je — nahraj ho znova." });
+  }
+
+  const raw = spawnSync(
+    found.path,
+    [
+      "-v", "error",
+      "-i", filePath,
+      "-vf", `fps=${LIGHT_MEASURE.fps},scale=${LIGHT_MEASURE.width}:${LIGHT_MEASURE.height},format=gray`,
+      "-f", "rawvideo",
+      "-",
+    ],
+    { maxBuffer: 512 * 1024 * 1024 },
+  );
+  const measured = raw.stdout ? lightStatsFromGrayFrames(new Uint8Array(raw.stdout as Buffer), LIGHT_MEASURE.width, LIGHT_MEASURE.height) : null;
+  if (!measured) {
+    return res.status(422).json({
+      success: false,
+      errorSk: "Svetlo sa z tohto videa nedá zmerať (ffmpeg nevrátil použiteľné snímky) — radšej nič než odhad.",
+    });
+  }
+
+  const recipeId = typeof req.body?.recipeId === "string" ? req.body.recipeId : "";
+  const explicit = req.body?.reference;
+  const recipe = recipeId ? STYLE_RECIPES[recipeId as keyof typeof STYLE_RECIPES] : undefined;
+  const reference =
+    recipe?.measuredLight
+      ? { brightness: recipe.measuredLight.brightness, contrast: recipe.measuredLight.contrast, sourceSk: recipe.measuredLight.sourceSk }
+      : explicit && Number.isFinite(Number(explicit.brightness)) && Number.isFinite(Number(explicit.contrast))
+        ? { brightness: Number(explicit.brightness), contrast: Number(explicit.contrast), sourceSk: "zadané volajúcim (namerané hodnoty)" }
+        : null;
+
+  if (recipeId && !recipe) {
+    return res.status(404).json({ success: false, errorSk: `Recept „${recipeId}“ nepoznám — nemám z čoho vziať jeho svetlo.` });
+  }
+  if (reference && !recipeId && !explicit) reference.sourceSk = "zadané volajúcim (namerané hodnoty)";
+
+  const correction = reference
+    ? computeLightCorrection(measured, { brightness: reference.brightness, contrast: reference.contrast }, {
+        strengthPercent: Number.isFinite(Number(req.body?.strengthPercent)) ? Number(req.body.strengthPercent) : 100,
+      })
+    : null;
+
+  const notesSk: string[] = [
+    `Zmeral som tvoje video: ${lightMeasureSummarySk(measured)}.`,
+    LIGHT_MEASURE.methodSk + ".",
+  ];
+  if (reference) notesSk.push(`Jeho video (referencia): ${lightMeasureSummarySk(reference)} — ${reference.sourceSk}.`);
+  if (correction) notesSk.push(correction.noteSk);
+  else if (reference) notesSk.push("Rozdiel je pod hranicou šumu merania — render sa nemení (radšej nič než vymyslená korekcia).");
+  else notesSk.push("Referenciu si nezadal, takže korekciu nemám z čoho počítať — poslal som len meranie tvojho videa.");
+
+  res.json({
+    success: true,
+    measured,
+    reference,
+    correction,
+    methodSk: LIGHT_MEASURE.methodSk,
+    notesSk,
+  });
+});
+
 /** 2) Spustenie vypálenia — vracia jobId hneď, render beží na pozadí. */
 app.post("/api/export/burn-captions", (req, res) => {
   const found = findFfmpegPath();
@@ -3880,6 +3971,9 @@ app.post("/api/export/burn-captions", (req, res) => {
         : {}),
       ...(overlayInputs.length > 0 ? { overlays: overlayInputs } : {}),
       ...(spec.baseFilter && spec.baseFilter !== "NONE" ? { baseFilter: spec.baseFilter } : {}),
+      // KROK 24 — merané zosúladenie svetla z ich videí. Keď prišla vypočítaná
+      // korekcia, ide do linky; keď nie, render vyzerá presne ako doteraz.
+      ...(spec.lightCorrection ? { lightCorrection: spec.lightCorrection } : {}),
       ...(built.clipDurationSec > 0 ? { outputDurationSec: built.clipDurationSec } : {}),
       ...(probe?.fps ? { sourceFps: probe.fps } : {}),
       // Rozmery rámu idú do linky LEN pre priblíženie (aby orezalo na presne tie
@@ -3897,6 +3991,11 @@ app.post("/api/export/burn-captions", (req, res) => {
   const extraParts: string[] = [];
   if (overlayInputs.length > 0) extraParts.push(`${overlayInputs.length} vrstiev`);
   if (spec.zoom.length > 0) extraParts.push(`${spec.zoom.length} priblížení`);
+  if (spec.lightCorrection) {
+    extraParts.push(
+      `svetlo podľa referencie (jas ${spec.lightCorrection.ffmpegBrightness >= 0 ? "+" : ""}${spec.lightCorrection.ffmpegBrightness.toFixed(3)}, kontrast ×${spec.lightCorrection.ffmpegContrast.toFixed(3)})`,
+    );
+  }
   burnJobs.patch(job.id, {
     state: "rendering",
     messageSk: `Vypaľujem ${built.eventCount} titulkov${extraParts.length > 0 ? `, skladám ${extraParts.join(" a ")}` : ""} a prekódujem ${built.clipDurationSec.toFixed(1)} s videa…`,

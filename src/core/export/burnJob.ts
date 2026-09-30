@@ -146,7 +146,14 @@ export interface BurnSpec {
   }[];
   /** Farebný filter základného videa (len z `BURN_KNOWN_FILTERS`). */
   baseFilter: string;
+  /**
+   * KROK 24: merané zosúladenie svetla — jas/kontrast vypočítaný z rozdielu medzi
+   * zdrojovým videom a referenciou. Voliteľné; keď chýba, render nič nemení.
+   */
+  lightCorrection?: LightCorrection | null;
 }
+
+import { lightCorrectionWithinLimits, type LightCorrection } from "./lightMatch";
 
 export type BurnValidation =
   | { ok: true; spec: BurnSpec }
@@ -373,6 +380,35 @@ export function validateBurnRequest(body: any): BurnValidation {
     }
   }
 
+  /** KROK 24: merané zosúladenie svetla — voliteľné, ale keď príde, musí byť platné a v limitoch. */
+  const rawLight = body?.lightCorrection;
+  let lightCorrection: LightCorrection | null = null;
+  if (rawLight && typeof rawLight === "object") {
+    const rl = rawLight as Record<string, any>;
+    const candidate: LightCorrection = {
+      source: { brightness: num(rl.source?.brightness, NaN), contrast: num(rl.source?.contrast, NaN) },
+      target: { brightness: num(rl.target?.brightness, NaN), contrast: num(rl.target?.contrast, NaN) },
+      strengthPercent: num(rl.strengthPercent, 100),
+      ffmpegBrightness: num(rl.ffmpegBrightness, 0),
+      ffmpegContrast: num(rl.ffmpegContrast, 1),
+      noteSk: String(rl.noteSk ?? ""),
+    };
+    const valid =
+      Number.isFinite(candidate.source.brightness) &&
+      Number.isFinite(candidate.source.contrast) &&
+      Number.isFinite(candidate.target.brightness) &&
+      Number.isFinite(candidate.target.contrast) &&
+      lightCorrectionWithinLimits(candidate);
+    if (!valid) {
+      return {
+        ok: false,
+        errorSk:
+          "Merané zosúladenie svetla prišlo v neplatných hodnotách (chýbajú namerané čísla alebo sú mimo bezpečných limitov) — radšej sa nevykreslí nič, než pokazený obraz.",
+      };
+    }
+    lightCorrection = candidate;
+  }
+
   const baseFilter = String(body?.baseFilter ?? "NONE").toUpperCase();
   if (!(BURN_KNOWN_FILTERS as readonly string[]).includes(baseFilter)) {
     return {
@@ -405,6 +441,7 @@ export function validateBurnRequest(body: any): BurnValidation {
       keepRanges,
       zoom,
       baseFilter,
+      lightCorrection,
       overlays,
       ...(Object.keys(normalized.overrides).length > 0 ? { overrides: normalized.overrides } : {}),
       ...(normalized.notesSk.length > 0 ? { overrideNotesSk: normalized.notesSk } : {}),

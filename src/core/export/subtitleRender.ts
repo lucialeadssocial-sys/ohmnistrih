@@ -1173,6 +1173,8 @@ export interface BurnArgsOptions {
   overlays?: BurnOverlay[];
   /** Farebný filter na základnom videu (`NONE` = nič). */
   baseFilter?: string;
+  /** KROK 24: merané zosúladenie svetla (voliteľné; keď chýba, render nič nemení). */
+  lightCorrection?: LightCorrection | null;
   /** Dĺžka výsledku — potrebná, keď sa skladá z viacerých častí alebo s vrstvami. */
   outputDurationSec?: number;
   /**
@@ -1288,8 +1290,11 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
   // Farebný filter základného videa — ten istý prepis ako pri vrstvách, aby sa
   // náhľad a export nemohli rozísť.
   const baseColorFilter = colorFilterForName(o.baseFilter);
-  if (baseColorFilter) {
-    filters.push(`${videoLabel}format=yuv420p${baseColorFilter}[vbase]`);
+  // KROK 24: merané zosúladenie svetla (jas/kontrast z referencie). Pripojí sa
+  // k základnému videu PRED vrstvami; náhľad používa tie isté čísla cez CSS.
+  const baseLightFilter = lightCorrectionFfmpeg(o.lightCorrection);
+  if (baseColorFilter || baseLightFilter) {
+    filters.push(`${videoLabel}format=yuv420p${baseColorFilter}${baseLightFilter}[vbase]`);
     videoLabel = "[vbase]";
   }
 
@@ -1367,6 +1372,8 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
  * **pripočítanie** — preto je tu prepis `0,95 → -0,05`. Je to zámerná aproximácia
  * (CSS filtre sú percepčné, ffmpeg lineárne) a v poznámkach sa to priznáva.
  */
+import { lightCorrectionFfmpeg, type LightCorrection } from "./lightMatch";
+
 export function colorFilterForName(filter?: string): string {
   const name = String(filter ?? "NONE").toUpperCase();
   switch (name) {

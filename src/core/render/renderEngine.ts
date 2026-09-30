@@ -6,10 +6,22 @@
 import { ProjectModel, ClipModel } from '../types/project';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { buildCanonicalFramePlan, CanonicalLayer } from './canonicalFrame';
+import { lightCorrectionCss, type LightCorrection } from '../export/lightMatch';
+
+/**
+ * Zloží CSS filtre pre kreslenie: filter klipu + (voliteľne) merané zosúladenie
+ * svetla. Je to čistá funkcia, aby sa dalo overiť, že náhľad dostane presne tie
+ * isté čísla ako export (`lightCorrectionCss` je jediný zdroj pravdy).
+ */
+export function composeCanvasFilters(baseCss: string | null | undefined, lightCss: string | null | undefined): string {
+  return [baseCss ?? '', lightCss ?? ''].map((x) => x.trim()).filter(Boolean).join(' ');
+}
 import { activeWordAt, wordsShareToken } from '../transcript/wordTiming';
 import { CAPTION_STYLES, activeWordScaleAt, wordPopSecForStyle } from '../export/subtitleRender';
 
 export class RenderEngine {
+  /** Korekcia svetla pre práve kreslenú snímku (nastaví ju `renderFrame`). */
+  private pendingLightCss = '';
   private static instance: RenderEngine | null = null;
   private mediaElements: Map<string, HTMLVideoElement | HTMLImageElement> = new Map();
 
@@ -36,7 +48,13 @@ export class RenderEngine {
   public renderFrame(
     project: ProjectModel,
     currentTime: number,
-    canvas: HTMLCanvasElement
+    canvas: HTMLCanvasElement,
+    /**
+     * Náhľad musí ukázať to isté, čo ide do videa — preto sem chodí tá istá
+     * korekcia svetla, akú dostane export (`LightCorrection`). Keď nie je,
+     * náhľad sa nemení.
+     */
+    lightCorrection?: LightCorrection | null
   ): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -56,6 +74,9 @@ export class RenderEngine {
     // 2. Canonical plán snímky — JEDINÉ miesto, ktoré rozhoduje, čo sa kreslí.
     //    Náhľad aj export idú cez túto funkciu, takže sa nemôžu rozísť.
     const plan = buildCanonicalFramePlan(project, currentTime);
+    // Korekcia svetla pre tento náhľad (tie isté čísla ako v exporte).
+    const lightCss = lightCorrectionCss(lightCorrection);
+    this.pendingLightCss = lightCss;
 
     // 3. Render layers (zdola nahor, presne v poradí z plánu)
     for (const layer of plan.layers) {
@@ -78,7 +99,7 @@ export class RenderEngine {
 
       // Render Clip Content according to Type (obsah aj hodnoty berie z canonical plánu)
       if (layer.kind === 'media') {
-        this.renderMediaClip(ctx, clip, width, height);
+        this.renderMediaClip(ctx, clip, layer, width, height);
       } else if (layer.kind === 'text') {
         this.renderTextClip(ctx, clip, layer, width, height);
       }
@@ -90,6 +111,7 @@ export class RenderEngine {
   private renderMediaClip(
     ctx: CanvasRenderingContext2D,
     clip: ClipModel,
+    layer: CanonicalLayer,
     canvasWidth: number,
     canvasHeight: number
   ): void {
@@ -109,9 +131,12 @@ export class RenderEngine {
     }
 
     // Apply Filters if defined
-    if (clip.filter && clip.filter !== 'NONE') {
-      ctx.filter = this.getCanvasFilterCSS(clip.filter);
-    }
+    const clipCss = clip.filter && clip.filter !== 'NONE' ? this.getCanvasFilterCSS(clip.filter) : '';
+    // Merané svetlo ide na hlavné video — v exporte je korekcia na základnom
+    // videu pred vrstvami a titulkami, tu preto na tom istom klipе.
+    const layerCss = layer.clipType === 'video' && this.pendingLightCss ? this.pendingLightCss : '';
+    const combined = composeCanvasFilters(clipCss, layerCss);
+    if (combined) ctx.filter = combined;
 
     // Draw centered
     ctx.drawImage(media, -mediaWidth / 2, -mediaHeight / 2, mediaWidth, mediaHeight);
