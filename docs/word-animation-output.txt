@@ -1,0 +1,94 @@
+
+================================================================================================
+1) REÁLNE MÉDIUM + ŠTÝL, KTORÝ HOVORENÉ SLOVO ZVÄČŠUJE
+================================================================================================
+súbor............................................... real_speech.mp4 (345651 B, 20.27 s)
+štýl titulkov....................................... KARAOKE
+štýl titulkov....................................... KARAOKE (canonical preset „kinetic")
+zvýraznenie hovoreného slova........................ active-word · zväčšenie 118 · pruženie 130 ms
+
+================================================================================================
+2) REÁLNY PREPIS SO ČASOVANÍM SLOV
+================================================================================================
+prepis (HTTP)....................................... 200 | success=true | hasSpeech=true
+zdroj............................................... reálny prepis z tohto videa (HTTP /api/transcribe-speech)
+viet / slov......................................... 6 / 48
+
+================================================================================================
+3) CANONICAL OS — titulky so slovami cez CommandManager
+================================================================================================
+titulkov v canonical osi............................ 6
+
+================================================================================================
+4) ČO PRESNE PÔJDE DO VIDEA (ASS z canonical zadania)
+================================================================================================
+titulkov v zadaní................................... 6
+z toho s časovaním slov............................. 6
+blokery............................................. žiadne
+ASS: animované pruženie na slovo.................... 49× (napr. \t(0,100,\fscx118\fscy118), \t(0,100,\fscx118\fscy118), \t(0,130,\fscx118\fscy118))
+ASS: statické zväčšenie slova (staré)............... žiadne
+
+================================================================================================
+5) REAL EXPORT (existujúca linka)
+================================================================================================
+jobId............................................... dbd40506-9d92-4694-a291-aaf127e6b5ef
+server: zvýrazňovanie slov.......................... ÁNO
+  • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+  • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+  • server: Zvýrazňovanie hovoreného slova je zapnuté — mám časovanie slov z automatických tituliek.
+  • server: Hovorené slovo **pruží** (krok 18): zväčší sa na 118 % za 130 ms a potom drží — v náhľade aj vo videe rovnakým pravidlom.
+stav renderu........................................ done
+uložené video....................................... /home/user/export-krok18-pruzenie.mp4 (1409022 B)
+
+================================================================================================
+6) MERANIE PRUŽENIA NA HOTOVOM VIDEO
+================================================================================================
+zvuk zdroj → výstup................................. f6f5e86a16ab9e4c → f6f5e86a16ab9e4c (rovnaký)
+pruženie podľa štýlu................................ 130 ms (max; oreže sa na polovicu slova)
+  • slovo „som" (začína 8.1 s):
+      +0.020 s → ZVÝRAZNENÉ slovo: šírka 232 px (2027 px) | NEZVÝRAZNENÉ slová: šírka 666 px (16123 px)
+      +0.046 s → ZVÝRAZNENÉ slovo: šírka 242 px (2143 px) | NEZVÝRAZNENÉ slová: šírka 666 px (16089 px)
+      +0.091 s → ZVÝRAZNENÉ slovo: šírka 254 px (2160 px) | NEZVÝRAZNENÉ slová: šírka 666 px (16075 px)
+      +0.150 s → ZVÝRAZNENÉ slovo: šírka 262 px (2185 px) | NEZVÝRAZNENÉ slová: šírka 666 px (16049 px)
+      +0.350 s → ZVÝRAZNENÉ slovo: šírka 262 px (2185 px) | NEZVÝRAZNENÉ slová: šírka 666 px (16049 px)
+      rast zvýrazneného slova: 30 px | zmena nezvýraznených slov: 0.46 %
+  • slovo „plán," (začína 10.7 s):
+      +0.020 s → ZVÝRAZNENÉ slovo: šírka 278 px (2543 px) | NEZVÝRAZNENÉ slová: šírka 554 px (9030 px)
+      +0.046 s → ZVÝRAZNENÉ slovo: šírka 292 px (2727 px) | NEZVÝRAZNENÉ slová: šírka 560 px (8995 px)
+      +0.091 s → ZVÝRAZNENÉ slovo: šírka 304 px (3012 px) | NEZVÝRAZNENÉ slová: šírka 568 px (9011 px)
+      +0.150 s → ZVÝRAZNENÉ slovo: šírka 316 px (3188 px) | NEZVÝRAZNENÉ slová: šírka 574 px (9040 px)
+      +0.350 s → ZVÝRAZNENÉ slovo: šírka 316 px (3188 px) | NEZVÝRAZNENÉ slová: šírka 574 px (9040 px)
+      rast zvýrazneného slova: 38 px | zmena nezvýraznených slov: 0.39 %
+  • slovo „prvý" (začína 12.4 s):
+      +0.020 s → ZVÝRAZNENÉ slovo: šírka 254 px (2183 px) | NEZVÝRAZNENÉ slová: šírka 870 px (15702 px)
+      +0.046 s → ZVÝRAZNENÉ slovo: šírka 264 px (2249 px) | NEZVÝRAZNENÉ slová: šírka 882 px (15722 px)
+      +0.091 s → ZVÝRAZNENÉ slovo: šírka 274 px (2344 px) | NEZVÝRAZNENÉ slová: šírka 894 px (15674 px)
+      +0.150 s → ZVÝRAZNENÉ slovo: šírka 286 px (2393 px) | NEZVÝRAZNENÉ slová: šírka 904 px (15635 px)
+      +0.250 s → ZVÝRAZNENÉ slovo: šírka 286 px (2393 px) | NEZVÝRAZNENÉ slová: šírka 904 px (15636 px)
+      rast zvýrazneného slova: 32 px | zmena nezvýraznených slov: 0.43 %
+  • slovo „zaplatil" (začína 16.3 s):
+      +0.020 s → ZVÝRAZNENÉ slovo: šírka 426 px (3671 px) | NEZVÝRAZNENÉ slová: šírka 730 px (15560 px)
+      +0.046 s → ZVÝRAZNENÉ slovo: šírka 446 px (3879 px) | NEZVÝRAZNENÉ slová: šírka 740 px (15520 px)
+      +0.091 s → ZVÝRAZNENÉ slovo: šírka 466 px (3941 px) | NEZVÝRAZNENÉ slová: šírka 750 px (15486 px)
+      +0.150 s → ZVÝRAZNENÉ slovo: šírka 482 px (3929 px) | NEZVÝRAZNENÉ slová: šírka 760 px (15456 px)
+      +0.480 s → ZVÝRAZNENÉ slovo: šírka 482 px (3929 px) | NEZVÝRAZNENÉ slová: šírka 760 px (15456 px)
+      rast zvýrazneného slova: 56 px | zmena nezvýraznených slov: 0.67 %
+slová, pri ktorých zvýraznené slovo pruží........... 4/4
+po pružení zvýraznené slovo drží.................... 4/4
+uložené snímky...................................... /home/user/kontrola-krok18/pruzenie-*.png
+
+================================================================================================
+7) VERDIKT
+================================================================================================
+veľkosť hovoreného slova sa v čase mení............. ÁNO (zmerané na hotovom videe)
+zvuk zostal nedotknutý.............................. áno
+
+Odpoveď na zadanie: „Hýbe sa zvýraznené slovo (pruží), alebo len stojí zväčšené?"
+→ ÁNO, pruží — šírka zvýrazneného slova rastie počas pruženia a potom drží.
+  (Zmena je zmeraná na hotovom MP4, ktorý vznikol existujúcou renderovacou linkou z canonical osi.)
+
+Klasifikácia:
+  • pruženie v exporte (merané na MP4) ..................... REAL EXPORT VERIFIED (tento beh)
+  • pruženie v náhľade (canvas) ............................ NOT VERIFIED (v prostredí nie je DOM)
+  • libass schopnosť \t na jednom slove ................... MEASURED (kontrola-krok18/libass-sondy.json)
+dôkaz uložený....................................... /home/user/kontrola-krok18/pruzenie-slova.json
