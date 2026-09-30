@@ -101,6 +101,16 @@ export interface StyleDecisionDetail {
   signals: string[];
   /** Čo konkrétne sa má spraviť (pre Apply v kroku 6). */
   action: StyleActionPayload;
+  /**
+   * KROK 26 — podľa akého cieľa videa bolo rozhodnutie prehodnotené
+   * (`PREDAJ`, `ODBER`…). Nepovinné: rozhodnutia bez cieľa fungujú presne
+   * ako predtým.
+   */
+  goalId?: string;
+  /** Ako veľmi táto veta slúži cieľu (0 a viac) — z reálnych vlastností vety. */
+  goalFit?: number;
+  /** Prečo veta patrí k cieľu (konkrétne dôvody, nie „je dobrá“). */
+  goalFitSk?: string[];
 }
 
 /** Úroveň stylingu — ovládač používateľa. */

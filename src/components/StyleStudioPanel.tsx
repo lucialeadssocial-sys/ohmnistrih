@@ -22,10 +22,18 @@ import {
   Layers,
   Loader2,
   Ban,
+  Target,
+  Users,
 } from "lucide-react";
 import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 import { buildStylePlan, type StylePlan } from "../core/style/styleIntelligence";
 import { customRecipeFromBrief, getStyleRecipe, type StylePresetId, type StyleRecipe } from "../core/style/styleRecipes";
+import { VIDEO_GOALS, VIDEO_GOAL_IDS, type VideoGoalId } from "../core/style/videoGoal";
+import {
+  CREATOR_REFERENCES,
+  resolveCreatorReference,
+  creatorReferenceListSk,
+} from "../core/style/creatorReference";
 import { DEFAULT_STYLE_CONTROLS, type StyleControls } from "../core/style/styleDecisionTypes";
 import { CanonicalExportPanel } from "./CanonicalExportPanel";
 import type { ProjectModel } from "../core/types/project";
@@ -146,6 +154,11 @@ export function StyleStudioPanel({
   const isSk = language === "sk";
 
   const [recipeId, setRecipeId] = useState<StylePresetId>("EDITORIAL_COLLAGE");
+  // KROK 26 — ČO má video dosiahnuť (cieľ). Bez voľby sa plán nemení vôbec.
+  const [goalId, setGoalId] = useState<VideoGoalId | null>(null);
+  // KROK 26 — AKO to má vyzerať: referencia tvorcu (vizuálna = zmení recept,
+  // pracovná = len princípy, recept nemá a appka to povie).
+  const [creatorId, setCreatorId] = useState<string | null>(null);
   const [controls, setControls] = useState<StyleControls>({ ...DEFAULT_STYLE_CONTROLS });
   const [brief, setBrief] = useState<string>("");
   const [customPreview, setCustomPreview] = useState<ReturnType<typeof customRecipeFromBrief> | null>(null);
@@ -170,6 +183,15 @@ export function StyleStudioPanel({
 
   const gate = useMemo(() => transcriptGateSk(segments.length, wordCount, hasVideo), [segments.length, wordCount, hasVideo]);
   const recipeOptions = useMemo(() => recipeOptionsSk(), []);
+  const goalOptions = useMemo(
+    () => VIDEO_GOAL_IDS.map((id) => ({ ...VIDEO_GOALS[id] })),
+    [],
+  );
+  const creatorOptions = useMemo(() => creatorReferenceListSk(), []);
+  const creatorInfo = useMemo(
+    () => (creatorId ? resolveCreatorReference(creatorId, { recipeId }) : null),
+    [creatorId, recipeId],
+  );
   const controlViews = useMemo(() => controlViewsSk(), []);
 
   const activeRecipe: StyleRecipe = useMemo(() => {
@@ -189,6 +211,7 @@ export function StyleStudioPanel({
         durationSec: segments.reduce((max, s) => Math.max(max, Number(s.end) || 0), 0),
         controls,
         availableSupportingVisuals,
+        ...(goalId ? { goal: goalId } : {}),
       });
       setPlan(next);
       setMarks({});
@@ -360,12 +383,192 @@ export function StyleStudioPanel({
           </div>
         </div>
 
+        {/* KROK 26 — ČO má video dosiahnuť (cieľ) */}
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-rose-400" />
+            <h3 className="text-xs font-black text-white uppercase tracking-wide">
+              {isSk ? "1. Čo má video dosiahnuť? (cieľ)" : "1. Video goal"}
+            </h3>
+          </div>
+          <p className="text-[11px] text-neutral-400 leading-relaxed">
+            {isSk
+              ? "Cieľ je severná hviezda: hovorí ČO má video spraviť. Štýl (nižšie) hovorí AKO má vyzerať. Rovnaké video a rovnaký štýl dajú iné rozhodnutia, keď má predávať, a iné, keď má získať odber."
+              : "Goal says WHAT the video should do; style says HOW it looks."}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {goalOptions.map((g) => (
+              <button
+                key={g.id}
+                data-testid={`goal-${g.id}`}
+                onClick={() => setGoalId((prev) => (prev === g.id ? null : g.id))}
+                className={`text-left p-2.5 rounded-xl border transition-all ${
+                  goalId === g.id
+                    ? "border-rose-500/60 bg-rose-500/10"
+                    : "border-neutral-800 bg-neutral-900/60 hover:border-neutral-700"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black text-white">
+                    {g.emoji} {g.labelSk}
+                  </span>
+                  <span className="text-[9px] font-bold text-neutral-500 uppercase">{g.id}</span>
+                </div>
+                <p className="text-[10px] text-neutral-400 mt-1 leading-snug">{g.purposeSk}</p>
+              </button>
+            ))}
+          </div>
+          {goalId && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-1.5">
+              <p className="text-[11px] font-bold text-neutral-200">
+                {isSk ? "Čo tvoj cieľ mení" : "What your goal changes"}:
+              </p>
+              {VIDEO_GOALS[goalId].strategySk.map((line) => (
+                <p key={line} className="text-[10px] text-neutral-400">
+                  – {line}
+                </p>
+              ))}
+              <p className="text-[10px] text-amber-300/80 pt-1">
+                {isSk ? "Cieľ NIKDY nerobí" : "Goal never does"}: {VIDEO_GOALS[goalId].neverDoesSk.join(" · ")}
+              </p>
+            </div>
+          )}
+          {plan?.goal && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-1.5">
+              <p className="text-[11px] font-bold text-neutral-200">
+                {plan.goal.labelSk} — {plan.goal.purposeSk}
+              </p>
+              <p className="text-[10px] text-neutral-400">
+                {isSk ? "Zosilnené rozhodnutia" : "Promoted"}: {plan.goal.promotedCount} ·{" "}
+                {isSk ? "utlmené" : "demoted"}: {plan.goal.demotedCount}
+              </p>
+              {plan.goal.foundSk.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-emerald-400/80">
+                    {isSk ? "V tvojom videe som našiel" : "Found in your video"}
+                  </p>
+                  {plan.goal.foundSk.map((f) => (
+                    <p key={f} className="text-[10px] text-neutral-400">
+                      – {f}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {plan.goal.missingSk.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-amber-400/80">
+                    {isSk ? "Toto v ňom nie je (nič som nedoplnil)" : "Missing (nothing added)"}
+                  </p>
+                  {plan.goal.missingSk.map((f) => (
+                    <p key={f} className="text-[10px] text-neutral-400">
+                      – {f}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {plan.goal.notesSk.map((n) => (
+                <p key={n} className="text-[10px] text-amber-300/80">
+                  {n}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* KROK 26 — AKO to má vyzerať: referencia tvorcu */}
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-neutral-400" />
+            <h3 className="text-xs font-black text-white uppercase tracking-wide">
+              {isSk ? "2. Podľa koho? (referencia — AKO)" : "2. Creator reference"}
+            </h3>
+          </div>
+          <p className="text-[11px] text-neutral-400 leading-relaxed">
+            {isSk
+              ? "Vizuálny zdroj = z jeho videí máme namerané hodnoty, preto vie nastaviť recept. Pracovný zdroj = berieme z neho len postup (delenie práce človek/AI) — vizuálny preset z neho NEMÁME a appka to povie."
+              : "Visual source = measured values → recipe. Working source = principles only."}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {creatorOptions.map((c) => (
+              <button
+                key={c.id}
+                data-testid={`creator-${c.id}`}
+                onClick={() => {
+                  setCreatorId(c.id);
+                  const resolved = resolveCreatorReference(c.id, { recipeId });
+                  if (resolved.recipe) {
+                    setRecipeId(resolved.recipe.id);
+                    showToast?.(isSk ? `Recept z referencie: ${resolved.recipe.name}` : `Recipe: ${resolved.recipe.name}`);
+                  } else {
+                    showToast?.(
+                      isSk
+                        ? "Tento zdroj nemá nameraný vizuál — beriem z neho len princípy (nič nepredstieram)."
+                        : "No measured visuals — principles only.",
+                    );
+                  }
+                }}
+                className={`text-left p-2.5 rounded-xl border transition-all ${
+                  creatorId === c.id
+                    ? "border-rose-500/60 bg-rose-500/10"
+                    : "border-neutral-800 bg-neutral-900/60 hover:border-neutral-700"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black text-white">{c.name}</span>
+                  <span
+                    className={`text-[9px] font-bold uppercase ${c.hasVisual ? "text-emerald-400" : "text-amber-400"}`}
+                  >
+                    {c.hasVisual ? (isSk ? "vizuál" : "visual") : isSk ? "princípy" : "principles"}
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 mt-1">{c.kindSk}</p>
+              </button>
+            ))}
+          </div>
+          {creatorInfo && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-1.5">
+              <p className="text-[11px] font-bold text-neutral-200">{creatorInfo.entry?.name}</p>
+              <p className="text-[10px] text-neutral-400">{creatorInfo.entry?.whySk}</p>
+              {creatorInfo.notesSk.map((n) => (
+                <p key={n} className="text-[10px] text-neutral-400">
+                  {n}
+                </p>
+              ))}
+              <div>
+                <p className="text-[10px] font-bold uppercase text-neutral-500">
+                  {isSk ? "Čo si z neho beriem" : "Principles"}
+                </p>
+                {creatorInfo.principlesSk.map((pr) => (
+                  <p key={pr} className="text-[10px] text-neutral-400">
+                    – {pr}
+                  </p>
+                ))}
+              </div>
+              {(creatorInfo.entry?.notTakenSk.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-amber-400/80">
+                    {isSk ? "Čo z neho NEBERIEM" : "Not taken"}
+                  </p>
+                  {creatorInfo.entry!.notTakenSk.map((nt) => (
+                    <p key={nt} className="text-[10px] text-neutral-400">
+                      – {nt}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <p className="text-[9px] text-neutral-500 pt-1">
+                {isSk ? "Zdroj tvrdení" : "Evidence"}: {creatorInfo.entry?.evidence} — {creatorInfo.entry?.evidenceSk}
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* Recepty */}
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-neutral-400" />
             <h3 className="text-xs font-black text-white uppercase tracking-wide">
-              {isSk ? "1. Recept (štýl, ktorý chceš)" : "1. Recipe"}
+              {isSk ? "3. Recept (štýl, ktorý chceš)" : "3. Recipe"}
             </h3>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -440,7 +643,7 @@ export function StyleStudioPanel({
           <div className="flex items-center gap-2">
             <TypeIcon className="w-4 h-4 text-neutral-400" />
             <h3 className="text-xs font-black text-white uppercase tracking-wide">
-              {isSk ? "2. Ovládače (ty rozhoduješ, engine poslúcha)" : "2. Controls"}
+              {isSk ? "4. Ovládače (ty rozhoduješ, engine poslúcha)" : "4. Controls"}
             </h3>
           </div>
 
@@ -556,7 +759,7 @@ export function StyleStudioPanel({
               <div className="flex items-center gap-2">
                 <Eye className="w-4 h-4 text-neutral-400" />
                 <h3 className="text-xs font-black text-white uppercase tracking-wide">
-                  {isSk ? "3. Plán — čo, kedy, prečo (a kedy nie)" : "3. Plan"}
+                  {isSk ? "5. Plán — čo, kedy, prečo (a kedy nie)" : "5. Plan"}
                 </h3>
               </div>
 
@@ -858,7 +1061,7 @@ export function StyleStudioPanel({
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-neutral-400" />
                 <h3 className="text-xs font-black text-white uppercase tracking-wide">
-                  {isSk ? "4. Aplikovať do projektu (snapshot → CommandManager)" : "4. Apply"}
+                  {isSk ? "6. Aplikovať do projektu (snapshot → CommandManager)" : "6. Apply"}
                 </h3>
               </div>
 

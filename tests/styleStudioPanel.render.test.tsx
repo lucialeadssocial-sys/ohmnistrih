@@ -164,3 +164,53 @@ describe("J) Apply je v obrazovke poctivo zapojený", () => {
     expect(out).toContain("Verzia pred zmenou");
   });
 });
+
+/**
+ * KROK 26 — cieľ videa a referencia tvorcu na obrazovke.
+ *
+ * Dokazuje (UI PRESENT): cieľové tlačidlá a referencie sa vykreslia, pracovný
+ * zdroj je označený ako „princípy“ (nie „vizuál“) a cieľ sa dá zrušiť.
+ * Nedokazuje: kliknutie v prehliadači (to je browser verification) — preto nižšie
+ * voláme aj reálny `buildStylePlan` a kontrolujeme, čo cieľ naozaj spravil.
+ */
+describe("I2) ČO (cieľ) a AKO (referencia) je na obrazovke", () => {
+  test("cieľové tlačidlá a referencia tvorcov sa vykreslia", () => {
+    const markup = html({});
+    expect(markup).toContain('data-testid="goal-PREDAJ"');
+    expect(markup).toContain('data-testid="goal-VZDELAVANIE"');
+    expect(markup).toContain('data-testid="creator-AI_KTIVISTA"');
+    expect(markup).toContain('data-testid="creator-DAVINCI_BLACKMAGIC"');
+    expect(markup).toContain("Čo má video dosiahnuť");
+    expect(markup).toContain("Podľa koho?");
+  });
+
+  test("pracovný zdroj je označený ako princípy (nie ako vizuálny preset)", () => {
+    const markup = html({});
+    expect(markup).toContain("princípy"); // DaVinci / Runway / Liška / Bartoš / Aujeský
+    expect(markup).toContain("vizuálny zdroj");
+  });
+
+  test("plán s cieľom ukáže v obraze, čo cieľ našiel a čo v dátach chýba", () => {
+    const planWithGoal = buildStylePlan({
+      segments: STYLE_FIXTURE_SEGMENTS,
+      recipe: getStyleRecipe("EDITORIAL_COLLAGE"),
+      durationSec: 14,
+      availableSupportingVisuals: 6,
+      goal: "ODBER",
+      now: STYLE_FIXTURE_NOW,
+    });
+    const markup = html({ initialPlan: planWithGoal });
+    expect(markup).toContain("Zosilnené rozhodnutia");
+    if ((planWithGoal.goal?.missingSk.length ?? 0) > 0) {
+      expect(markup).toContain("nič som nedoplnil");
+    }
+    if ((planWithGoal.goal?.foundSk.length ?? 0) > 0) {
+      expect(markup).toContain("V tvojom videe som našiel");
+    }
+  });
+
+  test("plán bez cieľa zároveň nepredstiera cieľovú sekciu zmien", () => {
+    const markup = html({ initialPlan: plan });
+    expect(markup).not.toContain("Zosilnené rozhodnutia");
+  });
+});

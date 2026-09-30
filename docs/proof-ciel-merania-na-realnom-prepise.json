@@ -1,0 +1,472 @@
+{
+  "krok": 26,
+  "co": "Video Goal (ČO) nad existujúcim StylePlan/EditDecision — meranie na reálnom prepise",
+  "vstup": {
+    "segments": "/home/user/real-media/segments-krok18.json",
+    "segmentCount": 6,
+    "durationSec": 19.9,
+    "recipe": "EDITORIAL_COLLAGE",
+    "recipeLabelSk": "Editoriálna koláž"
+  },
+  "baseline": {
+    "goal": null,
+    "decisions": 21,
+    "typography": 6,
+    "motion": 6
+  },
+  "ciele": [
+    {
+      "goalId": "PREDAJ",
+      "labelSk": "Predaj",
+      "decisions": 19,
+      "promoted": 0,
+      "demoted": 2,
+      "byKind": {
+        "motion": 4,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [
+        "slová cieľa: objedn, predaj",
+        "čísla vo videu: 70%., 3000"
+      ],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke"
+      ],
+      "notesSk": [
+        "Cieľ Predaj: utlmil som 2 pohybových rozhodnutí (6 → 4) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Predaj: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke — nič som nedoplnil.",
+        "Cieľ Predaj: v poslednej vete nie je výzva na akciu („Klient zaplatil 3000 € a objednal ďalšie dve videá.“) — nedopisujem ju, doplň ju ty."
+      ]
+    },
+    {
+      "goalId": "ODBER",
+      "labelSk": "Odber / follow",
+      "decisions": 20,
+      "promoted": 0,
+      "demoted": 1,
+      "byKind": {
+        "motion": 5,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke",
+        "slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje"
+      ],
+      "notesSk": [
+        "Cieľ Odber / follow: utlmil som 1 pohybových rozhodnutí (6 → 5) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Odber / follow: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje — nič som nedoplnil.",
+        "Cieľ Odber / follow: v poslednej vete nie je výzva na akciu („Klient zaplatil 3000 € a objednal ďalšie dve videá.“) — nedopisujem ju, doplň ju ty."
+      ]
+    },
+    {
+      "goalId": "REACH",
+      "labelSk": "Pozornosť / dosah",
+      "decisions": 21,
+      "promoted": 0,
+      "demoted": 0,
+      "byKind": {
+        "motion": 6,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke",
+        "slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje"
+      ],
+      "notesSk": [
+        "Cieľ Pozornosť / dosah chce viac striedania obrazu, ale nemáš nahrané ďalšie médiá na podporné vizuály — nič som nepridal (nič si nevymýšľam).",
+        "Cieľ Pozornosť / dosah: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje — nič som nedoplnil.",
+        "Cieľ Pozornosť / dosah v tomto videe nemenil rozhodnutia — nemal na čo: výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje."
+      ]
+    },
+    {
+      "goalId": "KOMENTARE",
+      "labelSk": "Komentáre / engagement",
+      "decisions": 20,
+      "promoted": 0,
+      "demoted": 1,
+      "byKind": {
+        "motion": 5,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke",
+        "slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje",
+        "otázka vo videu — bez nej niet na čo reagovať"
+      ],
+      "notesSk": [
+        "Cieľ Komentáre / engagement: utlmil som 1 pohybových rozhodnutí (6 → 5) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Komentáre / engagement: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje; otázka vo videu — bez nej niet na čo reagovať — nič som nedoplnil.",
+        "Cieľ Komentáre / engagement: v poslednej vete nie je výzva na akciu („Klient zaplatil 3000 € a objednal ďalšie dve videá.“) — nedopisujem ju, doplň ju ty."
+      ]
+    },
+    {
+      "goalId": "KLIK",
+      "labelSk": "Klik / návšteva",
+      "decisions": 19,
+      "promoted": 0,
+      "demoted": 2,
+      "byKind": {
+        "motion": 4,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke",
+        "slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje"
+      ],
+      "notesSk": [
+        "Cieľ Klik / návšteva: utlmil som 2 pohybových rozhodnutí (6 → 4) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Klik / návšteva: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje — nič som nedoplnil.",
+        "Cieľ Klik / návšteva: v poslednej vete nie je výzva na akciu („Klient zaplatil 3000 € a objednal ďalšie dve videá.“) — nedopisujem ju, doplň ju ty."
+      ]
+    },
+    {
+      "goalId": "VZDELAVANIE",
+      "labelSk": "Vzdelávanie",
+      "decisions": 17,
+      "promoted": 0,
+      "demoted": 4,
+      "byKind": {
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4,
+        "motion": 2
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [
+        "slová cieľa: najprv, potom"
+      ],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke"
+      ],
+      "notesSk": [
+        "Cieľ Vzdelávanie: utlmil som 4 pohybových rozhodnutí (6 → 2) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Vzdelávanie: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke — nič som nedoplnil."
+      ]
+    },
+    {
+      "goalId": "BRAND",
+      "labelSk": "Značka / dôvera",
+      "decisions": 17,
+      "promoted": 0,
+      "demoted": 4,
+      "byKind": {
+        "motion": 3,
+        "talking_head": 1,
+        "typography": 5,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [
+        "čísla vo videu: 70%., 3000"
+      ],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke",
+        "slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje"
+      ],
+      "notesSk": [
+        "Cieľ Značka / dôvera: utlmil som 3 pohybových rozhodnutí (6 → 3) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Značka / dôvera: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje — nič som nedoplnil."
+      ]
+    },
+    {
+      "goalId": "LEAD",
+      "labelSk": "Lead / kontakt",
+      "decisions": 19,
+      "promoted": 0,
+      "demoted": 2,
+      "byKind": {
+        "motion": 4,
+        "talking_head": 1,
+        "typography": 6,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "10.3s „Ráno plán, večer“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [
+        "slová cieľa: klient, predaj",
+        "čísla vo videu: 70%., 3000"
+      ],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke"
+      ],
+      "notesSk": [
+        "Cieľ Lead / kontakt: utlmil som 2 pohybových rozhodnutí (6 → 4) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Lead / kontakt: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke — nič som nedoplnil.",
+        "Cieľ Lead / kontakt: v poslednej vete nie je výzva na akciu („Klient zaplatil 3000 € a objednal ďalšie dve videá.“) — nedopisujem ju, doplň ju ty."
+      ]
+    },
+    {
+      "goalId": "STORYTELLING",
+      "labelSk": "Príbeh",
+      "decisions": 19,
+      "promoted": 0,
+      "demoted": 2,
+      "byKind": {
+        "motion": 5,
+        "talking_head": 1,
+        "typography": 5,
+        "supporting_visual": 4,
+        "composition": 4
+      },
+      "texts": [
+        "0.4s „Za päť minút“",
+        "4.8s „Najprv som robil“",
+        "7.7s „Potom som zaviedol“",
+        "12.1s „strih o 70%.“",
+        "15.8s „Klient zaplatil 3000 €“"
+      ],
+      "foundSk": [
+        "slová cieľa: potom, až"
+      ],
+      "missingSk": [
+        "výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke"
+      ],
+      "notesSk": [
+        "Cieľ Príbeh: utlmil som 1 pohybových rozhodnutí (6 → 5) — všetky sú v sekcii „čo som zvážil a nevybral“.",
+        "Cieľ Príbeh: v tvojom videe chýba výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke — nič som nedoplnil."
+      ]
+    }
+  ],
+  "rozhodnutiaSCielom": 171,
+  "rozdielyProtiBezCiela": {
+    "PREDAJ": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 19",
+        "motion: 6 → 4"
+      ],
+      "reasonSk": null
+    },
+    "ODBER": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 20",
+        "motion: 6 → 5"
+      ],
+      "reasonSk": null
+    },
+    "REACH": {
+      "same": true,
+      "diffSk": [],
+      "reasonSk": "Cieľ Pozornosť / dosah v tomto videe nemenil rozhodnutia — nemal na čo: výzva na akciu (CTA) — appka ju nedopíše, musí zaznieť v nahrávke; slová, ktoré nesú cieľ — video ich zatiaľ neobsahuje."
+    },
+    "KOMENTARE": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 20",
+        "motion: 6 → 5"
+      ],
+      "reasonSk": null
+    },
+    "KLIK": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 19",
+        "motion: 6 → 4"
+      ],
+      "reasonSk": null
+    },
+    "VZDELAVANIE": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 17",
+        "motion: 6 → 2"
+      ],
+      "reasonSk": null
+    },
+    "BRAND": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 17",
+        "motion: 6 → 3",
+        "typography: 6 → 5",
+        "zmenená sila textu: statistic:strih o 70%."
+      ],
+      "reasonSk": null
+    },
+    "LEAD": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 19",
+        "motion: 6 → 4"
+      ],
+      "reasonSk": null
+    },
+    "STORYTELLING": {
+      "same": false,
+      "diffSk": [
+        "počet rozhodnutí 21 → 19",
+        "motion: 6 → 5",
+        "typography: 6 → 5",
+        "zmenená sila textu: statistic:strih o 70%."
+      ],
+      "reasonSk": null
+    }
+  },
+  "tvorcovia": [
+    {
+      "id": "AI_KTIVISTA",
+      "name": "Tomáš Jevčík / AI_KTIVISTA (Aftercode Studio) 🇸🇰",
+      "evidence": "MEASURED",
+      "recepty": [
+        "AI_CINEMATIC_TAKE",
+        "EDU_WORD_TALK",
+        "AI_CARD_DEMO"
+      ],
+      "vyriesene": "AI_CINEMATIC_TAKE",
+      "poznamkaSk": "Tomáš Jevčík / AI_KTIVISTA (Aftercode Studio) 🇸🇰: vizuál ide z receptu „AI Cinematic Take“ (namerané hodnoty)."
+    },
+    {
+      "id": "DENIS_VENCEL",
+      "name": "Denis Vencel 🇸🇰",
+      "evidence": "MEASURED",
+      "recepty": [
+        "FILM_MONTAGE",
+        "EXPERT_COLLAGE_TALK",
+        "AI_CARD_DEMO"
+      ],
+      "vyriesene": "FILM_MONTAGE",
+      "poznamkaSk": "Denis Vencel 🇸🇰: vizuál ide z receptu „Film Montage“ (namerané hodnoty)."
+    },
+    {
+      "id": "KAMIL_AUJESKY",
+      "name": "Kamil Aujeský 🇸🇰",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Kamil Aujeský 🇸🇰: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "MAREK_LISKA",
+      "name": "Marek Liška 🇨🇿",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Marek Liška 🇨🇿: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "MAREK_BARTOS",
+      "name": "Marek Bartoš 🇨🇿",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Marek Bartoš 🇨🇿: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "RUNWAY",
+      "name": "Runway / Runway Academy 🌍",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Runway / Runway Academy 🌍: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "DAVINCI_BLACKMAGIC",
+      "name": "Blackmagic / DaVinci Resolve 🌍",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Blackmagic / DaVinci Resolve 🌍: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "GOOGLE_YOUTUBE_CREATE",
+      "name": "Google / YouTube Create 🌍",
+      "evidence": "DOCUMENTED_PRINCIPLES",
+      "recepty": [],
+      "vyriesene": null,
+      "poznamkaSk": "Google / YouTube Create 🌍: **vizuálny preset z neho nemáme** — jeho videá sme nemerali."
+    },
+    {
+      "id": "CUSTOM",
+      "name": "Vlastná referencia (nahraj svoju) 👤",
+      "evidence": "USER_SUPPLIED",
+      "recepty": [
+        "CUSTOM"
+      ],
+      "vyriesene": "CUSTOM",
+      "poznamkaSk": "Vlastná referencia (nahraj svoju) 👤: vizuál ide z receptu „Custom“ (princípy)."
+    }
+  ],
+  "poznamka": "Video sa NEgeneruje a nič sa neaplikuje — ide o meranie plánu (EditDecision) na reálnom prepise. Apply/export je samostatný krok cez CommandManager."
+}
