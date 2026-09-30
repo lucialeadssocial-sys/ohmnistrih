@@ -66,6 +66,62 @@ export const CAPTION_ANIMATION_MS: Record<CaptionAnimation, number> = {
   fade: 150,
 };
 
+/**
+ * Ako dlho „pruží" zvýraznené (hovorené) slovo — krok 18.
+ *
+ * Pruženie je **jedna pravda pre dve miesta**: vypálenie titulkov (ASS `\t`) aj
+ * náhľad (canvas). Preto je to funkcia, nie dve konštanty.
+ *
+ * Nikdy nie je dlhšie než polovica slova: keby áno, pruženie by dobehlo až v čase,
+ * keď sa už zvýrazňuje ďalšie slovo (a divák by videl „oneskorené" zväčšenie).
+ */
+export const WORD_POP_DEFAULT_MS = 130;
+
+/**
+ * Dĺžka pruženia pre konkrétny štýl (sekundy), alebo 0 = štýl nepruží.
+ *
+ * Pruženie má zmysel len vtedy, keď štýl hovorené slovo **zväčšuje**
+ * (`activeWordScale`). Dĺžku nesie štýl (`activeWordPopMs`); keď ju nemá, použije
+ * sa `WORD_POP_DEFAULT_MS` — jediná „voľba appky", a je viditeľná v katalógu.
+ */
+export function wordPopSecForStyle(
+  spec: { activeWordScale?: number; activeWordPopMs?: number } | null | undefined,
+  wordDurationSec: number,
+): number {
+  const peak = spec?.activeWordScale;
+  if (!peak || peak === 100) return 0;
+  const ms = spec?.activeWordPopMs ?? WORD_POP_DEFAULT_MS;
+  const dur = Number.isFinite(wordDurationSec) ? Math.max(0, wordDurationSec) : 0;
+  if (ms <= 0 || dur <= 0.08) return 0;
+  return Math.min(ms / 1000, dur / 2);
+}
+
+/**
+ * Veľkosť zvýrazneného slova v čase (1 = základná veľkosť), `peakScale` = vrchol.
+ *
+ * Priebeh je **lineárny od začiatku slova po `popSec`** a potom drží vrchol —
+ * presne tak, ako to kreslí ASS `\t(0,ms,...)` (lineárne, bez zrýchlenia).
+ * Vďaka tomu sa náhľad a video nemôžu rozísť v tom, ako veľké slovo je.
+ */
+export function activeWordScaleAt(
+  tSec: number,
+  fromSec: number,
+  peakScale: number,
+  popSec: number,
+): number {
+  const peak = Number.isFinite(peakScale) ? peakScale / 100 : 1;
+  if (!Number.isFinite(peak) || peak <= 1) return 1;
+  // Pokazené časy neznamenajú „animuj od nuly" — znamenajú „nemám kedy začať".
+  // Radšej základná veľkosť než náhodne zväčšené slovo v neznámom čase.
+  if (!Number.isFinite(tSec) || !Number.isFinite(fromSec)) return 1;
+  const t = tSec;
+  const from = fromSec;
+  if (t <= from) return 1;
+  if (popSec <= 0) return peak;
+  const progress = Math.min(1, (t - from) / popSec);
+  return 1 + (peak - 1) * progress;
+}
+
 export interface CaptionStyleSpec {
   id: CaptionStyleId;
   labelSk: string;
@@ -98,6 +154,11 @@ export interface CaptionStyleSpec {
   highlightNeedsWordTiming: boolean;
   /** Rozdiel veľkosti (‰) zvýrazneného slova — „bounce“ efekt virálnych štýlov. */
   activeWordScale?: number;
+  /**
+   * Ako dlho sa hovorené slovo zväčšuje (ms) — „pruženie" (krok 18).
+   * Keď chýba a štýl má `activeWordScale`, použije sa `WORD_POP_DEFAULT_MS`.
+   */
+  activeWordPopMs?: number;
   /** Animácia vstupu titulku (viď `CaptionAnimation`). */
   animation?: CaptionAnimation;
   /** Text na farebnej placce (ASS BorderStyle 3) namiesto obrysu. */
@@ -167,6 +228,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     highlightMode: "active-word",
     highlightNeedsWordTiming: true,
     activeWordScale: 112,
+    activeWordPopMs: 150,
     animation: "fade",
     bottomMarginRatio: 0.2,
   },
@@ -190,6 +252,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     highlightMode: "active-word",
     highlightNeedsWordTiming: true,
     activeWordScale: 118,
+    activeWordPopMs: 130,
     bottomMarginRatio: 0.15,
   },
   {
@@ -589,19 +652,41 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 
   let segmentsWithoutWords = 0;
   let keywordEmphasis = false;
+  /** True, keď aspoň jedno hovorené slovo dostalo animované pruženie (aby to appka povedala). */
+  let wordPopActive = false;
 
   const mode: CaptionHighlightMode = style.highlightMode ?? "active-word";
   /** Pri `keywords` je celá veta naraz; pri `active-word` podľa `wordsPerChunk`. */
   const wholeSentence = style.wordsPerChunk === 0;
 
-  /** Zvýrazní jedno slovo farbou (+ prípadné zväčšenie aktívneho slova). */
-  const accentWord = (escapedWord: string, opts: { active: boolean; strong: boolean }): string => {
+  /**
+   * Zvýrazní jedno slovo farbou (+ animované zväčšenie hovoreného slova).
+   *
+   * Krok 18: zväčšenie už nie je „skoč a stoj", ale **pruženie** — slovo sa od
+   * základnej veľkosti zväčší na `activeWordScale` za `popSec` (ASS `\t`, lineárne).
+   * Rovnaké číslo používa aj náhľad (`activeWordScaleAt`), takže sa nemôžu rozísť.
+   *
+   * Poznámka k meraniu: `\t` na **jednom slove** libass vykresľuje (overené meraním
+   * v `kontrola-krok18/libass-sondy.json`: šírka slova rástla 416 → 518 px). Animácia
+   * vstupu celej udalosti je pri zapnutom zväčšení slova stále nahradená jemným
+   * objavením (`fade`), pretože obe naraz sa v libass navzájom oslabujú (E 42 px vs
+   * F 18 px v tom istom meraní).
+   */
+  const accentWord = (
+    escapedWord: string,
+    opts: { active: boolean; strong: boolean; popSec?: number },
+  ): string => {
     if (!opts.active && !opts.strong) return escapedWord;
     const color = opts.active ? style.highlightColor : style.highlightColor;
-    const scale =
-      opts.active && style.activeWordScale && style.activeWordScale !== 100
-        ? `\\fscx${style.activeWordScale}\\fscy${style.activeWordScale}`
-        : "";
+    const peak = style.activeWordScale && style.activeWordScale !== 100 ? style.activeWordScale : 0;
+    const popSec = opts.popSec ?? 0;
+    // Keď slovo nemá zmeranú dĺžku alebo „pruženie" nemá zmysel, ostaň pri statickom
+    // zväčšení (staré správanie) — nič sa nepredstiera.
+    const scale = !peak
+      ? ""
+      : popSec > 0
+        ? `\\fscx100\\fscy100\\t(0,${Math.round(popSec * 1000)},\\fscx${peak}\\fscy${peak})`
+        : `\\fscx${peak}\\fscy${peak}`;
     const resetScale = scale ? `\\fscx100\\fscy100` : "";
     return `{\\c${color}${scale}}${escapedWord}{\\c${style.primaryColor}${resetScale}}`;
   };
@@ -667,6 +752,9 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
         const start = Math.max(w.start, segStart);
         const end = Math.min(nextStart ?? Math.max(w.end, chunk[chunk.length - 1].end), segEnd);
         if (end <= start) continue;
+        // Pruženie hovoreného slova: nikdy dlhšie než polovica jeho času na obrazovke.
+        const popSecForWord = wordPopSecForStyle(style, end - start);
+        if (popSecForWord > 0) wordPopActive = true;
 
         // Porovnanie tokenu je jedna funkcia (transcript/wordTiming) — aby
         // vypálenie titulkov aj náhľad zvýrazňovali to isté slovo.
@@ -677,7 +765,12 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
                 const isActive = wordsShareToken(escapedWord, w.word);
                 const strong = mode === "keywords" && Boolean(strongFlags[li]?.[wi]);
                 if (strong) keywordEmphasis = true;
-                return accentWord(escapedWord, { active: isActive, strong });
+                // Pruženie patrí len hovorenému slovu (nie zdôrazneným kľúčovým slovám).
+                return accentWord(escapedWord, {
+                  active: isActive,
+                  strong,
+                  popSec: isActive && mode === "active-word" ? popSecForWord : 0,
+                });
               })
               .join(" "),
           )
@@ -711,7 +804,15 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
   }
   if (effectiveAnimation !== "none") {
     notesSk.push(
-      `Titulky majú animáciu vstupu (${effectiveAnimation}) — animuje sa len objavenie, počas čítania text stojí.`,
+      `Titulky majú animáciu vstupu (${effectiveAnimation}) — týka sa objavenia titulku.` +
+        (wordPopActive ? " Hovorené slovo popri tom pruží (zväčšuje sa), ako je to v štýle." : " Počas čítania text stojí."),
+    );
+  }
+  if (wordPopActive) {
+    const popMs = Math.round(wordPopSecForStyle(style, 1) * 1000);
+    notesSk.push(
+      `Hovorené slovo **pruží** (krok 18): zväčší sa na ${style.activeWordScale} % za ${popMs} ms ` +
+        `a potom drží — v náhľade aj vo videe rovnakým pravidlom.`,
     );
   }
   if (scaleAnimationDead) {
@@ -1471,6 +1572,7 @@ export const OVERRIDE_LIMITS = {
   bottomMarginRatio: [0.04, 0.35] as const,
   letterSpacing: [-2, 4] as const,
   activeWordScale: [100, 160] as const,
+  activeWordPopMs: [0, 400] as const,
   outlineWidth: [0, 24] as const,
 } as const;
 

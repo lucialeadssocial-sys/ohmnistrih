@@ -7,7 +7,7 @@ import { ProjectModel, ClipModel } from '../types/project';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { buildCanonicalFramePlan, CanonicalLayer } from './canonicalFrame';
 import { activeWordAt, wordsShareToken } from '../transcript/wordTiming';
-import { CAPTION_STYLES } from '../export/subtitleRender';
+import { CAPTION_STYLES, activeWordScaleAt, wordPopSecForStyle } from '../export/subtitleRender';
 
 export class RenderEngine {
   private static instance: RenderEngine | null = null;
@@ -144,7 +144,7 @@ export class RenderEngine {
     // vypálenie titulkov — rovnaké pravidlo (activeWordAt) aj rovnaká farba (katalóg štýlov).
     const active = activeWordHighlight(clip, layer);
     if (active) {
-      drawHighlightedWords(ctx, content, active, highlightColorFor(clip, layer));
+      drawHighlightedWords(ctx, content, active, highlightColorFor(clip, layer), activeWordScaleFor(clip, layer));
       return;
     }
 
@@ -204,7 +204,7 @@ export class RenderEngine {
 function activeWordHighlight(
   clip: ClipModel,
   layer: CanonicalLayer,
-): { tokens: string[]; activeIndex: number } | null {
+): { tokens: string[]; activeIndex: number; fromSec: number; popSec: number } | null {
   const words = Array.isArray(layer.words)
     ? layer.words
     : Array.isArray(clip.textConfig?.words)
@@ -225,7 +225,28 @@ function activeWordHighlight(
   const activeIndex = tokens.findIndex((t) => wordsShareToken(t, active.word));
   if (activeIndex < 0) return null;
 
-  return { tokens, activeIndex };
+  return { tokens, activeIndex, fromSec: active.fromSec, popSec: active.toSec - active.fromSec };
+}
+
+/**
+ * O koľko je hovorené slovo zväčšené v tomto okamihu (pruženie — krok 18).
+ *
+ * Pravidlo je **tá istá funkcia**, ktorú používa vypálenie titulkov
+ * (`activeWordScaleAt` + `wordPopSecForStyle`), takže náhľad a video držia rovnakú veľkosť
+ * aj rovnaký čas pruženia. Bez `activeWordScale` v štýle (alebo pri štýle, ktorý
+ * hovorené slovo nezvýrazňuje) sa nič nezväčšuje.
+ */
+function activeWordScaleFor(clip: ClipModel, layer: CanonicalLayer): number {
+  const preset = layer.captionPreset ?? clip.captionStyle?.preset;
+  const spec = preset ? CAPTION_STYLES.find((x) => x.id === preset) : undefined;
+  if (!spec || spec.highlightMode !== "active-word") return 1;
+  const peak = spec.activeWordScale;
+  if (!peak || peak === 100) return 1;
+  const highlight = activeWordHighlight(clip, layer);
+  if (!highlight) return 1;
+  // Pruženie sa počíta z časovania slov (relatívne k začiatku klipu) — nie z hodín.
+  const popSec = wordPopSecForStyle(spec, highlight.popSec);
+  return activeWordScaleAt(layer.clipTime, highlight.fromSec, peak, popSec);
 }
 
 /** Farba zvýraznenia — z jedného katalógu štýlov (žiadna druhá definícia farieb). */
@@ -245,6 +266,7 @@ function drawHighlightedWords(
   content: string,
   active: { tokens: string[]; activeIndex: number },
   highlightColor: string,
+  activeScale = 1,
 ): void {
   const gap = ctx.measureText(" ").width;
   const widths = active.tokens.map((t) => ctx.measureText(t).width);
@@ -252,9 +274,23 @@ function drawHighlightedWords(
   let x = -total / 2;
   const baseColor = ctx.fillStyle;
   for (let i = 0; i < active.tokens.length; i++) {
-    ctx.fillStyle = i === active.activeIndex ? highlightColor : baseColor;
     ctx.textAlign = "left";
-    ctx.fillText(active.tokens[i], x, 0);
+    if (i === active.activeIndex && activeScale > 1) {
+      // Zväčšuje sa **na mieste** (stred slova zostáva) — rovnako ako ASS `\t`,
+      // ktoré tiež nepreusporadúva text, len zmení veľkosť slova.
+      const centerX = x + widths[i] / 2;
+      ctx.save();
+      ctx.translate(centerX, 0);
+      ctx.scale(activeScale, activeScale);
+      ctx.fillStyle = highlightColor;
+      ctx.textAlign = "center";
+      ctx.fillText(active.tokens[i], 0, 0);
+      ctx.restore();
+      ctx.textAlign = "left";
+    } else {
+      ctx.fillStyle = i === active.activeIndex ? highlightColor : baseColor;
+      ctx.fillText(active.tokens[i], x, 0);
+    }
     x += widths[i] + gap;
   }
   ctx.textAlign = "center";
