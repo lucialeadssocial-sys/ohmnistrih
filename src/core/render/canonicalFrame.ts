@@ -31,6 +31,13 @@ export interface CanonicalLayer {
   /** Zdrojový čas v médiu (pre presné seeknutie prehrávača/exportu). */
   sourceTime: number | null;
   text?: string;
+  /**
+   * Časovanie slov z canonical klipu (relatívne k začiatku klipu) — náhľad podľa
+   * neho zvýrazní hovorené slovo. Keď chýba, kreslí sa statický text bez zvýraznenia.
+   */
+  words?: { word: string; start: number; end: number }[];
+  /** Predvoľba titulkov z canonical klipu (`CaptionStyleConfig.preset`) — farba zvýraznenia. */
+  captionPreset?: string;
   opacity: number;
   scale: number;
   positionX: number;
@@ -199,7 +206,14 @@ export function buildCanonicalFramePlan(
         }
         continue;
       }
-      layers.push({ ...base, kind: "text", text });
+      const words = Array.isArray(clip.textConfig?.words) ? clip.textConfig.words : [];
+      layers.push({
+        ...base,
+        kind: "text",
+        text,
+        ...(words.length > 0 ? { words } : {}),
+        ...(clip.captionStyle?.preset ? { captionPreset: clip.captionStyle.preset } : {}),
+      });
       continue;
     }
 

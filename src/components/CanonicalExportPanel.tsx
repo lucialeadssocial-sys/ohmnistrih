@@ -550,6 +550,8 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
 
         <p className="text-[10px] text-neutral-500">{canonicalExportSummarySk({
           request: activePlan?.request ?? { uploadId: "", uploadName: "", styleId: "VIRAL_BOLD", width: 0, height: 0, segments: [], keepRanges: [] },
+          captionsWithWords: activePlan?.captionsWithWords ?? 0,
+          captionsWithoutWords: activePlan?.captionsWithoutWords ?? 0,
           notesSk: [],
           unsupportedSk: activePlan?.unsupportedSk ?? [],
           parity: activePlan?.parity ?? { canonicalCaptionClips: 0, requestSegments: 0, missingTexts: [], extraTexts: [], matched: true },

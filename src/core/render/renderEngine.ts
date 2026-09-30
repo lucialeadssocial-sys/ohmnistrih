@@ -6,6 +6,8 @@
 import { ProjectModel, ClipModel } from '../types/project';
 import { TimelineEngine } from '../timeline/timelineEngine';
 import { buildCanonicalFramePlan, CanonicalLayer } from './canonicalFrame';
+import { activeWordAt, wordsShareToken } from '../transcript/wordTiming';
+import { CAPTION_STYLES } from '../export/subtitleRender';
 
 export class RenderEngine {
   private static instance: RenderEngine | null = null;
@@ -137,6 +139,15 @@ export class RenderEngine {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
+    // Zvýraznenie hovoreného slova (krok 17): keď klip nesie časovanie slov z prepisu
+    // a štýl titulkov zvýrazňuje hovorené slovo, náhľad zvýrazní TO ISTÉ slovo ako
+    // vypálenie titulkov — rovnaké pravidlo (activeWordAt) aj rovnaká farba (katalóg štýlov).
+    const active = activeWordHighlight(clip, layer);
+    if (active) {
+      drawHighlightedWords(ctx, content, active, highlightColorFor(clip, layer));
+      return;
+    }
+
     const textMetrics = ctx.measureText(content);
     const textWidth = textMetrics.width;
     const textHeight = fontSize * 1.2;
@@ -177,6 +188,77 @@ export class RenderEngine {
         return 'none';
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Zvýraznenie hovoreného slova v náhľade (krok 17)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ktoré slovo v texte je práve hovorené.
+ *
+ * Rovnaké pravidlo ako pri vypálení titulkov (`activeWordAt`) — náhľad ani video
+ * si nesmú vymýšľať vlastné poradie. Keď klip časovanie slov nemá, alebo štýl
+ * hovorené slovo nezvýrazňuje, vráti `null` a kreslí sa pôvodný statický text.
+ */
+function activeWordHighlight(
+  clip: ClipModel,
+  layer: CanonicalLayer,
+): { tokens: string[]; activeIndex: number } | null {
+  const words = Array.isArray(layer.words)
+    ? layer.words
+    : Array.isArray(clip.textConfig?.words)
+      ? clip.textConfig!.words!
+      : [];
+  if (words.length === 0) return null;
+
+  const preset = layer.captionPreset ?? clip.captionStyle?.preset;
+  const spec = preset ? CAPTION_STYLES.find((x) => x.id === preset) : undefined;
+  // Keď štýl zvýrazňuje len kľúčové slová alebo nič, náhľad nesmie ukázať viac než video.
+  if (spec && spec.highlightMode !== "active-word") return null;
+
+  const active = activeWordAt(words, layer.clipTime);
+  if (!active) return null;
+
+  const text = layer.text ?? clip.textConfig?.content ?? "";
+  const tokens = text.split(/\s+/).filter((t) => t.length > 0);
+  const activeIndex = tokens.findIndex((t) => wordsShareToken(t, active.word));
+  if (activeIndex < 0) return null;
+
+  return { tokens, activeIndex };
+}
+
+/** Farba zvýraznenia — z jedného katalógu štýlov (žiadna druhá definícia farieb). */
+function highlightColorFor(clip: ClipModel, layer: CanonicalLayer): string {
+  const preset = layer.captionPreset ?? clip.captionStyle?.preset;
+  const spec = preset ? CAPTION_STYLES.find((x) => x.id === preset) : undefined;
+  return spec?.highlightColor ?? clip.textConfig?.color ?? "#ffffff";
+}
+
+/**
+ * Nakreslí text po slovách a hovorené slovo zvýrazní farbou štýlu.
+ * Medzery drží na šírku medzery, aby text zostal na tom istom mieste ako doteraz
+ * (statický text sa kreslí na stred vrstvy).
+ */
+function drawHighlightedWords(
+  ctx: CanvasRenderingContext2D,
+  content: string,
+  active: { tokens: string[]; activeIndex: number },
+  highlightColor: string,
+): void {
+  const gap = ctx.measureText(" ").width;
+  const widths = active.tokens.map((t) => ctx.measureText(t).width);
+  const total = widths.reduce((sum, w) => sum + w, 0) + gap * Math.max(0, active.tokens.length - 1);
+  let x = -total / 2;
+  const baseColor = ctx.fillStyle;
+  for (let i = 0; i < active.tokens.length; i++) {
+    ctx.fillStyle = i === active.activeIndex ? highlightColor : baseColor;
+    ctx.textAlign = "left";
+    ctx.fillText(active.tokens[i], x, 0);
+    x += widths[i] + gap;
+  }
+  ctx.textAlign = "center";
+  ctx.fillStyle = baseColor;
 }
 
 /** Nájde klip podľa id v celom projekte (plán nesie len identifikátory). */
