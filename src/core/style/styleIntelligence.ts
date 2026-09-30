@@ -25,6 +25,7 @@ import {
 } from "../transcript/wordTiming";
 import { isStrongCaptionWord } from "../export/subtitleRender";
 import { getStyleRecipe, type StylePresetId, type StyleRecipe } from "./styleRecipes";
+import { auditStyleExplicitness, explicitnessLineSk } from "./styleExplicitness";
 import {
   DEFAULT_STYLE_CONTROLS,
   GENERATED_VISUALS_PROVIDER_AVAILABLE,
@@ -813,6 +814,19 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
   if (missingSignalsSk.length) {
     notesSk.push(`Bez týchto dát som nerobil rozhodnutia: ${missingSignalsSk.join("; ")}.`);
   }
+
+  // --- 6. Kontrola štýlu (krok 15) ----------------------------------------
+  // Jeho pravidlo: „Keď AI nepovieš, aké má byť svetlo, kompozícia, farby alebo celkový
+  // štýl, musí si to všetko nejako domyslieť." Plán preto sám povie, čo je podložené
+  // a čo by ostalo na domyslenie — a čo appka doplní (aby sa nič nedialo ticho).
+  const explicitness = auditStyleExplicitness({
+    recipe,
+    controls: input.controls ?? {},
+    talkingHeadRatioFromPlan: ratio.target,
+  });
+  notesSk.push(explicitnessLineSk(explicitness));
+  for (const gap of explicitness.closeGapsSk) notesSk.push(`Chýba pilier → ${gap}`);
+  for (const extra of explicitness.notesSk) notesSk.push(extra);
 
   const sorted = decisions.sort(
     (a, b) => (a.style?.whenSk.startSec ?? 0) - (b.style?.whenSk.startSec ?? 0) || String(a.type).localeCompare(String(b.type)),

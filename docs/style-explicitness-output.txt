@@ -1,0 +1,93 @@
+====================================================================================================
+KROK 15 — „nič nenechaj modelu na domyslenie“ (jeho pravidlo z tiktoku 7673961257115979030)
+====================================================================================================
+
+Jeho veta: „Keď AI nepovieš, aké má byť svetlo, kompozícia, farby alebo celkový štýl,
+musí si to všetko nejako domyslieť… čím viac rozhodnutí necháš na AI, tým viac sa
+prikloní k tomu najpravdepodobnejšiemu. A to najpravdepodobnejšie býva často aj to
+najgenerickejšie.“
+
+Čo robí tento nástroj: pýta sa presne na tie štyri piliere a hovorí, čo je podložené
+(tvoje nastavenie / meranie / recept) a čo by si model domyslel. Nič nemeria nanovo
+a nič negeneruje — číta existujúce recepty a existujúce merania.
+
+1) REÁLNE MERANIA NA DISKU
+   /home/user/referencie/analyza-videa.json
+     svetlo: jas 87,51 / kontrast 55,92
+     paleta: #000000, #E9E3DD, #E9E3DE, #4A3123, #553927, #F3F0ED
+     poznámka: Paleta sa medzi klipmi NEopakuje — to sú najčastejšie odtiene, každý len v menšine videí.
+   /home/user/referencie/analyza-tiktok.json
+     svetlo: jas 114,04 / kontrast 55,80
+     paleta: #E9E4DF, #110D11, #EAE4DF, #FEC903, #FCF8FC, #161216
+     poznámka: Paleta sa medzi klipmi NEopakuje — to sú najčastejšie odtiene, každý len v menšine videí.
+
+2) VŠETKY RECEPTY BEZ TVOJHO MERANIA (čo appka vie sama)
+
+recept                podložené  otvorené  čo by si model domyslel
+----------------------------------------------------------------------------------------------------
+EDITORIAL_COLLAGE     3/4        1         svetlo
+DOCUMENTARY           3/4        1         svetlo
+MODERN_SOCIAL         3/4        1         svetlo
+DARK_EDITORIAL        3/4        1         svetlo
+KINETIC_TYPOGRAPHY    3/4        1         svetlo
+MINIMAL               3/4        1         svetlo
+CINEMATIC             3/4        1         svetlo
+PODCAST_VISUAL        3/4        1         svetlo
+UGC_PERFORMANCE       3/4        1         svetlo
+AI_CARD_DEMO          3/4        1         svetlo
+FILM_MONTAGE          3/4        1         svetlo
+EXPERT_COLLAGE_TALK   3/4        1         svetlo
+AI_CINEMATIC_TAKE     4/4        0         —
+EDU_WORD_TALK         4/4        0         —
+CUSTOM                3/4        1         svetlo
+
+Súhrn: 2 z 15 receptov má podložené všetky 4 piliere;
+       13 z 15 má svetlo NEPODLOŽENÉ (recept ho neuvádza ako číslo a ty si nič nezmeral).
+Toto nie je chyba appky — je to presne to, pred čím on varuje: čo nie je pomenované,
+to si model domyslí. Preto to appka píše do plánu (viď bod 4).
+
+3) DVE REÁLNE REFERENCIE VEDĽA SEBA (svetlo nesie recept aj meranie)
+
+AI_CINEMATIC_TAKE (AI kinematografický záber (merané)):
+   • svetlo          meranie z reálnej referencie       jas 87,5 / 100, kontrast 55,9 / 100 (analyza-videa.json, medián cez 6 jeho IG klipov (median_jas / median_kontrast))
+   • kompozícia      recept (autor receptu)             full_screen, max 1 vrstvy, bez punch-in, bez švihov
+   • farby           recept (autor receptu)             #0A070B, #4A3123, #6F869D, #E8E3DD
+   • celkový štýl    recept (autor receptu)             reálny alebo AI záber, žiadna koláž, textúra: subtle, typografia: clean-sans
+   verdikt: Všetky štyri piliere (svetlo, kompozícia, farby, štýl) máš podložené — model nemá čo domýšľať.
+
+EDU_WORD_TALK (Edu talk — slovo po slove (merané)):
+   • svetlo          meranie z reálnej referencie       jas 114,0 / 100, kontrast 55,8 / 100 (analyza-tiktok.json, medián cez 12 jeho tiktokov (median_jas / median_kontrast))
+   • kompozícia      recept (autor receptu)             full_screen, max 2 vrstvy, punch-in ×1,08, bez švihov
+   • farby           recept (autor receptu)             #FCF8FC, #110D11, #FEC903, #4A6C56
+   • celkový štýl    recept (autor receptu)             rečník + vložené ilustrácie, screenshoty a karty, textúra: clean, typografia: bold-sans
+   verdikt: Všetky štyri piliere (svetlo, kompozícia, farby, štýl) máš podložené — model nemá čo domýšľať.
+
+Jeho dve skupiny videí majú INÉ svetlo, a appka to nezlieva do jedného čísla:
+   IG klipy (krok 12)  : jas 87,51
+   TikToky (krok 13)   : jas 114,04 — svetlejšie prostredie
+Keď dáš receptu inú referenciu, číslo sa zmení a appka vždy povie, odkiaľ je:
+   → jas 114,0 / 100, kontrast 55,8 / 100 (vlastná referencia — analyza-tiktok.json)
+
+4) ČO APPKA NAPÍŠE DO PLÁNU (nič sa nedeje ticho)
+
+   EDITORIAL_COLLAGE: Kontrola štýlu: podložené 3/4 (0× tvoje alebo zmerané, 3× z receptu); modelu na domyslenie by ostalo: svetlo.
+      chýba → Svetlo: zmeraj referenciu (`analyzeReferencePixels` na obrázok alebo `analyzeMoodboard` na grid) a daj appke jas a kontrast ako čísla.
+      appka doplní → svetlo: appka doplní default (neutrálny základ appky (žiadny recept v ponuke svetlo neuvádza ako číslo))
+   AI_CINEMATIC_TAKE: Kontrola štýlu: podložené 4/4 (1× tvoje alebo zmerané, 3× z receptu); modelu na domyslenie by ostalo: nič.
+
+5) „STAČÍ ZMENIŤ RIADOK V KÓDE“ (jeho druhá metóda, tiktok 7690550368333499650)
+
+   Zmenil si jednu vec (Motion: calm → dynamic). Ostatné nastavenia appka necháva tak, ako boli — nemusí sa nič generovať nanovo.
+   zmenené: Motion: calm → dynamic
+   V appke to znamená: mení sa jedna vec, zvyšok ostáva — nič sa negeneruje nanovo.
+   (Testy overujú, že sa naozaj nič iné nemení.)
+
+6) POCTIVOSŤ — ČO TENTO NÁSTROJ NEROBÍ
+   • Negeneruje obrázky ani video — appka nemá providera (PROVIDER UNAVAILABLE).
+   • Nepredpovedá, ako bude výsledok vyzerať — len hovorí, čo je pomenované a čo nie.
+   • Nemerá scénu v tvojom videu — na to treba tvoje médium (to je iný krok).
+   • Namerané svetlo je zatiaľ len ČÍSLO PRE ZADANIE (do AI nástroja mimo appky); appka
+     ním svoj vlastný render nemení — to je priznané, nie zamlčané (IMPLEMENTED, NOT WIRED TO RENDER).
+   • „Podložený pilier“ neznamená, že výstup bude dobrý — len že nie je na domyslenie.
+   • Recepty, ktoré nemajú namerané svetlo, ho NEMAJÚ — appka to nepredstiera.
+
