@@ -1,0 +1,18 @@
+=== OMNISTRIH — DÔKAZ POCTIVOSTI (krok 29) ===
+Skenovaných kombinácií súbor×pravidlo: 238
+Nájdené porušenia: 0
+
+[OK] NO_FAKE_PASS — Kontrola kvality nesmie nastaviť PASS bez merania (bola tu simulácia „stress test“).
+
+[OK] NO_FAKE_CLAIMS — Zakázané tvrdenia, ktoré sa vydávali za meranie (stress test, bitstream, vymyslené hodnoty).
+
+[OK] NO_RANDOM_IN_MEASUREMENT — Meranie a prehľady musia byť deterministické (bola tu krivka cez Math.random()).
+
+[OK] NO_TIME_IN_PLAN — Director plán nesmie byť nedeterministický (bol tu createdAt: Date.now()).
+
+[OK] NO_FAKE_KNOWLEDGE — Knowledge base nesmie obsahovať zdroje, ktoré v repozitári neexistujú.
+
+[OK] NO_FAKE_GENERATION — Generovanie obsahu (Content Pack, A/B) sa nesmie predstierať.
+
+VÝSLEDOK: PASS — v kóde nie sú zakázané vzory.
+Poznámka: tento test číta kód. Neoveruje správanie v prehliadači (to vie len používateľ).

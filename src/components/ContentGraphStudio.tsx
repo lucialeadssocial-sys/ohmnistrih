@@ -27,124 +27,19 @@ interface ContentGraphStudioProps {
   videoDuration?: number;
 }
 
-const INITIAL_ARTIFACTS: ContentGraphArtifact[] = [
-  {
-    id: "art-1",
-    nodeType: "YOUTUBE_LONGFORM",
-    title: "Master YouTube Cut (16:9 4K)",
-    platform: "YouTube",
-    aspectRatio: "16:9",
-    durationSeconds: 742,
-    hookStrengthScore: 94,
-    status: "READY",
-    summary: "Kompletné video s kapitolami, dynamic punch zoomami a optimalizovaným audiom (-14 LUFS).",
-    contentPayload: {
-      headline: "Ako vybudovať virálny video workflow za menej ako 15 minút (OmniStrih Guide)",
-      captionDraft: "V tomto videu si krok po kroku ukážeme, ako prejsť od neupraveného RAW záznamu k finálnemu 4K exportu pripravenému na publikáciu bez hodín manuálneho strihania ticha a nastavovania titulkov.",
-      timestamps: [
-        { time: "00:00", label: "Úvod a Hook: Prečo starý strih zabíja retenciu" },
-        { time: "01:15", label: "Automatický strih ticha a odstraňovanie výplňových slov" },
-        { time: "04:30", label: "Smart B-Roll a dynamické punch zoomy" },
-        { time: "08:45", label: "Profesionálny mastering zvuku a titulkovanie" },
-        { time: "11:50", label: "Zhrnutie a exportný checklist" },
-      ],
-      suggestedHashtags: ["#VideoEditing", "#ContentCreator", "#YouTubeGrowth", "#OmniStrih"],
-      thumbnailPrompt: "Close-up of expressive creator looking at high-tech holographic timeline with text '10x FASTER EDIT'",
-    },
-  },
-  {
-    id: "art-2",
-    nodeType: "VIRAL_SHORT",
-    title: "Viral Short #1: Najväčšia chyba pri strihu (9:16)",
-    platform: "TikTok",
-    aspectRatio: "9:16",
-    durationSeconds: 42,
-    hookStrengthScore: 98,
-    status: "READY",
-    summary: "Extrémne dynamický výsek zameraný na prvých 3.2 sekundy s kinetickými karaoke titulkami.",
-    contentPayload: {
-      headline: "Nikdy nestrihaj ticho ručne v roku 2026 🤯",
-      scriptSnippet: "Ak stále tráviš hodiny označovaním medzier v zvuku na časovej osi, okrádaš sa o čas. Pozri sa, ako to OmniStrih urobí za 3 sekundy...",
-      suggestedHashtags: ["#shorts", "#editingtips", "#creatorhack", "#fyp"],
-      captionDraft: "Zastav manuálne mazanie ticha! ✂️ Pozri si tento jednoduchý trik, ktorý ti ušetrí 5 hodín týždenne.",
-    },
-  },
-  {
-    id: "art-3",
-    nodeType: "VIRAL_SHORT",
-    title: "Viral Short #2: Zvukový Mastering Trik (9:16)",
-    platform: "Instagram Reels",
-    aspectRatio: "9:16",
-    durationSeconds: 34,
-    hookStrengthScore: 91,
-    status: "READY",
-    summary: "Rýchly tip na odstránenie hluku z mikrofónu a 80Hz rumble filter.",
-    contentPayload: {
-      headline: "Tvoje video nikto nedopozerá kvôli zlému zvuku 🎧",
-      scriptSnippet: "Nemusíš kupovať 500-eurový mikrofón. Stačí zapnúť 80Hz high-pass a sidechain ducking v OmniStrih...",
-      suggestedHashtags: ["#reels", "#audiohacks", "#videotips", "#omnistrih"],
-      captionDraft: "Tajomstvo kryštálového zvuku pre tvoje Reels bez drahého štúdia! 🎙️",
-    },
-  },
-  {
-    id: "art-4",
-    nodeType: "LINKEDIN_CAROUSEL",
-    title: "LinkedIn Thought-Leadership Carousel (10 Slides)",
-    platform: "LinkedIn",
-    aspectRatio: "4:5",
-    status: "READY",
-    summary: "Štruktúrovaná prezentácia s kľúčovými dátami a krokmi pripravená na PDF export.",
-    contentPayload: {
-      headline: "5 krokov, ako škálovať produkciu video obsahu bez najímania agentúry",
-      keyTakeaways: [
-        "Slide 1: Prečo manuálny strih blokuje rast firmy",
-        "Slide 2: Pravidlo 3 sekúnd pre udržanie pozornosti (Hook DNA)",
-        "Slide 3: Ako funguje automatický sidechain ducking pre čistý hlas",
-        "Slide 4: Content Repurposing Matrix: 1 RAW = 7 Formátov",
-        "Slide 5: Finálny checklist pred publikáciou",
-      ],
-      fullMarkdown: `# 5 Lekcií z Produkcie 100+ Videí
-1. **Rýchlosť je nová kvalita**: Kto publikuje 4x rýchlejšie s 90% kvalitou, vyhráva distribúciu.
-2. **Zvuk tvorí 50% vizuálu**: Diváci odpustia 1080p, ale neodpustia šum a kolísajúcu hlasitosť.
-3. **Pravidlo jedného RAW**: Každé natočené video musí žiť na minimálne 4 platformách.`,
-      captionDraft: "Ako sme skrátili čas editácie o 78% a znásobili zásah na sociálnych sieťach. Kompletný breakdown v galérii 👇",
-    },
-  },
-  {
-    id: "art-5",
-    nodeType: "NEWSLETTER_DIGEST",
-    title: "Newsletter & Blog Digest (Markdown)",
-    platform: "Substack",
-    aspectRatio: "Text/Markdown",
-    status: "READY",
-    summary: "Kompletný článok s citáciami, kľúčovými bodmi a výzvou k akcii.",
-    contentPayload: {
-      headline: "OmniStrih Týždenník: Ako moderní tvorcovia škálujú produkciu obsahu",
-      fullMarkdown: `## Ahoj tvorcovia,\n\nTento týždeň sme sa v najnovšom videu pozreli na to, ako odstrániť najnudnejšiu časť tvorby – manuálne strihanie ticha a titulkovanie.\n\n### Kľúčové zistenia:\n- **Algoritmus uprednostňuje retenciu**: Prvých 5 sekúnd rozhoduje o 80% organického dosahu.\n- **Automatizovaný B-Roll**: Kontextové prestrihy zvyšujú priemernú dobu pozerania o 34%.\n\nPrečítajte si celý návod a vyskúšajte šablónu vo svojom editore.`,
-      captionDraft: "Nový newsletter je vonku! Zhrnutie najlepších postupov pre video produkciu.",
-    },
-  },
-  {
-    id: "art-6",
-    nodeType: "PODCAST_AUDIO_CUT",
-    title: "Podcast Master Cut (-16 LUFS)",
-    platform: "Spotify / Apple",
-    aspectRatio: "Audio Only",
-    durationSeconds: 710,
-    status: "READY",
-    summary: "Čistá zvuková stopa bez vizuálnych odkazov, optimalizovaná pre podcastové platformy.",
-    contentPayload: {
-      headline: "Epizóda 42: Budúcnosť video editačných workflowov",
-      captionDraft: "Počúvajte novú epizódu na Spotify a Apple Podcasts. Preberáme automatizáciu strihu a optimalizáciu tvorby.",
-    },
-  },
-];
-
+/**
+ * ŽIADNE predvyplnené artefakty.
+ *
+ * Pôvodná verzia obsahovala pevné ukážky (YouTube Master 742 s, „hookStrengthScore: 94“,
+ * vymyslený titulok a kapitoly). To nebolo z používateľovho videa — bolo to
+ * vymyslené. Dnes sa zoznam plní LEN z reálnej analýzy; kým nie je, je prázdny.
+ */
+const INITIAL_ARTIFACTS: ContentGraphArtifact[] = [];
 export const ContentGraphStudio: React.FC<ContentGraphStudioProps> = ({
   language,
   showToast,
   videoTitle = "RAW Master Source",
-  videoDuration = 742,
+  videoDuration = 0,
 }) => {
   const isSk = language === "sk";
   const [artifacts, setArtifacts] = useState<ContentGraphArtifact[]>(INITIAL_ARTIFACTS);
@@ -200,8 +95,8 @@ export const ContentGraphStudio: React.FC<ContentGraphStudioProps> = ({
 
         <div className="flex items-center gap-3">
           <div className="px-3 py-1.5 rounded-xl bg-neutral-800/80 border border-neutral-700 text-xs font-mono text-neutral-300">
-            <span className="text-neutral-500">{isSk ? "Potenciálny zásah:" : "Reach Multiplier:"}</span>{" "}
-            <strong className="text-purple-400 font-bold">5.8x</strong>
+            <span className="text-neutral-500">{isSk ? "Dosah:" : "Reach:"}</span>{" "}
+            <strong className="text-neutral-400 font-bold">{isSk ? "NEMERANÉ" : "NOT MEASURED"}</strong>
           </div>
           <div className="px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/40 text-xs font-mono text-purple-300 font-bold">
             {artifacts.length} {isSk ? "Formátov pripravených" : "Artifacts Ready"}
@@ -218,11 +113,23 @@ export const ContentGraphStudio: React.FC<ContentGraphStudioProps> = ({
               {isSk ? "Vygenerované Formáty" : "Generated Multi-Pack Formats"}
             </span>
             <span className="text-[11px] text-neutral-500 font-mono">
-              1 RAW ({Math.round(videoDuration / 60)} min)
+              1 RAW ({videoDuration > 0 ? `${Math.round(videoDuration / 60)} min` : isSk ? "dĺžka nezmeraná" : "length not measured"})
             </span>
           </div>
 
           <div className="space-y-2">
+            {artifacts.length === 0 && (
+              <div className="p-6 rounded-2xl bg-neutral-900/60 border border-neutral-800 border-dashed text-center space-y-2">
+                <p className="text-[11px] font-black uppercase tracking-widest text-neutral-400">
+                  {isSk ? "ŽIADNE FORMÁTY — NEMERANÉ" : "NO FORMATS — NOT MEASURED"}
+                </p>
+                <p className="text-[10px] text-neutral-500 leading-relaxed max-w-[360px] mx-auto">
+                  {isSk
+                    ? "Tento panel v minulosti zobrazoval pevné ukážky s falošnými číslami (napr. „YouTube Master“ s hook skóre 94). Tie neboli z vášho videa. Formáty sa naplnia, až keď ich vyrobí reálna analýza — dovtedy tu nič vymyslené nenájdete."
+                    : "This panel used to show fixed samples with made-up numbers (e.g. “YouTube Master” with hook score 94). They were not from your video. Formats appear only once real analysis produces them — until then you will find nothing invented here."}
+                </p>
+              </div>
+            )}
             {artifacts.map((art) => {
               const isSelected = art.id === selectedArtifactId;
               return (

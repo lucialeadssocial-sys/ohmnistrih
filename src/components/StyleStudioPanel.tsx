@@ -89,6 +89,8 @@ export interface StyleStudioPanelProps {
   onSeek?: (sec: number) => void;
   onOpenCaptions?: () => void;
   showToast?: (message: string) => void;
+  /** Živý signál: export z canonical osi je NAOZAJ hotový (nie simulácia). */
+  onExportFinished?: () => void;
   /**
    * Hotový plán (napr. z testov alebo statického náhľadu). Predvolene `null` —
    * obrazovka si **nič nevymýšľa**, plán vznikne len kliknutím z reálneho prepisu.
@@ -145,6 +147,7 @@ export function StyleStudioPanel({
   onSeek,
   onOpenCaptions,
   showToast,
+  onExportFinished,
   initialPlan = null,
   onApplyStylePlan,
   onRollbackStyleApply,
@@ -1207,6 +1210,7 @@ export function StyleStudioPanel({
                 getSourceBlob={canonicalPreviewProps.getSourceBlob}
                 getAssetBlob={canonicalPreviewProps.getAssetBlob}
                 showToast={showToast}
+                onExported={onExportFinished}
                 // KROK 24 — z vybraného štýlu berieme NAMERANÉ svetlo jeho videa.
                 styleRecipeId={recipeId}
                 referenceLight={

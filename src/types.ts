@@ -495,22 +495,38 @@ export interface ContentPack {
   isGenerated: boolean;
 }
 
+/**
+ * Úsek časovej osi podľa NAMERANEJ hustoty strihu.
+ *
+ * Pozor: toto NIE je predpoveď retencie diváka. Je to meranie toho, čo je na
+ * časovej osi (koľko strihov je v úseku, ako dlho tam nie je žiadny strih).
+ * Pôvodná verzia mala vymyslené „score 0–100“ a text „AI simuluje správanie
+ * diváka“ — to bolo odstránené.
+ */
 export interface RetentionSegment {
   id: string;
   startTime: number;
   endTime: number;
-  type: "STRONG" | "LOW_DENSITY" | "LONG_PAUSE" | "STRONG_PAYOFF" | "REPETITIVE" | "MONOTONE";
+  type: "CUTS_DENSE" | "CUTS_NORMAL" | "CUTS_SPARSE" | "NO_CUT";
   labelSk: string;
   labelEn: string;
-  score: number; // 0-100
+  /** Počet strihov v úseku (merané z canonical osi). */
+  cuts: number;
+  /** Strihov za minútu v úseku. */
+  cutsPerMinute: number;
 }
 
 export interface RetentionProject {
   id: string;
   sourceVideoId: string;
   segments: RetentionSegment[];
-  overallScore: number;
+  /** Namerané strihy za minútu na celej osi (žiadne vymyslené skóre). */
+  cutsPerMinute: number | null;
+  /** Dĺžka meranej osi v sekundách. */
+  measuredDurationSec: number | null;
   isAnalyzed: boolean;
+  /** Odkiaľ je meranie — `null` = ešte sa nemeralo. */
+  measuredFrom: "canonical_timeline" | null;
 }
 
 export interface ABVersion {
@@ -521,10 +537,14 @@ export interface ABVersion {
   style: "FAST_CUTS" | "NATURAL" | "HEAVY_CAPTIONS" | "MINIMALIST" | "CINEMATIC";
   status: "READY" | "GENERATING" | "COMPLETED";
   previewUrl?: string;
+  /**
+   * Metriky verzie. `null` = NEMERANÉ (OmniStrih nemá dáta o správaní divákov).
+   * Nikdy sa nesmie vyplniť vymyslené číslo — pozri krok 29 (honesty fix).
+   */
   metrics?: {
-    estimatedRetention: number;
-    pacingScore: number;
-    visualDensity: number;
+    estimatedRetention: number | null;
+    pacingScore: number | null;
+    visualDensity: number | null;
   };
 }
 
