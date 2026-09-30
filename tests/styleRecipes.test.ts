@@ -16,9 +16,9 @@ import { GENERATED_VISUALS_PROVIDER_AVAILABLE, DEFAULT_STYLE_CONTROLS } from "..
  */
 
 describe("A) načítanie presetov", () => {
-  test("existuje presne 10 receptov a všetky ID sedia", () => {
-    expect(STYLE_PRESET_IDS).toHaveLength(10);
-    expect(Object.keys(STYLE_RECIPES)).toHaveLength(10);
+  test("existuje presne 13 receptov a všetky ID sedia", () => {
+    expect(STYLE_PRESET_IDS).toHaveLength(13);
+    expect(Object.keys(STYLE_RECIPES)).toHaveLength(13);
     for (const id of STYLE_PRESET_IDS) {
       expect(getStyleRecipe(id).id).toBe(id);
     }
@@ -188,5 +188,41 @@ describe("B) tvorba receptu (CUSTOM a vlastný brief)", () => {
     const before = JSON.stringify(getStyleRecipe("EDITORIAL_COLLAGE"));
     customRecipeFromBrief("koláž, minimal");
     expect(JSON.stringify(getStyleRecipe("EDITORIAL_COLLAGE"))).toBe(before);
+  });
+
+  test("recepty z reálnych referencií nesú namerané hodnoty (nie dojmy)", () => {
+    // Hodnoty sú merané z reálnych klipov — viď docs/STYLE_STUDIO_REFERENCE_ANALYSIS.md.
+    const karta = STYLE_RECIPES.AI_CARD_DEMO;
+    // Referencia: 18 s, 0 rezov → kamera sa nehýbe a rezy nie sú základ.
+    expect(karta.camera.punchIn).toBe(false);
+    expect(karta.camera.whipPan).toBe("none");
+    expect(karta.composition.primary).toBe("picture_in_picture");
+    expect(karta.talkingHeadRatio).toBeGreaterThan(0.8);
+    expect(karta.typography.uppercase).toBe(true);
+    expect(karta.typography.character).toBe("bold-condensed");
+    expect(karta.captionStyle.styleId).toBe("MINIMAL");
+
+    const montaz = STYLE_RECIPES.FILM_MONTAGE;
+    // Referencia: 1,62 rezu/s → strih je základ a b-roll dominuje.
+    expect(montaz.transitionStyle.base).toBe("cut");
+    expect(montaz.talkingHeadRatio).toBeLessThan(0.4);
+    expect(montaz.aesthetic.elementPool).toContain("b_roll");
+    expect(montaz.aesthetic.elementPool).not.toContain("paper_element");
+    expect(montaz.composition.primary).toBe("full_screen");
+
+    const expert = STYLE_RECIPES.EXPERT_COLLAGE_TALK;
+    // Referencia: 0,46 rezu/s, 2,13 s na záber → pokojné tempo, vrstvená koláž.
+    expect(expert.camera.fastZoom).toBe(false);
+    expect(expert.composition.primary).toBe("layered_collage");
+    expect(expert.movement.depthLayers).toBeGreaterThanOrEqual(3);
+    expect(expert.captionStyle.styleId).toBe("HORMOZI");
+  });
+
+  test("nové recepty priznávajú, čo potrebujú (žiadne tiché sľuby)", () => {
+    for (const id of ["AI_CARD_DEMO", "FILM_MONTAGE", "EXPERT_COLLAGE_TALK"] as const) {
+      const r = STYLE_RECIPES[id];
+      expect(r.requiresSk.length).toBeGreaterThan(20);
+      expect(r.talkingHeadRatio + r.supportingVisualRatio).toBeCloseTo(1, 3);
+    }
   });
 });

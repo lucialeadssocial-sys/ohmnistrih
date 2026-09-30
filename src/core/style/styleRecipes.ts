@@ -1,5 +1,5 @@
 /**
- * STYLE RECIPES — 10 vizuálnych receptov (krok 1 Reality Gate).
+ * STYLE RECIPES — 13 vizuálnych receptov (krok 1 Reality Gate).
  *
  * `StyleRecipe` je **ľahký dátový objekt**. Neurčuje timeline, projekt ani render —
  * hovorí existujúcemu Directorovi/editoru, **AKO** má navrhovať vizuálnu úpravu.
@@ -35,6 +35,11 @@ export type StylePresetId =
   | "CINEMATIC"
   | "PODCAST_VISUAL"
   | "UGC_PERFORMANCE"
+  // Recepty odvodené z REÁLNYCH referenčných klipov (merané, nie vymyslené) —
+  // viď docs/STYLE_STUDIO_REFERENCE_ANALYSIS.md.
+  | "AI_CARD_DEMO"
+  | "FILM_MONTAGE"
+  | "EXPERT_COLLAGE_TALK"
   | "CUSTOM";
 
 export interface StyleAnimationSpec {
@@ -143,7 +148,7 @@ export interface StyleRecipe {
 }
 
 // ---------------------------------------------------------------------------
-// 10 receptov
+// recepty
 // ---------------------------------------------------------------------------
 
 /**
@@ -573,7 +578,142 @@ const CUSTOM: StyleRecipe = makeRecipe({
   requiresSk: "Čím konkrétnejší brief, tým lepší výsledok; nerozpoznané pojmy appka vypíše.",
 });
 
-/** Všetkých 10 receptov v poradí, v akom sa ponúkajú v UI. */
+// ---------------------------------------------------------------------------
+// Recepty z reálnych referencií (merania v docs/STYLE_STUDIO_REFERENCE_ANALYSIS.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * **AI KARTA (ZADAJ → VÝSLEDOK)** — referenčný klip: 18,0 s, **0 rezov**
+ * (jeden statický záber), 9:16. Rečník dole, cez obraz veľká svetlá „karta"
+ * s výsledkom AI a kinetické popisky (biely + oranžový, silný kondenzovaný,
+ * tmavý obtiahnutý obrys). Zdrojom karty je existujúce médium, nie generovanie.
+ */
+const AI_CARD_DEMO: StyleRecipe = makeRecipe({
+  id: "AI_CARD_DEMO",
+  name: "AI Card Demo",
+  labelSk: "AI karta (zadaj → výsledok)",
+  purposeSk: "Ukázať výsledok AI v jednom statickom zábere: rečník + karta s výstupom a dvoma popiskami.",
+  whySk: "Divák vidí zadanie aj výsledok súčasne — nie je čo domýšľať, stačí pozerať.",
+  animation: { kind: "snappy", fpsLook: null, motionBlur: false, easingSk: "karta nabehne naraz, potom sa vymení jej obsah" },
+  typography: {
+    character: "bold-condensed",
+    kinetic: true,
+    staggerMs: 140,
+    scaleHint: 108,
+    uppercase: true,
+    maxElementsPerScene: 2,
+    roles: ["label", "keyword", "headline", "emphasis"],
+  },
+  camera: { punchIn: false, punchInScale: 1, fastZoom: false, whipPan: "none" },
+  movement: { paperCutout: false, layering: true, subtleZoom: false, depthLayers: 2, noteSk: "vrstva karty sa nehýbe, mení sa jej obsah" },
+  aesthetic: {
+    labelSk: "karta s výstupom AI + reálne pozadie",
+    elementPool: ["existing_media", "diagram", "photo", "icon"],
+    halftone: false,
+    visibleShadows: true,
+    tornEdges: false,
+    asymmetric: false,
+    illustrationBodies: false,
+  },
+  colorPalette: ["#FFFFFF", "#F08A24", "#111111", "#7FB2D9"],
+  composition: { primary: "picture_in_picture", allowed: ["picture_in_picture", "split", "full_screen"], layersMax: 3 },
+  texture: { level: "clean", kinds: ["mäkký tieň pod kartou"] },
+  visualStructure: { elementAnimation: "sequential", transitionsBetweenPanels: false },
+  captionStyle: { styleId: "MINIMAL", rationaleSk: "Text nesie karta, nie titulková linka — titulky len potichu." },
+  transitionStyle: { base: "cut", accent: "none", noteSk: "Rezy nie sú potrebné; mení sa obsah karty." },
+  talkingHeadRatio: 0.85,
+  motionPool: ["pop", "subtle_zoom"],
+  requiresSk: "Potrebuje médium pre kartu (výstup AI alebo screenshot). Bez neho appka kartu nevymyslí.",
+});
+
+/**
+ * **FILMOVÁ MONTÁŽ** — referenčný klip: 54,3 s, **88 rezov** (1,62 rezu/s,
+ * priemerný záber 0,61 s), 720×1280. B-roll so skutočnou kamerou, rečník
+ * vsunutý medzi zábery, titulky dole na tmavom podklade.
+ */
+const FILM_MONTAGE: StyleRecipe = makeRecipe({
+  id: "FILM_MONTAGE",
+  name: "Film Montage",
+  labelSk: "Filmová montáž",
+  purposeSk: "Rytmický klip postavený na b-roll záberoch s krátkymi prestrihmi na rečníka.",
+  whySk: "Rýchly strih (merane 1,6 rezu za sekundu) drží tempo a b-roll nesie význam, ktorý slová len dopĺňajú.",
+  animation: { kind: "snappy", fpsLook: null, motionBlur: false, easingSk: "strih, žiadne dlhé prechody" },
+  typography: {
+    character: "bold-sans",
+    kinetic: true,
+    staggerMs: 90,
+    scaleHint: 104,
+    uppercase: true,
+    maxElementsPerScene: 3,
+    roles: ["keyword", "headline", "label", "emphasis"],
+  },
+  camera: { punchIn: true, punchInScale: 1.12, fastZoom: true, whipPan: "occasional" },
+  movement: { paperCutout: false, layering: false, subtleZoom: true, depthLayers: 1, noteSk: "pohyb robí strih a kamera v zábere, nie efekty" },
+  aesthetic: {
+    labelSk: "skutočné zábery (b-roll), žiadna koláž",
+    elementPool: ["b_roll", "existing_media", "photo"],
+    halftone: false,
+    visibleShadows: false,
+    tornEdges: false,
+    asymmetric: false,
+    illustrationBodies: false,
+  },
+  colorPalette: ["#111111", "#FFFFFF", "#8A8F98", "#E8720C"],
+  composition: { primary: "full_screen", allowed: ["full_screen", "picture_in_picture"], layersMax: 2 },
+  texture: { level: "clean", kinds: ["filmová zrnitosť v záberoch"] },
+  visualStructure: { elementAnimation: "together", transitionsBetweenPanels: true },
+  captionStyle: { styleId: "CLEAN", rationaleSk: "Titulky na tmavom podklade čitateľné na akomkoľvek zábere." },
+  transitionStyle: { base: "cut", accent: "none", noteSk: "Základ je strih; švih len výnimočne na zmene témy." },
+  talkingHeadRatio: 0.25,
+  motionPool: ["punch", "subtle_zoom", "whip_transition"],
+  requiresSk: "Potrebuje dosť b-roll záberov — bez nich je montáž len rečník a recept to prizná.",
+});
+
+/**
+ * **EXPERT + KOLÁŽ NA OBRAZOVKE** — referenčný klip: 93,6 s, **43 rezov**
+ * (0,46 rezu/s, priemerný záber 2,13 s). Rečník vysvetľuje, na obrazovke sa
+ * vrstvia fotky (čiernobiela koláž) a ručne kreslené diagramy; v titulkoch
+ * je zvýraznené jedno slovo.
+ */
+const EXPERT_COLLAGE_TALK: StyleRecipe = makeRecipe({
+  id: "EXPERT_COLLAGE_TALK",
+  name: "Expert Collage Talk",
+  labelSk: "Expert + koláž na obrazovke",
+  purposeSk: "Dlhší vysvetľujúci klip: rečník hovorí, obraz dopĺňajú fotky, diagramy a zvýraznené slová.",
+  whySk: "Dlhý záber (merane 2,1 s) nechá myšlienku dozrieť a vrstvené fotky držia pozornosť bez zrýchľovania reči.",
+  animation: { kind: "smooth", fpsLook: null, motionBlur: false, easingSk: "plynulé, pokojné nábehy" },
+  typography: {
+    character: "bold-sans",
+    kinetic: true,
+    staggerMs: 120,
+    scaleHint: 102,
+    uppercase: true,
+    maxElementsPerScene: 2,
+    roles: ["keyword", "label", "emphasis", "quote"],
+  },
+  camera: { punchIn: true, punchInScale: 1.08, fastZoom: false, whipPan: "none" },
+  movement: { paperCutout: false, layering: true, subtleZoom: true, depthLayers: 3, noteSk: "fotky sa skladajú do vrstiev, nie animujú" },
+  aesthetic: {
+    labelSk: "čiernobiele fotky + ručne kreslené diagramy",
+    elementPool: ["photo", "diagram", "illustration", "existing_media", "paper_element"],
+    halftone: false,
+    visibleShadows: true,
+    tornEdges: false,
+    asymmetric: true,
+    illustrationBodies: false,
+  },
+  colorPalette: ["#111111", "#F5F5F5", "#E8720C"],
+  composition: { primary: "layered_collage", allowed: ["layered_collage", "picture_in_picture", "split"], layersMax: 3 },
+  texture: { level: "subtle", kinds: ["kontrast", "zrnitosť"] },
+  visualStructure: { elementAnimation: "sequential", transitionsBetweenPanels: false },
+  captionStyle: { styleId: "HORMOZI", rationaleSk: "V referencii je v titulkoch vždy jedno zvýraznené slovo (merané vizuálne)." },
+  transitionStyle: { base: "cut", accent: "punch", noteSk: "Zvýraznenie v mieste pointy, inak pokojný strih." },
+  talkingHeadRatio: 0.6,
+  motionPool: ["slide", "pop", "subtle_zoom", "punch"],
+  requiresSk: "Potrebuje fotky/diagramy pre koláž; bez nich zostane rečník a appka to napíše.",
+});
+
+/** Všetkých 13 receptov v poradí, v akom sa ponúkajú v UI. */
 export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   EDITORIAL_COLLAGE,
   DOCUMENTARY,
@@ -584,6 +724,9 @@ export const STYLE_RECIPES: Record<StylePresetId, StyleRecipe> = {
   CINEMATIC,
   PODCAST_VISUAL,
   UGC_PERFORMANCE,
+  AI_CARD_DEMO,
+  FILM_MONTAGE,
+  EXPERT_COLLAGE_TALK,
   CUSTOM,
 };
 
@@ -597,6 +740,9 @@ export const STYLE_PRESET_IDS: StylePresetId[] = [
   "CINEMATIC",
   "PODCAST_VISUAL",
   "UGC_PERFORMANCE",
+  "AI_CARD_DEMO",
+  "FILM_MONTAGE",
+  "EXPERT_COLLAGE_TALK",
   "CUSTOM",
 ];
 
