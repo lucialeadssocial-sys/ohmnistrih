@@ -90,11 +90,16 @@ describe("canonical náhľad + export (SSR)", () => {
     expect(html).toContain("Export z tej istej canonical osi");
   });
 
-  test("čo linka nevykresľuje, to je viditeľné PRED renderom", () => {
+  test("čo linka tentoraz nevykreslí, je viditeľné PRED renderom (s dôvodom)", () => {
     const html = renderToString(<CanonicalExportPanel language="sk" project={styledProject()} currentTime={1.5} />);
     expect(html).toContain("nevykresľuje");
-    expect(html).toContain("obrazových vrstiev");
-    expect(html).toContain("Priblíženia");
+    expect(html).toContain("nie je dostupné ako súbor");
+  });
+
+  test("čo linka vykreslí (titulky, priblíženie), je v poznámkach", () => {
+    const html = renderToString(<CanonicalExportPanel language="sk" project={styledProject()} currentTime={1.5} />);
+    expect(html).toContain("Priblíženie (motion) sa vykreslí");
+    expect(html).toContain("titulkov pôjde do videa");
   });
 
   test("bez pripojeného zdroja sa render nespustí a panel to povie", () => {

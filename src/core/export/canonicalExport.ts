@@ -23,6 +23,40 @@ export interface CanonicalExportUpload {
   fontFamily?: string;
 }
 
+/** Priblíženie (motion) z canonical osi — obraz sa priblíži na stred. */
+export interface CanonicalZoomSpec {
+  clipId: string;
+  startSec: number;
+  endSec: number;
+  /** 100 = bez zmeny. 112 = priblíženie na 112 %. */
+  scale: number;
+  /** Posun stredu (px na plátne). Nenulový posun + zoom = nepodporované (priznáme). */
+  positionX: number;
+  positionY: number;
+}
+
+/** Obrazová vrstva (b-roll / fotka) z canonical osi, ktorá pôjde do videa. */
+export interface CanonicalOverlaySpec {
+  clipId: string;
+  trackId: string;
+  name: string;
+  kind: "image" | "video";
+  assetId: string;
+  /** Súbor nahraný na server (bez neho vrstva do videa nepôjde — a appka to povie). */
+  uploadId: string;
+  startSec: number;
+  endSec: number;
+  /** 100 = prirodzená veľkosť média. */
+  scalePercent: number;
+  positionX: number;
+  positionY: number;
+}
+
+export interface CanonicalExportExtras {
+  /** Nahraté overlay médiá: assetId → uploadId na serveri. */
+  assetUploads?: Record<string, string>;
+}
+
 /** Rovnaký tvar, aký prijíma existujúci endpoint `/api/export/burn-captions`. */
 export interface CanonicalBurnRequest {
   uploadId: string;
@@ -31,8 +65,12 @@ export interface CanonicalBurnRequest {
   width: number;
   height: number;
   segments: { start: number; end: number; text: string; words?: { word: string; start: number; end: number }[] }[];
-  keepRanges: { start: number; end: number }[];
+  keepRanges: { start: number; end: number; scalePercent?: number }[];
   fontFamily?: string;
+  /** Priblíženia z canonical osi (reálne sa vykreslia v obraze). */
+  zoom?: CanonicalZoomSpec[];
+  /** Obrazové vrstvy z canonical osi (reálne sa vykreslia v obraze). */
+  overlays?: CanonicalOverlaySpec[];
 }
 
 export interface CanonicalExportPlan {
@@ -101,6 +139,34 @@ export function canonicalCaptionClips(project: ProjectModel): ClipModel[] {
   return clips.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
 }
 
+/**
+ * Úseky videa z canonical osi **aj s priblížením** daného klipu.
+ *
+ * Prečo zvlášť: pri strihoch sa ffmpeg reže v čase **zdroja**, kým priblíženie
+ * je vlastnosť klipu na časovej osi. Tu sa to spojí na jednom mieste, aby sa
+ * zoom neprilepil na nesprávny úsek.
+ */
+export function canonicalKeepRangesWithZoom(
+  project: ProjectModel,
+): { start: number; end: number; scalePercent: number; clipId: string }[] {
+  const videoClips: ClipModel[] = [];
+  for (const track of project.tracks) {
+    if (track.type !== "video" || !track.visible) continue;
+    for (const clip of track.clips) {
+      if (clip.type === "video") videoClips.push(clip);
+    }
+  }
+  videoClips.sort((a, b) => a.start - b.start);
+  return videoClips
+    .map((clip) => ({
+      start: round3(clip.sourceStart ?? 0),
+      end: round3(clip.sourceEnd ?? (clip.sourceStart ?? 0) + clip.duration),
+      scalePercent: round3(clip.scale ?? 100),
+      clipId: clip.id,
+    }))
+    .filter((r) => r.end - r.start > 0.02);
+}
+
 /** Strihy canonical osi → úseky, ktoré sa majú z videa ponechať (v poradí na časovej osi). */
 export function canonicalKeepRanges(project: ProjectModel): { start: number; end: number }[] {
   const videoClips: ClipModel[] = [];
@@ -137,6 +203,7 @@ export function canonicalKeepRanges(project: ProjectModel): { start: number; end
 export function buildCanonicalExportPlan(
   project: ProjectModel,
   upload: CanonicalExportUpload,
+  extras: CanonicalExportExtras = {},
 ): CanonicalExportPlan {
   const notesSk: string[] = [];
   const unsupportedSk: string[] = [];
@@ -183,29 +250,145 @@ export function buildCanonicalExportPlan(
     notesSk.push("Strih: žiadny — ide celé video. Zvuk sa kopíruje bez prekódovania (bajtovo rovnaký ako zdroj).");
   }
 
-  // --- Poctivo: čo canonical os má, ale táto linka nevykresľuje -----------------
-  const imageClips: ClipModel[] = [];
-  let zoomedClips = 0;
-  let filteredClips = 0;
+  // --- Priblíženia (zoom) z canonical osi -------------------------------------
+  const zoom: CanonicalZoomSpec[] = [];
+  let zoomUnsupported = 0;
+  let animatedZoomClips = 0;
+  let pannedZoomClips = 0;
+  const filteredClipsList: string[] = [];
+
   for (const track of project.tracks) {
     for (const clip of track.clips) {
-      if (clip.type === "image" || clip.type === "b-roll") imageClips.push(clip);
-      if (clip.scale !== undefined && Math.abs(clip.scale - 100) > 0.01) zoomedClips++;
-      if (clip.filter && clip.filter !== "NONE") filteredClips++;
+      const animated = (clip.keyframes ?? []).some(
+        (k) => k.parameter === "scale" || k.parameter === "positionX" || k.parameter === "positionY",
+      );
+      const scale = clip.scale ?? 100;
+      const hasZoom = Math.abs(scale - 100) > 0.01;
+      const posX = clip.positionX ?? 0;
+      const posY = clip.positionY ?? 0;
+      const moves = Math.abs(posX) > 0.01 || Math.abs(posY) > 0.01;
+
+      if (clip.filter && clip.filter !== "NONE") filteredClipsList.push(clip.name);
+      if (!hasZoom && !animated) continue;
+
+      if (animated) {
+        animatedZoomClips++;
+        zoomUnsupported++;
+        continue;
+      }
+      if (moves && hasZoom) {
+        // Zoom + posun naraz = kompozícia, ktorú by statické orezanie skreslilo → nepredstierame.
+        pannedZoomClips++;
+        zoomUnsupported++;
+        continue;
+      }
+      zoom.push({
+        clipId: clip.id,
+        startSec: round3(clip.start),
+        endSec: round3(clip.start + clip.duration),
+        scale: round3(scale),
+        positionX: round3(posX),
+        positionY: round3(posY),
+      });
     }
   }
-  if (imageClips.length > 0) {
+  if (animatedZoomClips > 0) {
     unsupportedSk.push(
-      `${imageClips.length} obrazových vrstiev (b-roll/fotky) canonical osi sa v tomto exporte ZATIAĽ nekreslí — vo videu nebudú.`,
+      `${animatedZoomClips} klipov má animované priblíženie (keyframy) — v exporte sa vykreslí len statický stav prvého keyframu sa NEpoužíva; tieto klipy idú bez priblíženia.`,
     );
   }
-  if (zoomedClips > 0) {
+  if (pannedZoomClips > 0) {
     unsupportedSk.push(
-      `Priblíženia (motion) na ${zoomedClips} klipoch sa v tomto exporte ZATIAĽ nevykresľujú — obraz ide bez zoomu.`,
+      `${pannedZoomClips} klipov má priblíženie spojené s posunom obrazu — takú kompozíciu táto linka (statický stredový orez) nevie verne vykresliť, preto ide bez priblíženia.`,
     );
   }
-  if (filteredClips > 0) {
-    unsupportedSk.push(`${filteredClips} klipov má farebný filter — ten sa v tomto exporte ZATIAĽ nevykresľuje.`);
+  if (filteredClipsList.length > 0) {
+    unsupportedSk.push(
+      `Farebný filter na ${filteredClipsList.length} klipoch (${filteredClipsList.slice(0, 3).join(", ")}) sa ZATIAĽ nevykresľuje.`,
+    );
+  }
+
+  // --- Obrazové vrstvy (b-roll / fotky) ---------------------------------------
+  const overlays: CanonicalOverlaySpec[] = [];
+  const missingAssetBytes: string[] = [];
+  let hiddenOverlays = 0;
+  let fadedOverlays = 0;
+  let rotatedOverlays = 0;
+  let videoOverlays = 0;
+
+  const visualClips: { track: typeof project.tracks[number]; clip: ClipModel }[] = [];
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.type === "image" || clip.type === "b-roll") visualClips.push({ track, clip });
+    }
+  }
+
+  for (const { track, clip } of visualClips) {
+    if (!track.visible) {
+      hiddenOverlays++;
+      continue;
+    }
+    if (!clip.assetId) {
+      missingAssetBytes.push(clip.name);
+      continue;
+    }
+    const uploadId = extras.assetUploads?.[clip.assetId];
+    if (!uploadId) {
+      missingAssetBytes.push(clip.name);
+      continue;
+    }
+    if (Math.abs((clip.rotation ?? 0)) > 0.01) {
+      rotatedOverlays++;
+      continue;
+    }
+    if ((clip.opacity ?? 100) < 99.5) {
+      fadedOverlays++;
+      continue;
+    }
+    if (clip.type === "b-roll" || clip.assetId) {
+      const asset = project.assets?.find((a) => a.id === clip.assetId);
+      if (asset?.type === "video") videoOverlays++;
+    }
+    overlays.push({
+      clipId: clip.id,
+      trackId: track.id,
+      name: clip.name,
+      kind: clip.type === "b-roll" && project.assets?.find((a) => a.id === clip.assetId)?.type === "video" ? "video" : "image",
+      assetId: clip.assetId,
+      uploadId,
+      startSec: round3(clip.start),
+      endSec: round3(clip.start + clip.duration),
+      scalePercent: round3(clip.scale ?? 100),
+      positionX: round3(clip.positionX ?? 0),
+      positionY: round3(clip.positionY ?? 0),
+    });
+  }
+
+  if (overlays.length > 0) {
+    notesSk.push(
+      `${overlays.length} obrazových vrstiev (b-roll/fotky) pôjde do videa z canonical časovej osi${
+        videoOverlays > 0 ? ` (z toho ${videoOverlays} ako video vrstva)` : ""
+      }.`,
+    );
+  }
+  if (missingAssetBytes.length > 0) {
+    unsupportedSk.push(
+      `Médium pre ${missingAssetBytes.length} obrazových vrstiev (${missingAssetBytes.slice(0, 3).join(", ")}) nie je dostupné ako súbor — tieto vrstvy vo videu nebudú (v projekte zostávajú).`,
+    );
+  }
+  if (hiddenOverlays > 0) {
+    unsupportedSk.push(`${hiddenOverlays} obrazových vrstiev je na skrytej stope — do videa nejdú (a je to správne).`);
+  }
+  if (rotatedOverlays > 0) {
+    unsupportedSk.push(`${rotatedOverlays} obrazových vrstiev je pootočených — rotáciu táto linka nevykresľuje, preto nejdú.`);
+  }
+  if (fadedOverlays > 0) {
+    unsupportedSk.push(`${fadedOverlays} obrazových vrstiev má zníženú priehľadnosť — tú táto linka nevykresľuje, preto nejdú.`);
+  }
+  if (zoom.length > 0) {
+    notesSk.push(
+      `Priblíženie (motion) sa vykreslí na ${zoom.length} klipoch (statický stredový orez podľa canonical osi).`,
+    );
   }
 
   // --- Blokátory: bez týchto vecí sa nedá poctivo renderovať --------------------
@@ -216,6 +399,15 @@ export function buildCanonicalExportPlan(
   if (totalVideoClips === 0) blockersSk.push("Canonical časová os nemá hlavný video klip — niet čo renderovať.");
   if (!(upload.width > 0) || !(upload.height > 0)) blockersSk.push("Neznámy rozmer videa — ASS titulky by sedeli zle.");
 
+  // Pri strihoch patrí priblíženie k úseku (reže sa v čase zdroja).
+  // Bez strihov je to okno na časovej osi (čas videа sa nemení).
+  const rangesWithZoom = canonicalKeepRangesWithZoom(project);
+  const keepRangesWithScale =
+    keepRanges.length > 0
+      ? rangesWithZoom.map((r) => ({ start: r.start, end: r.end, scalePercent: r.scalePercent }))
+      : [];
+  const zoomWindows = keepRanges.length === 0 && zoom.length > 0 ? zoom : [];
+
   const request: CanonicalBurnRequest = {
     uploadId: upload.uploadId,
     uploadName: upload.uploadName,
@@ -223,8 +415,10 @@ export function buildCanonicalExportPlan(
     width: Math.round(upload.width),
     height: Math.round(upload.height),
     segments,
-    keepRanges,
+    keepRanges: keepRanges.length > 0 ? keepRangesWithScale : keepRanges,
     ...(upload.fontFamily ? { fontFamily: upload.fontFamily } : {}),
+    ...(zoomWindows.length > 0 ? { zoom: zoomWindows } : {}),
+    ...(overlays.length > 0 ? { overlays } : {}),
   };
 
   const parity = canonicalExportParity(project, request);
@@ -275,6 +469,33 @@ export function canonicalExportParity(project: ProjectModel, request: CanonicalB
     extraTexts,
     matched: missingTexts.length === 0 && extraTexts.length === 0,
   };
+}
+
+/**
+ * Médiá, ktoré canonical os používa ako obrazové vrstvy (b-roll / fotky).
+ * Klient ich musí vedieť získať ako súbor — inak sa vo videu neobjavia (a povie sa to).
+ */
+export function canonicalOverlayAssets(
+  project: ProjectModel,
+): { assetId: string; name: string; kind: "image" | "video" }[] {
+  const out: { assetId: string; name: string; kind: "image" | "video" }[] = [];
+  const seen = new Set<string>();
+  for (const track of project.tracks) {
+    if (!track.visible) continue;
+    for (const clip of track.clips) {
+      if (clip.type !== "image" && clip.type !== "b-roll") continue;
+      const assetId = clip.assetId;
+      if (!assetId || seen.has(assetId)) continue;
+      seen.add(assetId);
+      const asset = project.assets?.find((a) => a.id === assetId);
+      out.push({
+        assetId,
+        name: asset?.name ?? clip.name,
+        kind: asset?.type === "video" ? "video" : "image",
+      });
+    }
+  }
+  return out;
 }
 
 /** Zhrnutie pre človeka (do UI aj do reportu runnera). */

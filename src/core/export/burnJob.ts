@@ -37,6 +37,11 @@ export const BURN_LIMITS = {
   maxDim: 8192,
   maxStoredExports: 25,
   maxStoredUploads: 10,
+  /** Koľko obrazových vrstiev (b-roll/fotky) sa smie skladať v jednom renderi. */
+  maxOverlays: 20,
+  /** Rozsah priblíženia, ktorý dáva zmysel (mimo neho je to skôr chyba v pláne). */
+  minZoomPercent: 50,
+  maxZoomPercent: 400,
 } as const;
 
 export const BURN_MAX_UPLOAD_SK = `Video je príliš veľké na vypálenie titulkov (limit ${Math.round(
@@ -100,6 +105,10 @@ export interface BurnSpec {
   height: number;
   keepRanges: KeepRange[];
   fontFamily?: string;
+  /** Priblíženia z canonical osi (krok 8). */
+  zoom: { clipId: string; startSec: number; endSec: number; scale: number; positionX: number; positionY: number }[];
+  /** Obrazové vrstvy z canonical osi (krok 8) — odkazy na súbory nahraté na server. */
+  overlays: { clipId: string; kind: "image" | "video"; uploadId: string; name: string; startSec: number; endSec: number; scalePercent: number; positionX: number; positionY: number }[];
 }
 
 export type BurnValidation =
@@ -182,6 +191,83 @@ export function validateBurnRequest(body: any): BurnValidation {
     };
   }
 
+  // --- Priblíženia (krok 8): statické stredové orezanie podľa canonical osi ---
+  const zoom: BurnSpec["zoom"] = [];
+  if (Array.isArray(body.zoom)) {
+    for (const raw of body.zoom as any[]) {
+      const startSec = num(raw?.startSec, NaN);
+      const endSec = num(raw?.endSec, NaN);
+      const scale = num(raw?.scale, NaN);
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || !Number.isFinite(scale)) continue;
+      if (endSec - startSec <= 0.02) continue;
+      if (scale < BURN_LIMITS.minZoomPercent || scale > BURN_LIMITS.maxZoomPercent) {
+        return {
+          ok: false,
+          errorSk: `Priblíženie ${Math.round(scale)} % je mimo rozsahu ${BURN_LIMITS.minZoomPercent}–${BURN_LIMITS.maxZoomPercent} % — skontroluj plán štýlu.`,
+        };
+      }
+      const positionX = num(raw?.positionX, 0);
+      const positionY = num(raw?.positionY, 0);
+      if (Math.abs(scale - 100) <= 0.01) continue; // nič sa nemení, zbytočný filter
+      if (Math.abs(positionX) > 0.01 || Math.abs(positionY) > 0.01) {
+        return {
+          ok: false,
+          errorSk:
+            "Priblíženie spojené s posunom obrazu táto linka nevie verne vykresliť (statický stredový orez). Vynechaj posun alebo použi menší zoom.",
+        };
+      }
+      zoom.push({
+        clipId: String(raw?.clipId ?? "").slice(0, 80),
+        startSec: Math.max(0, startSec),
+        endSec: Math.min(endSec, 24 * 3600),
+        scale,
+        positionX,
+        positionY,
+      });
+    }
+    if (zoom.length > BURN_LIMITS.maxKeepRanges) {
+      return { ok: false, errorSk: `Priblížení je príliš veľa (${zoom.length}).` };
+    }
+  }
+
+  // --- Obrazové vrstvy (krok 8) ------------------------------------------------
+  const overlays: BurnSpec["overlays"] = [];
+  if (Array.isArray(body.overlays)) {
+    if (body.overlays.length > BURN_LIMITS.maxOverlays) {
+      return {
+        ok: false,
+        errorSk: `Obrazových vrstiev je príliš veľa (${body.overlays.length}) — maximum je ${BURN_LIMITS.maxOverlays}.`,
+      };
+    }
+    for (const raw of body.overlays as any[]) {
+      const overlayUploadId = String(raw?.uploadId ?? "").trim();
+      if (!isSafeStoredName(overlayUploadId)) {
+        return {
+          ok: false,
+          errorSk: "Obrazová vrstva (b-roll/fotka) má neplatný súbor na serveri — nahraj ju znova.",
+        };
+      }
+      const startSec = num(raw?.startSec, NaN);
+      const endSec = num(raw?.endSec, NaN);
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec - startSec <= 0.02) continue;
+      const scalePercent = num(raw?.scalePercent, 100);
+      if (scalePercent < 5 || scalePercent > 1000) {
+        return { ok: false, errorSk: `Veľkosť obrazovej vrstvy ${Math.round(scalePercent)} % je mimo rozumného rozsahu.` };
+      }
+      overlays.push({
+        clipId: String(raw?.clipId ?? "").slice(0, 80),
+        kind: raw?.kind === "video" ? "video" : "image",
+        uploadId: overlayUploadId,
+        name: safeBaseName(raw?.name, "vrstva"),
+        startSec: Math.max(0, startSec),
+        endSec: Math.min(endSec, 24 * 3600),
+        scalePercent,
+        positionX: num(raw?.positionX, 0),
+        positionY: num(raw?.positionY, 0),
+      });
+    }
+  }
+
   const uploadName = safeBaseName(body.uploadName, "video.mp4");
   const stem = path.basename(uploadName, path.extname(uploadName)) || "video";
   const outputName = `omnistrih-titulky-${stem}-${Date.now()}.mp4`.replace(/[^\w.\-]+/g, "-");
@@ -204,6 +290,8 @@ export function validateBurnRequest(body: any): BurnValidation {
       width,
       height,
       keepRanges,
+      zoom,
+      overlays,
       ...(Object.keys(normalized.overrides).length > 0 ? { overrides: normalized.overrides } : {}),
       ...(normalized.notesSk.length > 0 ? { overrideNotesSk: normalized.notesSk } : {}),
       ...(fontFamily ? { fontFamily } : {}),

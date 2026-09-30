@@ -1,0 +1,66 @@
+==============================================================================
+REAL-MEDIA EXPORT Z CANONICAL ČASOVEJ OSI
+==============================================================================
+médium........................................ real_speech.mp4 (345651 B)
+dĺžka média (meraná).......................... 20.27 s
+appka......................................... http://127.0.0.1:3000
+prepis (segmenty / slová)..................... 11 / 51
+recept........................................ Editoriálna koláž (EDITORIAL_COLLAGE)
+rozhodnutí v pláne............................ 19
+apply: aplikované / dodržané / nevykonané..... 15 / 1 / 3
+časová os zmenená............................. true
+titulkov v canonical osi...................... 6
+nahrané do appky.............................. f506a35f-92ee-499a-8a20-48461e7d6e58__real_speech.mp4 (real_speech.mp4)
+obrazová vrstva (reálna snímka)............... omnistrih-titulky-Klient-C-reklama-1790741022014.mp4 @1s → 46bd89e0-1c6c-4c3b-a4e0-5b6670a8bf2e__broll-snimka.png
+
+── ZADANIE Z CANONICAL OSI ──────────────────────────────────────────────
+  • 6 titulkov pôjde do videa priamo z canonical časovej osi (štýl VIRAL_BOLD podľa canonical presetov).
+  • Strih: žiadny — ide celé video. Zvuk sa kopíruje bez prekódovania (bajtovo rovnaký ako zdroj).
+  • 3 obrazových vrstiev (b-roll/fotky) pôjde do videa z canonical časovej osi.
+  • Priblíženie (motion) sa vykreslí na 1 klipoch (statický stredový orez podľa canonical osi).
+zhoda canonical ↔ zadanie..................... áno (nič nechýba, nič navyše)
+  Filter graf, ktorý server naozaj použije (z canonical osi):
+    vidím v ňom: priblíženie=áno · vrstvy=áno · titulky=áno
+render spustený (jobId)....................... f65eef26-ad07-47b0-acf7-831d17cfb2f1
+titulkov spracoval server..................... 6
+  • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+  • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+  • server: Pri 6 titulkoch nemám časovanie slov, takže sa zvýrazňovanie slova vynechalo (text sa zobrazí celý naraz).
+  • server: Titulky majú animáciu vstupu (pop) — animuje sa len objavenie, počas čítania text stojí.
+stav renderu.................................. done
+súbor z reportu............................... omnistrih-titulky-real_speech-1790754886702.mp4
+dĺžka klipu podľa servera..................... 19.00 s
+veľkosť podľa servera......................... 508781 B
+  • server: Vypálim 6 titulkov v štýle „Virálny (Submagic štýl)“ bez zvýrazňovania (nemám časovanie slov). Prekódovanie: 19 s videa, kvalita CRF 20.
+
+── MERANIE HOTOVÉHO SÚBORU ──────────────────────────────────────────────
+uložené....................................... /home/user/export-krok8.mp4 (508781 B)
+stopa video / audio........................... áno / áno
+rozmer rámu zdroj → výstup.................... 1080×1920 → 1080×1920 (rovnaký)
+dĺžka výstupu................................. 20.27 s
+zvuk rovnaký ako v zdroji..................... áno (obsahovo)
+hash zvuku zdroj → výstup..................... 511feee27c325b3d → 511feee27c325b3d
+zmena obrazu (dole, kde sú titulky) v 2.6 s... 16.39
+vypálené titulky v obraze..................... áno (obraz sa na tom mieste líši)
+vrstva v okne 5.0–8.0 s: zmena obrazu (hore).. 6.56
+mimo okna (4.5 s): zmena obrazu (hore)........ 0.00
+priblíženie 112 % v 10.1 s: zhoda s plánom (SSIM) 0.9989
+  (kontrola: zhoda bez priblíženia)........... 1.0000
+priblíženie — merateľnosť na tomto médiu...... nedá sa zmerať (zdroj je jednofarebná plocha) — skúšam syntetický podklad nižšie
+
+── SKÚŠKA LINKY NA SYNTETICKOM PODKLADE (nie je to video používateľa) ──
+rám výstupu................................... 1080×1920 (zachovaný)
+rozdiel mimo zoomu (2 s okno) v 1 s........... 1.48
+rozdiel v zoom okne v 3 s..................... 24.98
+vrstva: rozdiel HORE mimo okna (4,0 s)........ 0.18
+vrstva: rozdiel HORE v okne (4,8 s)........... 6.50
+titulky v obraze (dole) na syntetickom podklade 25.50
+VÝSLEDOK SKÚŠKY LINKY......................... PASS (zoom aj vrstva aj titulky naozaj idú do obrazu)
+
+==============================================================================
+VÝSLEDOK: REAL EXPORT Z CANONICAL OSI PASS (súbor vznikol, má obraz aj zvuk, titulky z canonical osi sú v obraze)
+Čo tento výsledok NEznamená:
+  • nie je to dôkaz o prehliadači (runner obchádza UI a volá API appky)
+  • farebné filtre, rotácia a priesvitnosť vrstiev sa stále nevykresľujú — viď zoznam vyššie
+  • zvuk sa porovnáva obsahovo (PCM 16 kHz mono), nie bajtovo vo formáte AAC
+==============================================================================

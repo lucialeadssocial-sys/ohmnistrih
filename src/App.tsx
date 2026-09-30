@@ -36,6 +36,7 @@ import { HistoryManager } from "./utils/historyManager";
 import { AIOrchestrator } from "./utils/aiRouter";
 import { PipelineExecutor } from "./utils/pipelineExecutor";
 import { ToolSuspenseFallback } from "./components/ToolSuspenseFallback";
+import { opfsManager } from "./core/storage/opfs";
 
 // On-Demand Lazy-Loaded Studios and Heavy Tools
 const AIVisualDirectorCenter = lazy(() => import("./components/AIVisualDirectorCenter").then(m => ({ default: m.AIVisualDirectorCenter })));
@@ -1831,6 +1832,11 @@ function MainApp() {
    * Zdroj pre render strihu: najprv pôvodný súbor (najrýchlejšie a bezpečné),
    * potom blob URL, ktorú vie prehliadač načítať znova.
    */
+  /**
+   * Súbor pre ľubovoľné médium projektu (b-roll, fotky) — vrstvy musia vedieť
+   * dostať na server, inak by vo videu neboli. Skúša viac ciest a vždy poctivo vráti `null`,
+   * keď sa súbor nedá získať (panel to potom používateľovi povie).
+   */
   /** Stabilný odber zmien canonical osi (CommandManager) pre canonical náhľad. */
   const subscribeCanonicalChanges = useCallback(
     (onChange: () => void) => coreEngine.commandManager.subscribe(() => onChange()),
@@ -1852,6 +1858,48 @@ function MainApp() {
     }
     return null;
   }, [currentVideoUrl]);
+
+  /** Id média, ktoré je práve otvorené v prehrávači (aby sme vedeli, kedy použiť zdrojový súbor). */
+  const mainVideoAssetIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const project = coreEngine.getProject();
+    for (const track of project.tracks) {
+      for (const clip of track.clips) {
+        if (clip.type === "video" && clip.assetId) {
+          mainVideoAssetIdRef.current = clip.assetId;
+          return;
+        }
+      }
+    }
+    mainVideoAssetIdRef.current = null;
+  }, [currentVideoUrl]);
+
+  const getAssetBlobForExport = useCallback(
+    async (assetId: string, _name: string): Promise<Blob | null> => {
+      const project = coreEngine.getProject();
+      const asset = project.assets?.find((a) => a.id === assetId);
+
+      // 1) Médium je v OPFS (bežná cesta pre nahrané súbory).
+      if (asset?.opfsPath) {
+        try {
+          const file = await opfsManager.getFile(asset.opfsPath);
+          if (file) return file;
+        } catch {
+          /* skúsime ďalšiu cestu */
+        }
+      }
+
+      // 2) Médium je práve otvorené video v prehliadači.
+      if (assetId === mainVideoAssetIdRef.current || (!asset && assetId)) {
+        const blob = await getSourceBlobForRender();
+        if (blob) return blob;
+      }
+
+      // 3) Nič — radšej `null` než vymyslený súbor.
+      return null;
+    },
+    [getSourceBlobForRender],
+  );
 
   const handleApplyCuts = (selectedIds: string[]) => {
     if (!jumpSequence) return;
@@ -4017,6 +4065,7 @@ function MainApp() {
                           currentTime,
                           mediaUrl: currentVideoUrl,
                           getSourceBlob: getSourceBlobForRender,
+                          getAssetBlob: getAssetBlobForExport,
                         }}
                       />
                     )}

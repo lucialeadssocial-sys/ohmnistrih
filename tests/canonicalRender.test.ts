@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildCanonicalFramePlan, canonicalPlansMatch, canonicalFrameSummarySk } from "../src/core/render/canonicalFrame";
-import { buildCanonicalExportPlan, canonicalExportParity, canonicalKeepRanges, captionStyleForCanonicalClips } from "../src/core/export/canonicalExport";
+import { buildCanonicalExportPlan, canonicalExportParity, canonicalKeepRanges, canonicalKeepRangesWithZoom, captionStyleForCanonicalClips } from "../src/core/export/canonicalExport";
 import { createInitialProject } from "../src/core";
 import { ProjectModel, ClipModel } from "../src/core/types/project";
 
@@ -234,11 +234,82 @@ describe("canonical export: zadanie pre existujúcu renderovaciu linku", () => {
     expect(plan.notesSk.join(" ")).toContain("AAC 192 k");
   });
 
-  test("čo linka nevykresľuje, to sa PRIZNÁ (b-roll, zoom)", () => {
+  test("b-roll bez nahratého súboru sa nevykreslí — a appka to povie PRED renderom", () => {
     const plan = buildCanonicalExportPlan(projectWithStyle(), { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
-    const joined = plan.unsupportedSk.join(" ");
-    expect(joined).toContain("obrazových vrstiev");
-    expect(joined).toContain("Priblíženia");
+    expect(plan.unsupportedSk.join(" ")).toContain("nie je dostupné ako súbor");
+    expect(plan.request.overlays ?? []).toEqual([]);
+  });
+
+  test("priblíženie (zoom) z canonical osi ide do exportu naozaj", () => {
+    const plan = buildCanonicalExportPlan(projectWithStyle(), { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
+    // V projekte má hlavný klip scale 112 % → musí byť v zadaní ako okno priblíženia.
+    expect(plan.request.zoom).toEqual([{ clipId: "clip_main", startSec: 0, endSec: 4, scale: 112, positionX: 0, positionY: 0 }]);
+    expect(plan.notesSk.join(" ")).toContain("Priblíženie (motion) sa vykreslí");
+    expect(plan.unsupportedSk.join(" ")).not.toContain("Priblíženia (motion) na");
+  });
+
+  test("keď je b-roll nahratý na server, ide do zadania ako obrazová vrstva", () => {
+    const plan = buildCanonicalExportPlan(
+      projectWithStyle(),
+      { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 },
+      { assetUploads: { asset_shot: "shot-123.png" } },
+    );
+    expect(plan.request.overlays).toHaveLength(1);
+    const overlay = plan.request.overlays![0];
+    expect(overlay.assetId).toBe("asset_shot");
+    expect(overlay.uploadId).toBe("shot-123.png");
+    expect(overlay.kind).toBe("image");
+    expect(overlay.startSec).toBe(1);
+    expect(overlay.endSec).toBe(2);
+    expect(plan.notesSk.join(" ")).toContain("obrazových vrstiev (b-roll/fotky) pôjde do videa");
+    expect(plan.unsupportedSk.join(" ")).not.toContain("nie je dostupné ako súbor");
+  });
+
+  test("animované priblíženie (keyframy) sa nepredstiera — ide bez zoomu a s dôvodom", () => {
+    const project = projectWithStyle();
+    project.tracks[2].clips[0].keyframes = [
+      { id: "k1", parameter: "scale", time: 0, value: 100, easing: "LINEAR" } as never,
+      { id: "k2", parameter: "scale", time: 1, value: 130, easing: "LINEAR" } as never,
+    ];
+    const plan = buildCanonicalExportPlan(project, { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
+    expect(plan.request.zoom ?? []).toEqual([]);
+    expect(plan.unsupportedSk.join(" ")).toContain("animované priblíženie");
+  });
+
+  test("pri strihoch nesie priblíženie samotný úsek (zdrojový čas sedí s trim=)", () => {
+    const project = projectWithStyle();
+    project.tracks[2].clips[0].sourceStart = 1;
+    project.tracks[2].clips[0].sourceEnd = 2.5;
+    project.tracks[2].clips[0].duration = 1.5;
+    project.tracks[2].clips[0].start = 0;
+    project.tracks[2].clips[0].timelineStart = 0;
+    const plan = buildCanonicalExportPlan(project, { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 });
+    expect(plan.request.keepRanges).toEqual([{ start: 1, end: 2.5, scalePercent: 112 }]);
+    expect(plan.request.zoom ?? []).toEqual([]);
+  });
+
+  test("pootočená alebo priesvitná vrstva sa nevykreslí a je to povedané", () => {
+    const project = projectWithStyle();
+    project.tracks[1].clips[0].rotation = 5;
+    const plan = buildCanonicalExportPlan(
+      project,
+      { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 },
+      { assetUploads: { asset_shot: "shot.png" } },
+    );
+    expect(plan.request.overlays ?? []).toEqual([]);
+    expect(plan.unsupportedSk.join(" ")).toContain("pootočených");
+  });
+
+  test("skrytá stopa s b-rollom sa do videa nedostane (a je to správne, s dôvodom)", () => {
+    const project = projectWithStyle();
+    project.tracks[1].visible = false;
+    const plan = buildCanonicalExportPlan(
+      project,
+      { uploadId: "s.mp4", uploadName: "v.mp4", width: 1080, height: 1920 },
+      { assetUploads: { asset_shot: "shot.png" } },
+    );
+    expect(plan.request.overlays ?? []).toEqual([]);
+    expect(plan.unsupportedSk.join(" ")).toContain("skrytej stope");
   });
 
   test("bez videa na serveri sa render nespustí (a povie prečo)", () => {
