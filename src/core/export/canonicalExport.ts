@@ -432,7 +432,7 @@ export function buildCanonicalExportPlan(
   }
   if (animatedZoomRejected > 0) {
     unsupportedSk.push(
-      `${animatedZoomRejected} klipov má animované priblíženie, ktoré táto linka verne nevykreslí — dôvod je pri každom klipе zvlášť vyššie; tieto klipy idú bez priblíženia.`,
+      `${animatedZoomRejected} klipov má animované priblíženie, ktoré táto linka verne nevykreslí — dôvod je pri každom klipe zvlášť vyššie; tieto klipy idú bez priblíženia.`,
     );
   }
   if (pannedZoomClips > 0) {
@@ -534,7 +534,7 @@ export function buildCanonicalExportPlan(
   if (!(upload.width > 0) || !(upload.height > 0)) blockersSk.push("Neznámy rozmer videa — ASS titulky by sedeli zle.");
 
   // Pri strihoch patrí priblíženie k úseku (reže sa v čase zdroja).
-  // Bez strihov je to okno na časovej osi (čas videа sa nemení).
+  // Bez strihov je to okno na časovej osi (čas videa sa nemení).
   const rangesWithZoom = canonicalKeepRangesWithZoom(project);
   const keepRangesWithScale =
     keepRanges.length > 0

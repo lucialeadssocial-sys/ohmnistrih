@@ -106,7 +106,7 @@ describe("strih → titulky: čas zdroja sa prepočíta na čas klipu", () => {
     const r = remapSegmentsToOutput(SPEECH, [{ start: 3.0, end: 4.5 }]);
     expect(r.outputDurationSec).toBeCloseTo(1.5, 3);
     expect(r.segments.length).toBe(1);
-    // 3,2 s v zdroji = 0,2 s v klipе (klip začína na 3,0 s)
+    // 3,2 s v zdroji = 0,2 s v klipe (klip začína na 3,0 s)
     expect(r.segments[0].start).toBeCloseTo(0.2, 3);
     expect(r.segments[0].end).toBeCloseTo(1.3, 3);
     expect(r.segments[0].words?.[0].start).toBeCloseTo(0.2, 3);
@@ -126,7 +126,7 @@ describe("strih → titulky: čas zdroja sa prepočíta na čas klipu", () => {
     expect(r.segments[0].start).toBeCloseTo(0.2, 3);
     expect(r.segments[0].end).toBeCloseTo(1.4, 3);
 
-    // „tajný postup" ležal celý vo vystrihnutej časti → nie je v klipе
+    // „tajný postup" ležal celý vo vystrihnutej časti → nie je v klipe
     expect(r.segments.some((s) => s.text.includes("tajný"))).toBe(false);
 
     // „ako som to spravil" sa posunul o 1,6 s (dĺžka prvého úseku)
@@ -644,11 +644,11 @@ describe("titulky po strihu — skutočné vypálenie", () => {
       return m ? Number(m[1]) : -1;
     };
 
-    // 0,6 s v klipе = titulok „DNES SI UKÁŽEME" (zachovaná časť) → text v obraze
+    // 0,6 s v klipe = titulok „DNES SI UKÁŽEME" (zachovaná časť) → text v obraze
     expect(ymax("0.6")).toBeGreaterThan(100);
-    // 1,5 s v klipе = medzera medzi titulkami (1,4–1,8) → čierny obraz
+    // 1,5 s v klipe = medzera medzi titulkami (1,4–1,8) → čierny obraz
     expect(ymax("1.5")).toBeLessThan(60);
-    // 2,0 s v klipе = „AKO SOM TO SPRAVIL" po prepočte (zdroj 3,4 s) → text v obraze
+    // 2,0 s v klipe = „AKO SOM TO SPRAVIL" po prepočte (zdroj 3,4 s) → text v obraze
     expect(ymax("2.0")).toBeGreaterThan(100);
   });
 });

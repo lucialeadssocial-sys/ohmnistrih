@@ -54,7 +54,7 @@ interface BurnCaptionsPanelProps {
   getSourceBlob?: () => Promise<Blob | null>;
   /** Formát, pre ktorý klip je (TIKTOK/REELS/SHORTS/ADS) — vstup pre odporúčanie. */
   platform?: string;
-  /** Počet strihov v klipе (tempo je dôležité pre voľbu štýlu). */
+  /** Počet strihov v klipe (tempo je dôležité pre voľbu štýlu). */
   cutCount?: number;
   /** Oblasť / typ klienta z knižnice trendov (napr. „b2b“, „fitness“). */
   niche?: string;

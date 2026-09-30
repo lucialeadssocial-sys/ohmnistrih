@@ -3956,7 +3956,7 @@ app.post("/api/export/burn-captions", (req, res) => {
     const notesSk = [...probeNotesSk, ...built.notesSk, ...overlayNotesSk];
     if (!font) {
       notesSk.push(
-        "Nenašiel som písmo s úplnou diakritikou na serveri — použil som písmo, ktoré má libass. Skontroluj v klipе, či sedia háčky a dĺžne.",
+        "Nenašiel som písmo s úplnou diakritikou na serveri — použil som písmo, ktoré má libass. Skontroluj v klipe, či sedia háčky a dĺžne.",
       );
     }
     if (built.eventCount === 0) {
