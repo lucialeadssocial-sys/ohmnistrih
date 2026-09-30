@@ -1,0 +1,43 @@
+==============================================================================
+KROK 29 — REAL-MEDIA DÔKAZ MERANIA (QC + retenčný prehľad)
+==============================================================================
+médium: real_speech.mp4 (345651 B, dĺžka podľa hlavičiek 65.44 s)
+
+— NAMERANÉ (canonical os z reálneho videa) —
+meranie prešlo (ok): true
+dĺžka osi (s): 65.44
+klipov celkom: 3
+video klipy: 2
+strihy: 1
+strihov / min: 0.9
+medián záberu (s): 32.72
+zábery pod 1,5 s: 0
+zvukové stopy: 1
+zvukové klipy: 1
+titulky: 0
+prechody na osi: 0
+kolízie na stope: 0
+formát: 1080:1920 @ 30 fps
+hustota (12 úsekov, súčet strihov): 1
+determinizmus (2 merania zhodné): true
+
+— KONTROLY —
+merané: 11 · PASS: 9 · WARNING/REVIEW: 2 · FAIL: 0 · NOT VERIFIED: 14
+kontroly bez merania, ktoré by nesmeli mať PASS: OK (žiadna)
+merané: 11 · PASS: 9 · WARNING/REVIEW: 2 · FAIL: 0 · NOT VERIFIED: 14
+kontroly bez merania s PASS (musí byť prázdne): žiadna
+
+— VÝSLEDOK —
+OK    strihy zodpovedajú klipom na osi
+OK: strihy zodpovedajú klipom na osi
+OK    strihy v hustote sedia s počtom strihov
+OK: strihy v hustote sedia s počtom strihov
+OK    meranie je deterministické
+OK: meranie je deterministické
+OK    žiadna kontrola bez merania nemá PASS
+OK: žiadna kontrola bez merania nemá PASS
+
+Poznámka: REAL MEDIA VERIFIED pre meranie. Nie je to BROWSER VERIFIED —
+obrazovku musí otvoriť používateľ v appke (záložka Kontrola kvality).
+
+Poznámka: REAL MEDIA VERIFIED pre meranie (nie BROWSER VERIFIED).

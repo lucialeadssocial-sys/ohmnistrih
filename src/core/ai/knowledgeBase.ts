@@ -296,35 +296,20 @@ export const EDIT_KNOWLEDGE_BASE: Record<string, TeachMeExplanation> = {
   }
 };
 
-export const CREATIVE_PATTERNS_DB: CreativePattern[] = [
-  {
-    id: 'pat_sk_hook_question',
-    type: 'Evergreen',
-    platform: 'TikTok',
-    region: 'SK',
-    contentType: 'Talking Head / Educational',
-    description: 'Položenie priamej otázky v prvých 2.5 sekundách s textovým zvýraznením.',
-    signal: 'Question mark in transcript within first 30 words + zoom-in effect',
-    principle: 'Aktivuje zvedavosť diváka a priamo definuje hodnotu videa.',
-    confidence: 0.91,
-    source: 'OmniStrih SK Content Intelligence Data 2026',
-    observedAt: Date.now()
-  },
-  {
-    id: 'pat_yt_broll_pacing',
-    type: 'Evergreen',
-    platform: 'YouTube',
-    region: 'GLOBAL',
-    contentType: 'Educational / Tech Review',
-    description: 'Zmena vizuálneho ula každých 4-6 sekúnd pomocou B-rollu alebo zmeny zoomu.',
-    signal: 'Shot duration > 5s with static talking head',
-    principle: 'Predchádza vizuálnej únavovému efektu.',
-    confidence: 0.94,
-    source: 'YouTube Creator Academy Guidelines',
-    observedAt: Date.now()
-  }
-];
-
+/**
+ * VZORY — ZÁMERNE PRÁZDNE (krok 29, honesty fix).
+ *
+ * Pôvodná verzia mala dva záznamy s číslami (confidence 0,91 a 0,94),
+ * zdrojom „OmniStrih SK Content Intelligence Data 2026“ (taký dataset
+ * v repozitári NEEXISTUJE) a s `observedAt: Date.now()` (nedeterministické).
+ * Boli to vymyslené vzory, ktoré sa tvári aj ako meranie.
+ *
+ * Reálny zdroj vzorov v OmniStrihu sú NAMERANÉ referenčné videá
+ * (`tools/measure-reference-video.ts` → `referencie/analyza-*.json`).
+ * Kým sa vzory nepočítajú z týchto meraní, tento zoznam ostáva prázdny —
+ * appka radšej nepovie nič, než aby si vymýšľala.
+ */
+export const CREATIVE_PATTERNS_DB: CreativePattern[] = [];
 export function getTeachMeExplanation(topicKey: string): TeachMeExplanation {
   const explanation = EDIT_KNOWLEDGE_BASE[topicKey];
   if (explanation) return explanation;

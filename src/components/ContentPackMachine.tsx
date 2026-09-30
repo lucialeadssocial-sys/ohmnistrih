@@ -80,11 +80,11 @@ export const ContentPackMachine: React.FC<ContentPackMachineProps> = ({
             <Sparkles className="h-5 w-5" />
          </div>
          <div>
-            <p className="text-[11px] font-black text-white uppercase tracking-wider mb-1">THE "CONTENT MACHINE" STRATEGY</p>
+            <p className="text-[11px] font-black text-white uppercase tracking-wider mb-1">ČO TU DNES NAOZAJ JE (A ČO NIE)</p>
             <p className="text-[10px] text-neutral-400 leading-relaxed italic">
                {isSk 
-                 ? "AI skenuje celé video a hľadá 'High-Hook' momenty. Z jedného 30-minútového videa automaticky vytvorí kompletnú sadu pre YouTube, TikTok, Reels a LinkedIn vrátane textov a popisov."
-                 : "AI scans the entire video for 'High-Hook' moments. From a single 30-minute video, it automatically creates a complete set for YouTube, TikTok, Reels, and LinkedIn, including texts and descriptions."}
+                 ? "Výber „virálnych momentov“ zo surového videa OmniStrih zatiaľ NEROBÍ — neexistuje na to meranie ani model, takže neuvádzame žiadne hook skóre ani hotové popisy. Čo naozaj funguje: strih, titulky po slovách, štýl z referencie, cieľ videa a export."
+                 : "OmniStrih does NOT extract “viral moments” from raw video yet — there is no measurement or model for it, so no hook scores or ready-made descriptions are shown. What really works: cutting, word-level captions, reference style, video goal and export."}
             </p>
          </div>
       </div>
@@ -102,7 +102,7 @@ export const ContentPackMachine: React.FC<ContentPackMachineProps> = ({
            <div className="space-y-2">
               <h4 className="text-sm font-black text-white uppercase tracking-widest">{isSk ? "PRIPRAVENÉ NA MULTIPLIKÁCIU" : "READY FOR MULTIPLICATION"}</h4>
               <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[320px]">
-                {isSk ? "Vaše 30-minútové video premeníme na 15+ kúskov unikátneho obsahu." : "We will turn your 30-minute video into 15+ pieces of unique content."}
+                {isSk ? "Content Pack sa nepredstiera. Keď bude mať OmniStrih reálny výber momentov (s dôkazom z vášho videa), nájdete ho tu — dnes tu neuvidíte vymyslené klipy." : "The Content Pack does not pretend. When OmniStrih has real moment selection (with evidence from your video), you will find it here — today you will see no invented clips."}
               </p>
            </div>
         </div>

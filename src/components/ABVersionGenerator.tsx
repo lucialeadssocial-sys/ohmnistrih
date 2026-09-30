@@ -80,11 +80,11 @@ export const ABVersionGenerator: React.FC<ABVersionGeneratorProps> = ({
             <Info className="h-5 w-5" />
          </div>
          <div>
-            <p className="text-[11px] font-black text-white uppercase tracking-wider mb-1">STOP GUESSING, START TESTING</p>
+            <p className="text-[11px] font-black text-white uppercase tracking-wider mb-1">POROVNAJ DVE REÁLNE VERZIE</p>
             <p className="text-[10px] text-neutral-400 leading-relaxed italic">
                {isSk 
-                 ? "Namiesto hľadania jedného ideálneho strihu vytvorte viacero verzií s rôznym tempom a štýlom titulkov. AI pripraví každú verziu ako samostatný projekt pripravený na export."
-                 : "Instead of looking for one perfect edit, create multiple versions with different pacing and subtitle styles. AI prepares each version as a separate project ready for export."}
+                 ? "A/B dnes znamená: použijete iný štýl alebo iný cieľ v Style Studiu (tam sa naozaj zapíše zmena do časovej osi) a dve verzie potom porovnáte. OmniStrih NEMÁ dáta o správaní divákov, preto neuvádza žiadne „predpokladané udržanie“ v percentách."
+                 : "Today A/B means: apply a different style or goal in Style Studio (which really writes to the timeline) and compare the two versions. OmniStrih has NO audience-behaviour data, so it shows no “estimated retention” percentages."}
             </p>
          </div>
       </div>
@@ -97,7 +97,7 @@ export const ABVersionGenerator: React.FC<ABVersionGeneratorProps> = ({
            <div className="space-y-2">
               <h4 className="text-sm font-black text-white uppercase tracking-widest">{isSk ? "PRIPRAVENÉ NA VARIÁCIE" : "READY FOR VARIATIONS"}</h4>
               <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[320px]">
-                {isSk ? "Systém vygeneruje 3 unikátne verzie vášho videa založené na rôznych editačných stratégiách." : "The system will generate 3 unique versions of your video based on different editing strategies."}
+                {isSk ? "Varianty sa pripravujú z reálnych zmien (iný štýl / iný cieľ), nie z vymyslených čísel. Kým nie je zmena zapísaná v časovej osi, appka neukáže žiadne skóre." : "Variants come from real changes (a different style / goal), not from invented numbers. Until a change is written to the timeline, the app shows no scores."}
               </p>
            </div>
         </div>
@@ -144,7 +144,7 @@ export const ABVersionGenerator: React.FC<ABVersionGeneratorProps> = ({
                       </p>
                    </div>
 
-                   {version.metrics && (
+                   {version.metrics && (version.metrics.estimatedRetention !== null || version.metrics.visualDensity !== null) && (
                      <div className="grid grid-cols-2 gap-3 pt-2">
                         <div className="p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
                            <p className="text-[8px] font-black text-neutral-500 uppercase mb-1">Retention</p>

@@ -44,6 +44,11 @@ export interface CanonicalExportPanelProps {
    */
   getAssetBlob?: (assetId: string, name: string) => Promise<Blob | null>;
   showToast?: (message: string) => void;
+  /**
+   * Zavolá sa LEN keď je export naozaj hotový (stav `done` z renderovacej linky).
+   * App to používa na živý signál `export_finished` — žiadna simulácia.
+   */
+  onExported?: () => void;
   /** Predvolene zapnutý náhľad — používateľ má vidieť, čo sa exportuje. */
   defaultPreviewOn?: boolean;
   /** Vybraný štýl z ich videa — z neho sa berie NAMERANÉ svetlo (referencia). */
@@ -80,6 +85,7 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
   getSourceBlob,
   getAssetBlob,
   showToast,
+  onExported,
   defaultPreviewOn = true,
   styleRecipeId = null,
   referenceLight = null,
@@ -429,6 +435,7 @@ export const CanonicalExportPanel: React.FC<CanonicalExportPanelProps> = ({
           setExportPhase("done");
           setMessageSk(isSk ? "Hotovo — súbor je hotový (nižšie si ho stiahneš)." : "Done — download below.");
           showToast?.(isSk ? "✅ Export z canonical časovej osi dokončený." : "✅ Canonical export finished.");
+          onExported?.();
           return;
         }
         if (s.state === "error" || s.state === "canceled") {

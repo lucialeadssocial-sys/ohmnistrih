@@ -1,25 +1,18 @@
+/**
+ * RETENČNÝ PREHĽAD — MERANIE, NIE SIMULÁCIA
+ *
+ * Pôvodná verzia tvrdila „AI nesimuluje náhodu“, a pritom kreslila krivku cez
+ * `Math.random()` a zobrazovala vymyslené skóre (96 %, 45 %, 20 %…). To bolo
+ * odstránené.
+ *
+ * Tento panel dnes ukazuje LEN to, čo sa dá zmerať z canonical časovej osi:
+ * kde sú strihy, aké dlhé sú zábery, kde nie je strih vôbec. Predpoveď
+ * retencie diváka OmniStrih NEMÁ — a preto ju ani nezobrazuje.
+ */
 import React from "react";
-import { 
-  BarChart3, 
-  TrendingUp, 
-  AlertTriangle, 
-  Zap, 
-  Clock, 
-  Activity, 
-  Play, 
-  Info, 
-  Sparkles, 
-  TrendingDown,
-  Target,
-  Trophy,
-  History,
-  Timer
-} from "lucide-react";
-import { 
-  RetentionProject, 
-  RetentionSegment 
-} from "../types";
+import { Activity, Info, Ruler, Scissors, Timer, TrendingDown, Video } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { RetentionProject, RetentionSegment } from "../types";
 
 interface RetentionSimulatorProps {
   project: RetentionProject;
@@ -36,194 +29,195 @@ export const RetentionSimulator: React.FC<RetentionSimulatorProps> = ({
   onSeek,
   currentTime,
   language,
-  isAnalyzing
+  isAnalyzing,
 }) => {
   const isSk = language === "sk";
 
-  const getSegmentColor = (type: RetentionSegment["type"]) => {
+  const segmentColor = (type: RetentionSegment["type"]) => {
     switch (type) {
-      case "STRONG": return "bg-emerald-500";
-      case "STRONG_PAYOFF": return "bg-violet-500";
-      case "LOW_DENSITY": return "bg-amber-500";
-      case "LONG_PAUSE": return "bg-rose-500";
-      case "REPETITIVE": return "bg-orange-500";
-      case "MONOTONE": return "bg-neutral-500";
-      default: return "bg-blue-500";
+      case "CUTS_DENSE":
+        return "bg-rose-500/70";
+      case "CUTS_NORMAL":
+        return "bg-amber-500/70";
+      case "CUTS_SPARSE":
+        return "bg-sky-500/70";
+      case "NO_CUT":
+        return "bg-neutral-600/70";
+      default:
+        return "bg-neutral-700";
     }
   };
 
-  const getSegmentIcon = (type: RetentionSegment["type"]) => {
-    switch (type) {
-      case "STRONG": return <Zap className="h-4 w-4" />;
-      case "STRONG_PAYOFF": return <Trophy className="h-4 w-4" />;
-      case "LOW_DENSITY": return <TrendingDown className="h-4 w-4" />;
-      case "LONG_PAUSE": return <Timer className="h-4 w-4" />;
-      case "REPETITIVE": return <History className="h-4 w-4" />;
-      case "MONOTONE": return <Activity className="h-4 w-4" />;
-      default: return <Target className="h-4 w-4" />;
-    }
-  };
+  const maxCuts = Math.max(1, ...project.segments.map((s) => s.cuts));
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Module Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-600 text-white shadow-lg shadow-rose-600/20">
-            <BarChart3 className="h-5 w-5" />
+    <div className="space-y-8 text-neutral-100" id="omnistrih-retention-measured">
+      {/* HLAVIČKA */}
+      <div className="p-6 rounded-3xl bg-neutral-900 border border-neutral-800 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center">
+            <Ruler className="h-6 w-6 text-sky-400" />
           </div>
           <div>
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">AI RETENTION SIMULATOR</h3>
-            <p className="text-[10px] text-neutral-500 font-bold uppercase">Psychological Engagement Mapping</p>
+            <h2 className="text-lg font-black uppercase tracking-tight">
+              {isSk ? "Meranie rytmu časovej osi" : "Timeline rhythm measurement"}
+            </h2>
+            <p className="text-xs text-neutral-400 mt-1 max-w-2xl leading-relaxed">
+              {isSk
+                ? "Ukazujeme namerané strihy, dĺžky záberov a miesta bez strihu. Predpoveď retencie diváka OmniStrih NEMÁ — na to by potreboval reálne dáta o správaní divákov, ktoré nemá."
+                : "We show measured cuts, shot lengths and places with no cut. OmniStrih has NO viewer-retention prediction — that would require real audience data it does not have."}
+            </p>
           </div>
         </div>
-
-        <button 
+        <button
           onClick={onRunAnalysis}
           disabled={isAnalyzing}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black uppercase tracking-[0.2em] transition-all shadow-lg shadow-rose-600/20 disabled:opacity-50"
+          className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2"
+          data-testid="retention-measure-button"
         >
-          {isAnalyzing ? <Activity className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {isAnalyzing ? (isSk ? "SIMULUJEM DIVÁKA..." : "SIMULATING VIEWER...") : (isSk ? "SPUSTIŤ SIMULÁCIU" : "RUN SIMULATION")}
+          <Ruler className="h-4 w-4" />
+          {isAnalyzing ? (isSk ? "MERIAM…" : "MEASURING…") : isSk ? "ZMERAŤ ČASOVÚ OS" : "MEASURE TIMELINE"}
         </button>
       </div>
 
-      {/* Intro Context */}
-      <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/20 flex items-start gap-4">
-         <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-400 shrink-0">
-            <Info className="h-5 w-5" />
-         </div>
-         <div>
-            <p className="text-[11px] font-black text-white uppercase tracking-wider mb-1">REAL-TIME DROP-OFF ANALYSIS</p>
-            <p className="text-[10px] text-neutral-400 leading-relaxed italic">
-               {isSk 
-                 ? "AI nesimuluje náhodu, ale psychologickú odozvu diváka na tempo strihu, hustotu informácií a kvalitu reči. Získate presný prehľad o tom, kde divák stráca záujem a kde je nadšený."
-                 : "AI does not simulate randomness, but the viewer's psychological response to edit tempo, information density, and speech quality. You get an exact overview of where the viewer loses interest and where they are thrilled."}
-            </p>
-         </div>
-      </div>
-
       {!project.isAnalyzed ? (
-        <div className="p-20 rounded-3xl bg-neutral-900/50 border border-neutral-800 border-dashed flex flex-col items-center text-center gap-6">
-           <div className="h-24 w-24 rounded-full bg-rose-500/5 flex items-center justify-center border border-rose-500/10">
-              <TrendingUp className="h-10 w-10 text-rose-500/40" />
-           </div>
-           <div className="space-y-2">
-              <h4 className="text-sm font-black text-white uppercase tracking-widest">{isSk ? "ČAKÁM NA DÁTA" : "AWAITING DATA"}</h4>
-              <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[320px]">
-                {isSk ? "Spustite simuláciu pre analýzu vašej časovej osi." : "Run the simulation to analyze your timeline."}
-              </p>
-           </div>
+        <div className="p-16 rounded-3xl bg-neutral-900/50 border border-neutral-800 border-dashed flex flex-col items-center text-center gap-5">
+          <div className="h-20 w-20 rounded-full bg-sky-500/5 flex items-center justify-center border border-sky-500/10">
+            <Activity className="h-9 w-9 text-sky-500/40" />
+          </div>
+          <div className="space-y-2">
+            <h4 className="text-sm font-black text-white uppercase tracking-widest">
+              {isSk ? "ČAKÁ NA MERANIE" : "AWAITING MEASUREMENT"}
+            </h4>
+            <p className="text-[10px] text-neutral-500 font-bold uppercase leading-relaxed max-w-[380px]">
+              {isSk
+                ? "Zmeriam, koľko strihov je na časovej osi a kde presne sú. Nič sa pritom nemení — je to len čítanie canonical osi."
+                : "I will measure how many cuts are on the timeline and where exactly. Nothing changes — this only reads the canonical timeline."}
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-8">
-           {/* Retention Curve Visualization */}
-           <div className="p-6 rounded-3xl bg-neutral-900 border border-neutral-800">
-              <div className="flex items-center justify-between mb-6">
-                 <div className="flex items-center gap-3">
-                    <Activity className="h-5 w-5 text-rose-500" />
-                    <span className="text-[12px] font-black text-white uppercase tracking-widest">ENGAGEMENT FLOW</span>
-                 </div>
-                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-neutral-500 uppercase">SCORE:</span>
-                    <span className="text-lg font-black text-rose-500">{project.overallScore}%</span>
-                 </div>
-              </div>
+          {/* SÚHRN */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+              <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{isSk ? "Meraná dĺžka" : "Measured length"}</p>
+              <p className="text-2xl font-black text-neutral-100">{project.measuredDurationSec?.toFixed(2) ?? "—"}<span className="text-sm text-neutral-500"> s</span></p>
+            </div>
+            <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+              <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{isSk ? "Strihy / min" : "Cuts / min"}</p>
+              <p className="text-2xl font-black text-sky-300">{project.cutsPerMinute?.toFixed(1) ?? "—"}</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+              <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{isSk ? "Úsekov merania" : "Measured segments"}</p>
+              <p className="text-2xl font-black text-neutral-100">{project.segments.length}</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+              <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{isSk ? "Zdroj" : "Source"}</p>
+              <p className="text-sm font-black text-emerald-300 uppercase">
+                {project.measuredFrom === "canonical_timeline" ? (isSk ? "canonical os" : "canonical timeline") : "—"}
+              </p>
+            </div>
+          </div>
 
-              <div className="relative h-32 w-full flex items-end gap-[2px] px-1">
-                 {/* Dummy curve bars */}
-                 {Array.from({ length: 60 }).map((_, i) => {
-                   const progress = i / 60;
-                   const segment = project.segments.find(s => progress >= (s.startTime / 30) && progress <= (s.endTime / 30));
-                   const height = segment ? (segment.score > 80 ? 90 : segment.score > 50 ? 60 : 30) : 50;
-                   
-                   return (
-                     <div 
-                       key={i} 
-                       className={`flex-1 rounded-t-sm transition-all duration-1000 ${segment ? getSegmentColor(segment.type) : "bg-neutral-800"}`}
-                       style={{ height: `${height + Math.random() * 10}%`, opacity: 0.7 }}
-                     />
-                   );
-                 })}
-                 
-                 {/* Playhead marker */}
-                 <div 
-                   className="absolute top-0 bottom-0 w-px bg-white z-10 shadow-[0_0_8px_rgba(255,255,255,0.5)] transition-all"
-                   style={{ left: `${(currentTime / 30) * 100}%` }}
-                 />
-              </div>
-              
-              <div className="flex justify-between mt-2 px-1">
-                 <span className="text-[9px] font-black text-neutral-600">0s</span>
-                 <span className="text-[9px] font-black text-neutral-600">15s</span>
-                 <span className="text-[9px] font-black text-neutral-600">30s</span>
-              </div>
-           </div>
+          {/* HUSTOTA STRIHU */}
+          <div className="p-6 rounded-3xl bg-neutral-900 border border-neutral-800">
+            <div className="flex items-center gap-3 mb-5">
+              <Scissors className="h-5 w-5 text-sky-400" />
+              <span className="text-[12px] font-black uppercase tracking-widest">
+                {isSk ? "HUSTOTA STRIHU POZDĹŽ OSI (MERANÉ)" : "CUT DENSITY ALONG THE TIMELINE (MEASURED)"}
+              </span>
+            </div>
+            <div className="relative h-32 w-full flex items-end gap-[3px] px-1">
+              {project.segments.map((segment) => (
+                <div
+                  key={segment.id}
+                  className={`flex-1 rounded-t-sm ${segmentColor(segment.type)}`}
+                  style={{ height: `${Math.max(4, (segment.cuts / maxCuts) * 100)}%`, opacity: 0.85 }}
+                  title={isSk
+                    ? `${segment.startTime.toFixed(1)}–${segment.endTime.toFixed(1)} s · ${segment.cuts} strihov · ${segment.cutsPerMinute} strihov/min`
+                    : `${segment.startTime.toFixed(1)}–${segment.endTime.toFixed(1)} s · ${segment.cuts} cuts · ${segment.cutsPerMinute} cuts/min`}
+                />
+              ))}
+              {project.measuredDurationSec && project.measuredDurationSec > 0 && (
+                <div
+                  className="absolute top-0 bottom-0 w-px bg-white z-10 shadow-[0_0_8px_rgba(255,255,255,0.5)] transition-all"
+                  style={{ left: `${Math.min(100, Math.max(0, (currentTime / project.measuredDurationSec) * 100))}%` }}
+                />
+              )}
+            </div>
+            <div className="flex justify-between mt-2 px-1 text-[9px] font-black text-neutral-600">
+              <span>0 s</span>
+              <span>{project.measuredDurationSec ? `${(project.measuredDurationSec / 2).toFixed(1)} s` : ""}</span>
+              <span>{project.measuredDurationSec ? `${project.measuredDurationSec.toFixed(1)} s` : ""}</span>
+            </div>
+            <p className="text-[10px] text-neutral-500 mt-3 flex items-start gap-2">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" />
+              {isSk
+                ? "Stĺpec = jeden úsek osi. Výška = počet strihov v úseku. Toto je meranie strihu, NIE predpoveď retencie."
+                : "Each bar is one slice of the timeline. Height = number of cuts in that slice. This is a cut measurement, NOT a retention prediction."}
+            </p>
+          </div>
 
-           {/* Segment Breakdown */}
-           <div className="space-y-4">
-              <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest px-1">DETAILED AUDIENCE REACTION</h4>
-              
-              <div className="grid grid-cols-1 gap-3">
-                 <AnimatePresence mode="popLayout">
-                    {project.segments.map((segment, idx) => (
-                      <motion.div
-                        key={segment.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.05 }}
-                        className={`p-4 rounded-2xl border flex items-center justify-between group transition-all ${
-                          Math.abs(currentTime - segment.startTime) < 2 ? "bg-neutral-800 border-rose-500/50" : "bg-neutral-900 border-neutral-800"
-                        }`}
-                        onClick={() => onSeek(segment.startTime)}
-                      >
-                         <div className="flex items-center gap-4">
-                            <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white ${getSegmentColor(segment.type)}`}>
-                               {getSegmentIcon(segment.type)}
-                            </div>
-                            <div>
-                               <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black text-white uppercase tracking-wider">
-                                     {segment.startTime.toFixed(1)}s – {segment.endTime.toFixed(1)}s
-                                  </span>
-                                  <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${getSegmentColor(segment.type)} bg-opacity-20`}>
-                                     {segment.type}
-                                  </span>
-                               </div>
-                               <p className="text-[11px] font-bold text-neutral-400 mt-1 uppercase tracking-tighter">
-                                  {isSk ? segment.labelSk : segment.labelEn}
-                               </p>
-                            </div>
-                         </div>
-
-                         <div className="text-right">
-                            <p className="text-[10px] font-black text-neutral-500 uppercase mb-1">SCORE</p>
-                            <p className={`text-sm font-black ${segment.score > 80 ? "text-emerald-500" : segment.score > 50 ? "text-amber-500" : "text-rose-500"}`}>
-                               {segment.score}%
-                            </p>
-                         </div>
-                      </motion.div>
-                    ))}
-                 </AnimatePresence>
-              </div>
-           </div>
-
-           {/* AI Recommendations */}
-           <div className="p-5 rounded-2xl bg-violet-600/10 border border-violet-500/20">
-              <div className="flex items-start gap-4">
-                 <Zap className="h-6 w-6 text-violet-500 shrink-0" />
-                 <div>
-                    <h5 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">AI EDIT ADVISOR</h5>
-                    <p className="text-[10px] text-neutral-400 leading-relaxed italic">
-                       {isSk 
-                         ? "Odporúčam skrátiť ticho v úseku 12-16s a pridať Punch-In zoom na 24s pre zdôraznenie payoffu. To by mohlo zvýšiť celkové udržanie diváka o 15%."
-                         : "I recommend shortening the silence in the 12-16s section and adding a Punch-In zoom at 24s to emphasize the payoff. This could increase overall viewer retention by 15%."}
+          {/* ÚSEKY */}
+          <div className="space-y-3">
+            <h4 className="text-[11px] font-black text-neutral-500 uppercase tracking-widest px-1">
+              {isSk ? "NAMERANÉ ÚSEKY" : "MEASURED SEGMENTS"}
+            </h4>
+            <AnimatePresence mode="popLayout">
+              {project.segments.map((segment, idx) => (
+                <motion.div
+                  key={segment.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className={`p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-3 cursor-pointer transition-all ${
+                    Math.abs(currentTime - segment.startTime) < 2 ? "bg-neutral-800 border-sky-500/50" : "bg-neutral-900 border-neutral-800"
+                  }`}
+                  onClick={() => onSeek(segment.startTime)}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`h-9 w-9 rounded-xl flex items-center justify-center text-white ${segmentColor(segment.type)}`}>
+                      {segment.type === "NO_CUT" ? <Video className="h-4 w-4" /> : segment.type === "CUTS_DENSE" ? <Scissors className="h-4 w-4" /> : <Timer className="h-4 w-4" />}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-white uppercase tracking-wider">
+                        {segment.startTime.toFixed(1)} s – {segment.endTime.toFixed(1)} s
+                      </p>
+                      <p className="text-[11px] font-bold text-neutral-400 mt-0.5">
+                        {isSk ? segment.labelSk : segment.labelEn}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-neutral-500 uppercase mb-0.5">{isSk ? "MERANÉ" : "MEASURED"}</p>
+                    <p className="text-sm font-black text-sky-300">
+                      {segment.cuts} {isSk ? "strihov" : "cuts"} · {segment.cutsPerMinute}/min
                     </p>
-                 </div>
-              </div>
-           </div>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
+          {/* ČO SA NEMERIA */}
+          <div className="p-5 rounded-2xl bg-amber-500/5 border border-amber-500/20 flex items-start gap-4">
+            <TrendingDown className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <h5 className="text-[11px] font-black text-amber-200 uppercase tracking-widest mb-1">
+                {isSk ? "ČO TENTO PANEL NEMERIA" : "WHAT THIS PANEL DOES NOT MEASURE"}
+              </h5>
+              <p className="text-[11px] text-neutral-400 leading-relaxed">
+                {isSk
+                  ? "Retenciu diváka, „skóre virality“, emócie publika a odporúčania typu „zvýši to udržanie o 15 %“. Na to OmniStrih nemá dáta — a preto ich nevymýšľa. Ak chcete zmeniť rytmus, použite Style Studio (tam je vidieť, čo sa zmení a prečo)."
+                  : "Viewer retention, “virality scores”, audience emotions and advice like “this will increase retention by 15 %”. OmniStrih has no data for that — so it does not invent it. To change pacing, use Style Studio (it shows what changes and why)."}
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 };
+
+export default RetentionSimulator;

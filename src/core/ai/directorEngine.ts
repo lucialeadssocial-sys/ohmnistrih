@@ -209,41 +209,57 @@ export class DirectorEngine {
   }
 
   /**
-   * Generates a deterministic, explainable DirectorPlan from analysis results.
+   * Director plán — POCTIVO.
+   *
+   * Pravidlo (krok 29, honesty fix): plán NIKDY neobsahuje vymyslené zásahy.
+   * Pôvodná verzia pri chýbajúcej analýze pridávala pevné hodnoty:
+   *   • pauza „4,2–5,8 s“ s confidence 0,95,
+   *   • hook „0–3 s“ typu question s confidence 0,94,
+   *   • J-cut „v 12,0 s“ s confidence 0,98,
+   *   • titulky / ducking / farba s rozsahom 0,0–15,0 s a confidence 0,95–0,98,
+   * a vždy vrátila `confidence: 0.92` a `createdAt: Date.now()` (nedeterministické).
+   * Bola to „fake intelligence“ — vyzerala ako meranie, ale meranie to nebolo.
+   *
+   * Dnes: rozhodnutia vznikajú LEN z reálnej analýzy projektu
+   * (`project.analysisResults`). Čo analýza neobsahuje, sa NEVYMÝŠĽA — ide to do
+   * `unresolvedAmbiguities` ako otvorená otázka pre človeka.
    */
   public generateDirectorPlan(
     project: ProjectModel,
     targetPlatform: 'TikTok' | 'Instagram Reels' | 'YouTube Shorts' | 'YouTube Long-form' | 'UGC Ads' | 'General' = 'TikTok',
     objectives: DirectorObjective[] = ['Retention', 'Education']
   ): DirectorPlan {
-    const analysis = project.analysisResults || {
-      projectId: project.id,
-      timestamp: Date.now()
-    };
-
+    const analysis: any = project.analysisResults ?? null;
     const decisions: DirectorDecisionItem[] = [];
+    const notes: string[] = [];
+    const knowledgeRefs = new Set<string>();
 
-    // Query Brain for preferences
+    // Reálne preferencie z projektu (Editor Brain).
     const pacingPrefs = editingBrain.getPreferences(project, 'PACING');
+    void pacingPrefs;
 
-    // 1. Pacing & Pause Trimming Decisions
-    const pauseList = analysis.pauses?.filter((p: any) => p.type === 'long_pause') || [
-      { id: 'p1', start: 4.2, end: 5.8, duration: 1.6, confidence: 0.95 }
-    ];
+    if (!analysis) {
+      notes.push(
+        'Projekt nemá výsledky analýzy — Director nevie, kde sú pauzy, hook ani príležitosti na B-roll. Preto plán neobsahuje žiadne zásahy (nič sa nedomýšľa). Spustite analýzu a vygenerujte plán znova.'
+      );
+    }
 
+    // 1) Skrátenie dlhých pauzy — LEN z analýzy.
+    const pauseList: any[] = (analysis?.pauses ?? []).filter((p: any) => p.type === 'long_pause');
     pauseList.forEach((pause: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.PAUSE_TRIMMING;
+      knowledgeRefs.add('PAUSE_TRIMMING');
       decisions.push({
         id: `dir_dec_pause_${idx}`,
         editDecisionId: `dec_pause_${idx}`,
         priority: pause.duration > 2.0 ? 'MUST_CONSIDER' : 'RECOMMENDED',
-        what: `Skrátenie dlhej pauzy v čase ${pause.start.toFixed(1)}s (${pause.duration.toFixed(1)}s -> 0.4s)`,
+        what: `Skrátenie dlhej pauzy v čase ${Number(pause.start).toFixed(1)}s (${Number(pause.duration).toFixed(1)}s -> 0.4s)`,
         why: teach.why,
         whenToUse: teach.whenToUse,
         whenNotToUse: teach.whenNotToUse,
         howToManual: teach.manualWorkflowSteps || [],
         alternatives: teach.alternativeChoices || ['Ponechať pre dramatický účinok.'],
-        confidence: pause.confidence || 0.95,
+        confidence: typeof pause.confidence === 'number' ? pause.confidence : 0,
         source: teach.source,
         category: (teach.category as KnowledgeCategory) || 'heuristic',
         timelineLocation: { start: pause.start, end: pause.end },
@@ -251,33 +267,22 @@ export class DirectorEngine {
       });
     });
 
-    // 2. Hook Enhancement Strategy Decisions (Punch-in)
-    const hookList = analysis.hooks || [
-      { id: 'h1', start: 0, end: 3.0, type: 'question', confidence: 0.94 }
-    ];
-
+    // 2) Hook / punch-in — LEN z analýzy.
+    const hookList: any[] = analysis?.hooks ?? [];
     hookList.forEach((hook: any, idx: number) => {
-      const teach = EDIT_KNOWLEDGE_BASE.HOOK_PUNCHIN || {
-        why: 'Prvých 3.0s rozhoduje o tom, či divák preskočí video (Scroll Stop).',
-        whenToUse: 'Pri úvodnej otázke alebo prekvapivom tvrdení.',
-        whenNotToUse: 'Pri uvoľnenom podcastovom úvode.',
-        source: 'TikTok & Shorts Retention Benchmarks 2026'
-      };
+      const teach = EDIT_KNOWLEDGE_BASE.HOOK_PUNCHIN;
+      knowledgeRefs.add('HOOK_PUNCHIN');
       decisions.push({
         id: `dir_dec_hook_${idx}`,
         editDecisionId: `dec_hook_${idx}`,
         priority: 'MUST_CONSIDER',
-        what: `Punch-in Zoom (100% -> 115%) pre zamedzenie preskakovaniu hooku v čase ${hook.start}s - ${hook.end}s`,
+        what: `Zvýraznenie hooku punch-in zoomom v čase ${Number(hook.start).toFixed(1)}s – ${Number(hook.end).toFixed(1)}s`,
         why: teach.why,
         whenToUse: teach.whenToUse,
         whenNotToUse: teach.whenNotToUse,
-        howToManual: EDIT_KNOWLEDGE_BASE.HOOK_PUNCHIN?.manualWorkflowSteps || [
-          '1. Označ prvých 3.0s hlavného klipu na V1.',
-          '2. V Inspectorovi nastav Scale na 115%.',
-          '3. Vycentruj pozíciu tváre v hornej tretine.'
-        ],
-        alternatives: EDIT_KNOWLEDGE_BASE.HOOK_PUNCHIN?.alternativeChoices || ['Pridať zvýraznený titulok na stope T1.'],
-        confidence: hook.confidence || 0.94,
+        howToManual: teach.manualWorkflowSteps || [],
+        alternatives: teach.alternativeChoices || [],
+        confidence: typeof hook.confidence === 'number' ? hook.confidence : 0,
         source: teach.source,
         category: 'trend_platform_pattern',
         timelineLocation: { start: hook.start, end: hook.end },
@@ -285,43 +290,22 @@ export class DirectorEngine {
       });
     });
 
-    // 3. J-Cut / Audio Lead Decision
-    const jcutTeach = EDIT_KNOWLEDGE_BASE.J_CUT;
-    decisions.push({
-      id: `dir_dec_jcut_0`,
-      editDecisionId: `dec_jcut_0`,
-      priority: 'RECOMMENDED',
-      what: `Použitie J-Cut prechodu (zvuk predbieha obraz o 1.2s) v čase 12.0s`,
-      why: jcutTeach.why,
-      whenToUse: jcutTeach.whenToUse,
-      whenNotToUse: jcutTeach.whenNotToUse,
-      howToManual: jcutTeach.manualWorkflowSteps || [],
-      alternatives: jcutTeach.alternativeChoices || [],
-      confidence: 0.98,
-      source: jcutTeach.source,
-      category: 'professional_convention',
-      timelineLocation: { start: 12.0, end: 14.5 },
-      status: 'proposed'
-    });
-
-    // 4. B-Roll & Visual Pacing Strategy
-    const brollList = analysis.brollOpportunities || [
-      { id: 'b1', start: 8.5, end: 11.5, suggestedVisualType: 'product', confidence: 0.92 }
-    ];
-
+    // 3) B-roll — LEN z analýzy.
+    const brollList: any[] = analysis?.brollOpportunities ?? [];
     brollList.forEach((broll: any, idx: number) => {
       const teach = EDIT_KNOWLEDGE_BASE.BROLL_INSERTION;
+      knowledgeRefs.add('BROLL_INSERTION');
       decisions.push({
         id: `dir_dec_broll_${idx}`,
         editDecisionId: `dec_broll_${idx}`,
         priority: 'RECOMMENDED',
-        what: `Vloženie B-Roll ilustrácie (${broll.suggestedVisualType}) na V2 v čase ${broll.start}s - ${broll.end}s`,
+        what: `Vloženie B-Roll ilustrácie (${broll.suggestedVisualType ?? 'vizuál'}) v čase ${Number(broll.start).toFixed(1)}s – ${Number(broll.end).toFixed(1)}s`,
         why: teach.why,
         whenToUse: teach.whenToUse,
         whenNotToUse: teach.whenNotToUse,
         howToManual: teach.manualWorkflowSteps || [],
         alternatives: teach.alternativeChoices || ['Použiť Punch-in zoom.'],
-        confidence: broll.confidence || 0.92,
+        confidence: typeof broll.confidence === 'number' ? broll.confidence : 0,
         source: teach.source,
         category: 'professional_convention',
         timelineLocation: { start: broll.start, end: broll.end },
@@ -329,177 +313,53 @@ export class DirectorEngine {
       });
     });
 
-    // 5. Captions & Emphasis Decision
-    const capTeach = EDIT_KNOWLEDGE_BASE.CAPTIONS_EMPHASIS;
-    decisions.push({
-      id: `dir_dec_captions_0`,
-      editDecisionId: `dec_captions_0`,
-      priority: 'MUST_CONSIDER',
-      what: `Zvýraznenie kľúčových slov v titulkách (Neon accent color) pre mobilné sledovanie`,
-      why: capTeach.why,
-      whenToUse: capTeach.whenToUse,
-      whenNotToUse: capTeach.whenNotToUse,
-      howToManual: capTeach.manualWorkflowSteps || [],
-      alternatives: capTeach.alternativeChoices || [],
-      confidence: 0.97,
-      source: capTeach.source,
-      category: 'professional_convention',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
-
-    // 6. Audio Ducking Strategy
-    const duckTeach = EDIT_KNOWLEDGE_BASE.AUDIO_DUCKING;
-    decisions.push({
-      id: `dir_dec_audio_ducking`,
-      editDecisionId: `dec_audio_ducking`,
-      priority: 'RECOMMENDED',
-      what: 'Automatické stíšenie hudby pod hovoreným slovom (Audio Ducking -12dB na A2)',
-      why: duckTeach.why,
-      whenToUse: duckTeach.whenToUse,
-      whenNotToUse: duckTeach.whenNotToUse,
-      howToManual: duckTeach.manualWorkflowSteps || [],
-      alternatives: duckTeach.alternativeChoices || [],
-      confidence: 0.98,
-      source: duckTeach.source,
-      category: 'technical_constraint',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
-
-    // 7. Color Correction & Skin Tones
-    const colorTeach = EDIT_KNOWLEDGE_BASE.COLOR_BALANCING;
-    decisions.push({
-      id: `dir_dec_color_0`,
-      editDecisionId: `dec_color_0`,
-      priority: 'OPTIONAL',
-      what: 'Primary Color Correction & Vyváženie tónu pleti (Skin Tone Balance na V1)',
-      why: colorTeach.why,
-      whenToUse: colorTeach.whenToUse,
-      whenNotToUse: colorTeach.whenNotToUse,
-      howToManual: colorTeach.manualWorkflowSteps || [],
-      alternatives: colorTeach.alternativeChoices || [],
-      confidence: 0.95,
-      source: colorTeach.source,
-      category: 'technical_constraint',
-      timelineLocation: { start: 0.0, end: 15.0 },
-      status: 'proposed'
-    });
-
-    // 8. Motion Graphics & Professional Animation Decisions (FÁZA 2R)
-    const infoDensity = analysis.speechDensity?.informationDensity || 'balanced';
+    // 4) Informačná hustota — LEN z analýzy (a bez vymysleného miesta na osi).
+    const infoDensity = analysis?.speechDensity?.informationDensity;
     if (infoDensity === 'high') {
-      decisions.push({
-        id: `dir_dec_motion_callout`,
-        editDecisionId: `dec_motion_callout`,
-        priority: 'RECOMMENDED',
-        what: 'Pridanie vizuálnych Callouts pre kľúčové fakty (T1 stopa)',
-        why: 'Vysoká informačná hustota vyžaduje vizuálne kotvy pre lepšie pochopenie.',
-        whenToUse: 'Pri uvádzaní čísel, mien alebo technických termínov.',
-        whenNotToUse: 'Pri emocionálnom storytellingu.',
-        howToManual: [
-          '1. Vytvor Text Clip na stope T1.',
-          '2. Použi "Callout" preset v Motion Inspectore.',
-          '3. Animuj Scale (0 -> 100) s Bounce easingom.'
-        ],
-        alternatives: ['Použiť statický obrázok.', 'Zmeniť veľkosť záberu.'],
-        confidence: 0.91,
-        source: 'Educational Content Research 2026',
-        category: 'professional_convention',
-        timelineLocation: { start: 10.0, end: 13.5 },
-        status: 'proposed'
-      });
+      knowledgeRefs.add('INFORMATION_DENSITY');
+      notes.push(
+        'Analýza hlási vysokú informačnú hustotu reči — zvážte vizuálne kotvy (callouty) na konkrétnych faktoch. OmniStrih nevie, ktoré slová sú kľúčové, takže miesto na osi si vyberáte vy.'
+      );
     }
 
-    // 9. Multicam & Speaker-Aware Decisions (FÁZA 2S)
+    // 5) J-cut/L-cut, titulky, ducking, farba, multicam:
+    //    bez merania sa NEVYMÝŠĽA čas ani confidence — je to otvorená otázka.
+    notes.push(
+      'J-cut/L-cut, zvýraznenie titulkov, stíšenie hudby a farebné vyváženie sa z vašich dát nedajú zmerať (chýba meranie zvuku a rozpoznávanie dôrazu v reči). Preto tu nie sú ako rozhodnutia s časom na osi — princípy nájdete vo výučbe (WHY / SHOW ME HOW).'
+    );
     const multicamGroup = project.multicamGroups?.[0];
     if (multicamGroup && multicamGroup.angles.length > 1) {
-      decisions.push({
-        id: `dir_dec_multicam_switch_0`,
-        editDecisionId: `dec_mc_0`,
-        priority: 'MUST_CONSIDER',
-        what: `Automatický Multicam Strih na aktívneho rečníka (Angle: ${multicamGroup.angles[1]?.name || 'Detail'})`,
-        why: 'Prestrih na detail v čase dôležitej myšlienky zvyšuje zapojenie diváka.',
-        whenToUse: 'Pri prechode na novú tému alebo zvýšení hlasitosti rečníka.',
-        whenNotToUse: 'Keď rečník robí dôležité gesto rukami (lepšie nechať široký záber).',
-        howToManual: [
-          '1. Otvor Multicam Viewer.',
-          '2. Klikni na požadovaný uhol v čase playheadu.',
-          '3. Dolaď bod strihu pomocou Slip editu.'
-        ],
-        alternatives: ['Ponechať široký záber.', 'Použiť digital zoom na 4K zdroj.'],
-        confidence: 0.96,
-        source: 'Professional Interview Standards',
-        category: 'professional_convention',
-        timelineLocation: { start: 5.2, end: 5.3 },
-        status: 'proposed'
-      });
+      notes.push(
+        `Projekt má multicam skupinu s ${multicamGroup.angles.length} uhlami. Automatický prestrih na hovoriaceho OmniStrih nerobí (nemá diarizáciu rečníkov) — uhly prepínajte ručne.`
+      );
     }
 
-    const strategies = {
-      hookStrategy: {
-        name: 'Scroll-Stop Hook Optimization',
-        goal: 'Zvýšenie retencie v prvých 3 sekundách',
-        approach: 'Kombinácia vizuálneho Punch-inu a zvýraznenia kľúčovej otázky v titulkách.',
-        why: 'Statický úvod v prvých 2s znižuje pravdepodobnosť dopočúvania o 42%.',
-        confidence: 0.93
-      },
-      pacingStrategy: {
-        name: 'Thought-Bound Pacing',
-        goal: 'Udržanie prirodzeného toku reči bez robotičnosti',
-        approach: 'Skracovanie dlhých hezitácií (>1.5s) pri zachovaní mikropauz na dýchanie (0.3s-0.5s).',
-        why: 'Slepé vymazanie všetkých pauz zhoršuje vnímanie emócie a autenticity rečníka.',
-        confidence: 0.95
-      },
-      brollStrategy: {
-        name: 'Visual Contextual Reinforcement',
-        goal: 'Pokrytie statických hovorených úsekov dlhších ako 5s',
-        approach: 'Nasadenie B-rollu alebo infografiky pri opise konkrétnych faktov.',
-        why: 'Duálne kódovanie (zvuk + obraz) zlepšuje zapamätanie informácií.',
-        confidence: 0.89
-      },
-      audioStrategy: {
-        name: 'Dialogue Dominance & Clean Mix',
-        goal: 'Maximálna sémantická zrozumiteľnosť hovorcu',
-        approach: 'Auto-ducking hudby na -12dB a aktivácia normovania na -14 LUFS.',
-        why: 'Zle namixované pozadie je hlavným dôvodom odchodu diváka pri vzdelávacích videách.',
-        confidence: 0.97
-      },
-      motionStrategy: {
-        name: 'Kinetic Information Architecture',
-        goal: 'Vizuálna hierarchia pomocou pohybu',
-        approach: 'Použitie calloutov a textovej animácie pre kľúčové sémantické segmenty.',
-        why: 'Pohyb vedie oko diváka a zabraňuje "vizuálnej únave" (Visual Fatigue).',
-        confidence: 0.92
-      },
-      multicamStrategy: {
-        name: 'Speaker-Centric Dynamics',
-        goal: 'Udržanie dynamiky rozhovoru',
-        approach: 'Prestrihávanie na hovorcu pri sémantických zlomoch v transkripte.',
-        why: 'Statický záber dlhší ako 10s pri dialógu pôsobí amatérsky a znižuje retenciu.',
-        confidence: 0.94
-      }
-    };
+    // Dôveryhodnosť = priemer dôvery rozhodnutí, ktoré majú reálny základ (žiadna konštanta).
+    const confidence = decisions.length > 0
+      ? Math.round((decisions.reduce((sum, d) => sum + (d.confidence || 0), 0) / decisions.length) * 100) / 100
+      : 0;
 
     return {
-      id: `plan_${crypto.randomUUID()}`,
+      id: `plan_${project.id}`,
       projectId: project.id,
-      sequenceId: project.sequence?.id,
       title: `Director Plan — ${targetPlatform} (${objectives.join(', ')})`,
       targetPlatform,
       targetFormat: targetPlatform === 'YouTube Long-form' ? '16:9' : '9:16',
       objectives,
-      audience: 'Primárne Short-form & Educational publikum',
-      contentSummary: analysis.contentStructure?.hook?.text || 'Video hovoriacej hlavy so vzdelávacím obsahom.',
-      strategies,
+      audience: analysis?.contentStructure?.type
+        ? String(analysis.contentStructure.type)
+        : 'Neznáme publikum (analýza neurčila typ obsahu)',
+      contentSummary: analysis?.contentStructure?.hook?.text || 'Analýza neuviedla zhrnutie obsahu — nič sa nedomýšľa.',
+      strategies: {},
       decisions,
-      analysisReferences: [analysis.projectId],
-      insightReferences: (analysis.insights || []).map((i: any) => i.id),
-      knowledgeReferences: ['J_CUT', 'PAUSE_TRIMMING', 'BROLL_INSERTION', 'INFORMATION_DENSITY'],
-      confidence: 0.92,
-      unresolvedAmbiguities: [],
-      createdAt: Date.now(),
-      analysisVersion: 2,
+      analysisReferences: analysis?.projectId ? [analysis.projectId] : [],
+      insightReferences: (analysis?.insights ?? []).map((i: any) => i.id),
+      knowledgeReferences: [...knowledgeRefs],
+      confidence,
+      unresolvedAmbiguities: notes,
+      // Deterministické: čas vzniku plánu = posledná zmena projektu (žiadny Date.now()).
+      createdAt: project.updatedAt ?? project.createdAt ?? 0,
+      analysisVersion: typeof analysis?.analysisVersion === 'number' ? analysis.analysisVersion : 0,
       directorVersion: 1
     };
   }

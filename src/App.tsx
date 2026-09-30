@@ -168,6 +168,7 @@ import { aiOrchestrator } from "./services/aiOrchestrator";
 import { DEFAULT_EDIT_DNA_PROFILES } from "./utils/editorBrainDefaults";
 import { DEMO_VIDEOS } from "./utils/demoVideos";
 import { playSynthesizedSFX } from "./utils/audioSynth";
+import { measureProject } from "./core/qc/qcMeasure";
 import { startBrowserSpeechTranscription } from "./utils/speechSync";
 import { ViralPresets } from "./components/ViralPresets";
 import { SmartAIInsight } from "./components/SmartAIInsight";
@@ -795,222 +796,196 @@ function MainApp() {
   });
   const [isExportingMulti, setIsExportingMulti] = useState(false);
 
+  /**
+   * Content Pack — dnes PRÁZDNY. Pôvodný stav mal vymyslené klipy (hooky,
+   * „viralityScore 98 %“) a hotové marketingové texty. Kým OmniStrih nemá
+   * reálny výber momentov s dôkazom, nesmie nič také zobrazovať.
+   */
   const [contentPack, setContentPack] = useState<ContentPack>({
     id: "pack-001",
     sourceVideoId: "v1",
-    clips: [
-      {
-        id: "c1",
-        startTime: 120,
-        endTime: 175,
-        hookSk: "Tajomstvo, ktoré vám nikto nepovie o AI strihu.",
-        hookEn: "The secret nobody tells you about AI editing.",
-        viralityScore: 98,
-        platformOptimized: ["TIKTOK", "REELS", "SHORTS"]
-      },
-      {
-        id: "c2",
-        startTime: 450,
-        endTime: 510,
-        hookSk: "Prečo sú vaše videá nudné a ako to hneď opraviť.",
-        hookEn: "Why your videos are boring and how to fix it now.",
-        viralityScore: 92,
-        platformOptimized: ["TIKTOK", "REELS", "SHORTS"]
-      },
-      {
-        id: "c3",
-        startTime: 820,
-        endTime: 880,
-        hookSk: "Návod krok za krokom na virálne Shorts.",
-        hookEn: "Step-by-step guide to viral Shorts.",
-        viralityScore: 89,
-        platformOptimized: ["TIKTOK", "SHORTS"]
-      }
-    ],
-    assets: [
-      {
-        id: "a1",
-        platform: "TIKTOK",
-        type: "VIDEO",
-        titleSk: "AI Video Revolution",
-        titleEn: "AI Video Revolution",
-        contentSk: "Prestaňte tráviť hodiny strihom. OmniStrih to urobí za vás. 🚀",
-        contentEn: "Stop spending hours editing. OmniStrih does it for you. 🚀",
-        hashtags: ["#aivideo", "#omnistrih", "#editing"],
-        ctaSk: "Vyskúšaj zadarmo",
-        ctaEn: "Try for free"
-      },
-      {
-        id: "a2",
-        platform: "LINKEDIN",
-        type: "POST",
-        titleSk: "Efektivita v produkcii",
-        titleEn: "Efficiency in Production",
-        contentSk: "Budúcnosť video produkcie je v AI automatizácii. Tu je prečo...",
-        contentEn: "The future of video production is in AI automation. Here is why...",
-        hashtags: ["#videoproduction", "#ai", "#efficiency"],
-        ctaSk: "Čítaj viac",
-        ctaEn: "Read more"
-      }
-    ],
+    clips: [],
+    assets: [],
     marketingData: {
-      ytTitleSk: "Budúcnosť videa je tu: OmniStrih AI Masterclass",
-      ytTitleEn: "The Future of Video is Here: OmniStrih AI Masterclass",
-      ytDescriptionSk: "V tomto videu sa dozviete všetko o tom, ako využiť AI na profesionálny strih videa bez predchádzajúcich skúseností.",
-      ytDescriptionEn: "In this video, you will learn everything about how to use AI for professional video editing without prior experience.",
-      thumbnailTextSk: "AI STRIH ZA 60 SEKÚND",
-      thumbnailTextEn: "AI EDIT IN 60 SECONDS"
+      ytTitleSk: "",
+      ytTitleEn: "",
+      ytDescriptionSk: "",
+      ytDescriptionEn: "",
+      thumbnailTextSk: "",
+      thumbnailTextEn: "",
     },
-    isGenerated: false
+    isGenerated: false,
   });
   const [isGeneratingPack, setIsGeneratingPack] = useState(false);
 
+  /**
+   * Retenčný prehľad = MERANIE časovej osi, nie simulácia diváka.
+   * Segmenty sa plnia pri meraní (handleRunRetentionAnalysis) z canonical osi.
+   * Žiadne vopred vyplnené „skóre 96/45/20“ — to bolo vymyslené.
+   */
   const [retentionProject, setRetentionProject] = useState<RetentionProject>({
     id: "ret-001",
     sourceVideoId: "v1",
-    segments: [
-      { id: "s1", startTime: 0, endTime: 3.5, type: "STRONG", labelSk: "Silný úvod / Hook", labelEn: "Strong Opening / Hook", score: 96 },
-      { id: "s2", startTime: 3.5, endTime: 7.2, type: "LOW_DENSITY", labelSk: "Nízka hustota informácií", labelEn: "Low information density", score: 45 },
-      { id: "s3", startTime: 12.0, endTime: 16.5, type: "LONG_PAUSE", labelSk: "Dlhá tichá pauza", labelEn: "Long silent pause", score: 20 },
-      { id: "s4", startTime: 24.0, endTime: 29.5, type: "STRONG_PAYOFF", labelSk: "Silné rozuzlenie / Payoff", labelEn: "Strong Payoff / Resolution", score: 92 },
-      { id: "s5", startTime: 40.0, endTime: 55.0, type: "REPETITIVE", labelSk: "Opakujúce sa myšlienky", labelEn: "Repetitive thoughts", score: 35 }
-    ],
-    overallScore: 68,
-    isAnalyzed: false
+    segments: [],
+    cutsPerMinute: null,
+    measuredDurationSec: null,
+    isAnalyzed: false,
+    measuredFrom: null,
   });
   const [isAnalyzingRetention, setIsAnalyzingRetention] = useState(false);
 
+  /**
+   * A/B varianty — NEMERANÉ. Pôvodný stav obsahoval vymyslené hodnoty
+   * (estimatedRetention 94/82/88 %). Tie sú preč: varianty vznikajú až
+   * reálnou zmenou v Style Studiu (iný štýl / iný cieľ), a dovtedy sa
+   * neuvádza žiadne číslo.
+   */
   const [abVersionProject, setAbVersionProject] = useState<ABVersionProject>({
     id: "ab-001",
     sourceVideoId: "v1",
     versions: [
-      { 
-        id: "v-fast", 
-        name: "Version A: Fast Cuts", 
-        style: "FAST_CUTS", 
+      {
+        id: "v-fast",
+        name: "Version A: Fast Cuts",
+        style: "FAST_CUTS",
         status: "READY",
         descriptionSk: "Agresívny strih, krátke prestrihy, vysoká dynamika.",
         descriptionEn: "Aggressive editing, short cuts, high dynamics.",
-        metrics: { estimatedRetention: 94, pacingScore: 98, visualDensity: 85 }
       },
-      { 
-        id: "v-natural", 
-        name: "Version B: Natural Pacing", 
-        style: "NATURAL", 
+      {
+        id: "v-natural",
+        name: "Version B: Natural Pacing",
+        style: "NATURAL",
         status: "READY",
         descriptionSk: "Plynulý, prirodzený rytmus, menej rušivých prvkov.",
         descriptionEn: "Smooth, natural rhythm, fewer distractions.",
-        metrics: { estimatedRetention: 82, pacingScore: 65, visualDensity: 40 }
       },
-      { 
-        id: "v-heavy", 
-        name: "Version C: Heavy Captions", 
-        style: "HEAVY_CAPTIONS", 
+      {
+        id: "v-heavy",
+        name: "Version C: Heavy Captions",
+        style: "HEAVY_CAPTIONS",
         status: "READY",
         descriptionSk: "Dominantné titulky, vizuálne efekty pri každom slove.",
         descriptionEn: "Dominant captions, visual effects on every word.",
-        metrics: { estimatedRetention: 88, pacingScore: 80, visualDensity: 95 }
-      }
+      },
     ],
-    isGenerated: false
+    isGenerated: false,
   });
   const [isGeneratingAB, setIsGeneratingAB] = useState(false);
 
+  /**
+   * A/B varianty sa dnes NEVYTVÁRAJÚ „vAI“. Skutočná cesta je: použiť iný štýl
+   * alebo cieľ v Style Studiu (zapíše sa do canonical osi) a porovnať dve verzie.
+   * Preto tu nie je žiadny `setTimeout` ani vymyslené metriky.
+   */
   const handleGenerateABVersions = () => {
-    setIsGeneratingAB(true);
-    showToast(isSk ? "🧬 AI rozvetvuje váš edit na varianty..." : "🧬 AI branching your edit into variants...");
-    
-    setTimeout(() => {
-      setAbVersionProject({ ...abVersionProject, isGenerated: true });
-      setIsGeneratingAB(false);
-      showToast(isSk ? "✅ A/B varianty sú pripravené!" : "✅ A/B variants are ready!");
-      playSynthesizedSFX("ding", 0.6);
-    }, 4000);
+    showToast(
+      isSk
+        ? "⚠️ A/B varianty sa dnes nevytvárajú automaticky. Reálna cesta: v Style Studiu použite iný štýl alebo cieľ (zapíše sa do časovej osi) a dve verzie potom porovnajte. Žiadne skóre sa neuvádza, lebo OmniStrih nemá dáta o divákoch."
+        : "⚠️ A/B variants are not created automatically today. Real path: apply a different style or goal in Style Studio (it writes to the timeline) and then compare the two versions. No scores are shown because OmniStrih has no audience data.",
+    );
   };
 
   const handleRunRetentionAnalysis = () => {
     setIsAnalyzingRetention(true);
-    showToast(isSk ? "📊 AI simuluje správanie diváka..." : "📊 AI simulating viewer behavior...");
-    
-    setTimeout(() => {
-      setRetentionProject({ ...retentionProject, isAnalyzed: true });
-      setIsAnalyzingRetention(false);
-      showToast(isSk ? "✅ Analýza udržania pozornosti hotová!" : "✅ Retention analysis complete!");
-      playSynthesizedSFX("boom", 0.5);
-    }, 3500);
-  };
-
-  const handleGenerateContentPack = () => {
-    setIsGeneratingPack(true);
-    showToast(isSk ? "📦 AI vyťahuje virálne momenty z videa..." : "📦 AI extracting viral moments from video...");
-    
-    setTimeout(() => {
-      setContentPack({ ...contentPack, isGenerated: true });
-      setIsGeneratingPack(false);
-      showToast(isSk ? "✅ Content Pack bol úspešne vygenerovaný!" : "✅ Content Pack generated successfully!");
-      playSynthesizedSFX("cash", 0.7);
-    }, 4500);
-  };
-
-  useEffect(() => {
-    if (isExportingMulti) {
-      const enabled = multiExportProject.configs.filter(c => c.isEnabled);
-      const allDone = enabled.length > 0 && enabled.every(c => c.status === "COMPLETED");
-      if (allDone) {
-        setIsExportingMulti(false);
-        setMultiExportProject(prev => ({ ...prev, isExporting: false }));
-        recordLive("export_finished");
-        showToast(isSk ? "✅ Všetky verzie boli úspešne vygenerované!" : "✅ All versions generated successfully!");
-        playSynthesizedSFX("ding", 0.8);
+    try {
+      const measurement = measureProject(coreEngine.getProject());
+      if (!measurement.ok) {
+        setRetentionProject((prev) => ({ ...prev, isAnalyzed: false, segments: [], cutsPerMinute: null, measuredDurationSec: null, measuredFrom: null }));
+        showToast(
+          isSk
+            ? `⚠️ Nie je čo merať — ${measurement.reasonSk}`
+            : `⚠️ Nothing to measure — ${measurement.reasonEn}`,
+        );
+        return;
       }
+
+      const segments: RetentionSegment[] = measurement.densitySeries.map((point, idx) => {
+        const next = measurement.densitySeries[idx + 1];
+        const startTime = idx === 0 ? 0 : point.t - (point.t - measurement.densitySeries[idx - 1].t) / 2;
+        const endTime = next ? next.t - (next.t - point.t) / 2 : measurement.timelineDurationSec;
+        const span = Math.max(0.001, endTime - startTime);
+        const cutsPerMinute = Math.round((point.cuts / (span / 60)) * 10) / 10;
+        const type: RetentionSegment["type"] =
+          point.cuts === 0 ? "NO_CUT" : cutsPerMinute >= 24 ? "CUTS_DENSE" : cutsPerMinute <= 6 ? "CUTS_SPARSE" : "CUTS_NORMAL";
+        return {
+          id: `ret-m-${idx}`,
+          startTime: Math.round(startTime * 100) / 100,
+          endTime: Math.round(endTime * 100) / 100,
+          type,
+          labelSk:
+            point.cuts === 0
+              ? "Bez strihu (jeden záber)"
+              : cutsPerMinute >= 24
+                ? "Husté strihy"
+                : cutsPerMinute <= 6
+                  ? "Riedke strihy"
+                  : "Normálne strihy",
+          labelEn:
+            point.cuts === 0
+              ? "No cut (single shot)"
+              : cutsPerMinute >= 24
+                ? "Dense cuts"
+                : cutsPerMinute <= 6
+                  ? "Sparse cuts"
+                  : "Normal cuts",
+          cuts: point.cuts,
+          cutsPerMinute,
+        };
+      });
+
+      setRetentionProject((prev) => ({
+        ...prev,
+        segments,
+        cutsPerMinute: measurement.cutsPerMinute,
+        measuredDurationSec: measurement.timelineDurationSec,
+        isAnalyzed: true,
+        measuredFrom: "canonical_timeline",
+      }));
+      showToast(
+        isSk
+          ? `📏 Zmerané: ${measurement.cutCount} strihov na ${measurement.timelineDurationSec.toFixed(1)} s (${measurement.cutsPerMinute ?? 0} strihov/min). Toto je meranie, nie predpoveď retencie.`
+          : `📏 Measured: ${measurement.cutCount} cuts over ${measurement.timelineDurationSec.toFixed(1)} s (${measurement.cutsPerMinute ?? 0} cuts/min). Measurement, not a retention prediction.`,
+      );
+    } finally {
+      setIsAnalyzingRetention(false);
     }
-  }, [multiExportProject, isExportingMulti, isSk]);
+  };
 
+  /**
+   * Content Pack sa dnes NEGENERUJE. Pôvodná verzia po 4,5 s oznámila „hotovo“
+   * a nastavila `isGenerated` — bez jediného klipu a bez jediného dôkazu.
+   * Pravda: výber momentov z reálneho videa OmniStrih zatiaľ nevie.
+   */
+  const handleGenerateContentPack = () => {
+    showToast(
+      isSk
+        ? "⚠️ Content Pack sa dnes nevytvára — OmniStrih nemá reálny výber momentov (žiadne fake hooky ani skóre). Reálne dnes funguje: strih, titulky po slovách, štýl z referencie, cieľ videa a export."
+        : "⚠️ The Content Pack is not created today — OmniStrih has no real moment selection (no fake hooks or scores). What works today: cutting, word-level captions, reference style, video goal and export.",
+    );
+  };
+
+  /**
+   * Multi-platformový export — POCTIVO.
+   *
+   * Pôvodná verzia iba simulovala priebeh (`Math.random()`), po chvíli
+   * oznámila „Všetky verzie boli úspešne vygenerované!“ a zapísala signál
+   * `export_finished` — hoci sa nič nevyrenderovalo. To je presne ten typ
+   * nepravdy, ktorý je v OmniStrihu zakázaný.
+   *
+   * Dnes: nastavenia platforiem sú len nastavenia. Skutočné vygenerovanie
+   * prebieha v exportnej linke (Canonical Export), ktorá pracuje s canonical
+   * časovou osou a vie doložiť výsledok (súbor + meranie).
+   */
   const handleStartMultiExport = () => {
-    setIsExportingMulti(true);
-    showToast(isSk ? "🚀 Spúšťam Multi-platformový export..." : "🚀 Starting Multi-platform export...");
-    
-    setMultiExportProject(prev => ({
-      ...prev,
-      isExporting: true,
-      configs: prev.configs.map(c => c.isEnabled ? { ...c, status: "PROCESSING" as const, progress: 0, isPaused: false, estimatedSecondsRemaining: 20 } : c)
-    }));
-
-    const enabledConfigs = multiExportProject.configs.filter(c => c.isEnabled);
-
-    enabledConfigs.forEach((config) => {
-      let prog = 0;
-      let remaining = 20;
-      const interval = setInterval(() => {
-        setMultiExportProject(latest => {
-          const currentConfig = latest.configs.find(c => c.id === config.id);
-          if (!currentConfig || currentConfig.status === "COMPLETED" || currentConfig.status === "FAILED") {
-            clearInterval(interval);
-            return latest;
-          }
-          if (currentConfig.isPaused || currentConfig.status === "PAUSED") {
-            return latest; // paused
-          }
-
-          prog += Math.random() * 10 + 5;
-          remaining = Math.max(0, Math.ceil(((100 - prog) / 100) * 20));
-
-          if (prog >= 100) {
-            prog = 100;
-            clearInterval(interval);
-            return {
-              ...latest,
-              configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: 100, status: "COMPLETED" as const, estimatedSecondsRemaining: 0, isPaused: false } : c)
-            };
-          } else {
-            return {
-              ...latest,
-              configs: latest.configs.map(c => c.id === config.id ? { ...c, progress: Math.floor(prog), status: "PROCESSING" as const, estimatedSecondsRemaining: remaining } : c)
-            };
-          }
-        });
-      }, 500);
-    });
+    const enabled = multiExportProject.configs.filter(c => c.isEnabled);
+    setIsExportingMulti(false);
+    setMultiExportProject(prev => ({ ...prev, isExporting: false }));
+    showToast(
+      isSk
+        ? `⚠️ Nič sa nevygenerovalo — toto je len nastavenie formátov (${enabled.length} zapnutých). Skutočný export spustite v „Canonical Export“; tam vzniká súbor, ktorý sa dá overiť.`
+        : `⚠️ Nothing was generated — these are only format settings (${enabled.length} enabled). Run the real export in “Canonical Export”; that produces a file you can verify.`,
+    );
   };
 
   const handleRunCleanupDetection = () => {
@@ -1278,6 +1253,12 @@ function MainApp() {
 
   // Project Versioning State (For Stale AI Job Protection)
   const [projectVersion, setProjectVersion] = useState<number>(1);
+
+  /**
+   * Jedno meranie canonical osi pre celé UI (napr. dĺžka v Content Graph).
+   * Počíta sa len z projektu — žiadne odhady. Obnoví sa pri zmene projektu.
+   */
+  const timelineMeasurement = useMemo(() => measureProject(coreEngine.getProject()), [projectVersion]);
   const [aiStatusLevel, setAiStatusLevel] = useState<string>("AI AVAILABLE");
 
   useEffect(() => {
@@ -2487,29 +2468,22 @@ function MainApp() {
   ]);
 
   // Opus Virality Analysis State
+  /**
+   * Virality analýza — NEMERANÁ, kým nepríde z reálnej analýzy.
+   * Pôvodné hodnoty (98/99/96/97/95 %) boli vymyslené; TypeScript typy ostávajú
+   * rovnaké, ale hodnoty sú nulové a prázdne, aby sa nedalo tvrdiť nič, čo
+   * nebolo zmerané. Reálna analýza ich prepíše (setVirality z /api/analyze-*).
+   */
   const [virality, setVirality] = useState<ViralityAnalysis>({
-    overallScore: 98,
-    hookScore: 99,
-    pacingScore: 96,
-    retentionScore: 97,
-    trendScore: 95,
-    keyReasons: [
-      "Bleskový hook s 808 bass dropom v prvých 2 sekundách eliminuje okamžité odchody.",
-      "Submagic kontrastné titulky udržiavajú pozornosť s vizuálnym vysvecovaním slov.",
-      "Inteligentný B-Roll a VN zoom resetujú dopamínovú pozornosť každé 3 sekundy.",
-      "Nulové hluché miesta a úderné tempo garantujú vysokú mieru dopozerania.",
-    ],
-    suggestedTitle: "Ako ušetriť 95% času pri strihu videa na sociálne siete (OmniStrih)",
-    suggestedDescription:
-      "Zabudni na drahé predplatné za Submagic či CapCut. Tento OmniStrih postup ti umožní tvoriť virálne videá za zlomok času bez poplatkov. #omnistrih #strihvidea #aivideo #tiktoksk",
-    suggestedHashtags: [
-      "#omnistrih",
-      "#strihvidea",
-      "#submagic",
-      "#opusclip",
-      "#aivideo",
-      "#contentcreator",
-    ],
+    overallScore: 0,
+    hookScore: 0,
+    pacingScore: 0,
+    retentionScore: 0,
+    trendScore: 0,
+    keyReasons: [],
+    suggestedHashtags: [],
+    suggestedTitle: "",
+    suggestedDescription: "",
   });
 
   // Opus Smart Clip Highlights
@@ -3791,7 +3765,7 @@ function MainApp() {
                         language={language}
                         showToast={showToast}
                         videoTitle={projects.find(p => p.id === activeProjectId)?.name || "RAW Master Source"}
-                        videoDuration={742}
+                        videoDuration={timelineMeasurement.timelineDurationSec}
                       />
                     )}
                     {activeTab === "pro_audio" && (
@@ -3811,7 +3785,7 @@ function MainApp() {
                       <QualityControlAndAnalytics
                         language={language}
                         showToast={showToast}
-                        videoDurationSeconds={742}
+                        getProject={() => coreEngine.getProject()}
                       />
                     )}
                     {activeTab === "editor_brain" && (
@@ -4208,6 +4182,8 @@ function MainApp() {
                         onSeek={handleSeek}
                         onOpenCaptions={() => setActiveTab("captions")}
                         showToast={showToast}
+                        // Signál zapíšeme, až keď exportná linka naozaj dokončí súbor.
+                        onExportFinished={() => recordLive("export_finished")}
                         onApplyStylePlan={(plan, decisionIds, edits) => {
                           const result = applyStylePlan(coreEngine, plan, { decisionIds, edits });
                           // Sprievodca odškrtne krok len keď sa canonical os naozaj zmenila.
@@ -4248,7 +4224,7 @@ function MainApp() {
                         onUploadVideo={handleUploadVideo}
                       />
                     )}
-                    {activeTab === "opus" && <OpusStudio virality={{ overallScore: 92, hookScore: 90, pacingScore: 88, retentionScore: 94, trendScore: 91, keyReasons: ["Strong hook", "Fast pacing"], suggestedHashtags: ["#viral", "#trending"], suggestedTitle: "Viral Video", suggestedDescription: "Amazing video" }} smartClips={[]} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />}
+                    {activeTab === "opus" && <OpusStudio virality={virality} smartClips={[]} onSelectClip={(start, end) => handleSeek(start)} autoReframe={settings.autoReframeFace} onToggleAutoReframe={(val) => setSettings((prev: any) => ({ ...prev, autoReframeFace: val }))} bRollEnabled={settings.bRollEnabled} onToggleBRoll={(val) => setSettings((prev: any) => ({ ...prev, bRollEnabled: val }))} language={language} onUpdateCaptionProject={setCaptionProject} showToast={showToast} />}
                     {activeTab === "canva" && <CanvaAudioSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} onApplyCategoryPreset={(cat) => setSettings((prev: any) => ({ ...prev, category: cat }))} language={language} />}
                     {activeTab === "thumbnail" && <AIThumbnailStudio project={thumbnailProject} rawAnalysis={rawAnalysis} isGenerating={isGeneratingThumbnails} onUpdateProject={setThumbnailProject} onGenerateConcepts={handleGenerateThumbnailConcepts} language={language} showToast={showToast} />}
                     {activeTab === "os_hub" && <OmniStrihOSHub editDNA={editDNA} onUpdateDNA={setEditDNA} memoryRules={memoryRules} onToggleRule={(id) => setMemoryRules(prev => prev.map(r => r.id === id ? { ...r, isActive: !r.isActive } : r))} reviewItems={reviewItems} onReviewItem={(id, status) => setReviewItems(prev => prev.map(i => i.id === id ? { ...i, status } : i))} lockZones={lockZones} onToggleLock={(id) => setLockZones(prev => prev.map(l => l.id === id ? { ...l, isLocked: !l.isLocked } : l))} timeMachine={timeMachine} onRestoreVersion={(id) => showToast(isSk ? "Verzia obnovená" : "Version restored")} contentUniverse={contentUniverse} language={language} showToast={showToast} />}
