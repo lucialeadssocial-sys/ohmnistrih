@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   STYLE_CARD_KINDS,
+  buildPattern,
   buildStyleCardSpec,
+  layoutCardText,
   chooseCardPalette,
   escapeCardText,
   hexToAssColor,
@@ -31,6 +33,51 @@ import { librariesItemRowSk, libraryViewItem } from "../src/core/visual/ownVisua
  */
 
 describe("A) Generátor kariet stojí na recepte a je deterministický", () => {
+  /**
+   * Tieto dva testy vznikli z REÁLNEJ CHYBY prvej verzie (videné na obrázku):
+   * text „ZA PÄŤ MINÚT DENNE“ sa zrezal a halftone vzor šel cez text.
+   * Preto sa teraz text meria a vzor vynecháva pás textu — a testy to strážia.
+   */
+  test("A0a — dlhý text sa zalomí a zmenší tak, aby sa NIKDY nezrezal", () => {
+    const layout = layoutCardText("ZA PÄŤ MINÚT DENNE", {
+      width: 1080,
+      height: 1920,
+      maxCharsPerLine: 16,
+      preferredFontRatio: 0.11,
+    });
+    expect(layout.lines).toEqual(["ZA PÄŤ MINÚT", "DENNE"]);
+    expect(layout.estimatedWidthPx).toBeLessThanOrEqual(Math.round(1080 * 0.84));
+    expect(layout.fitsSk).toContain("zmenšil");
+  });
+
+  test("A0b — vzor vynechá pás textu (text zostáva čitateľný)", () => {
+    const recipe = getStyleRecipe("EDITORIAL_COLLAGE");
+    const withoutText = buildPattern(recipe, { width: 1080, height: 1920 }, null);
+    const withText = buildPattern(recipe, { width: 1080, height: 1920 }, { top: 800, bottom: 1120 });
+    expect(withText.boxCount).toBeLessThan(withoutText.boxCount);
+    expect(withText.skippedForText).toBeGreaterThan(0);
+    // Žiadny štvorce nesmie ležať v páse textu.
+    for (const box of withText.boxes) {
+      const overlaps = box.y + box.size > 800 && box.y < 1120;
+      expect(overlaps).toBe(false);
+    }
+    expect(withText.opacity).toBeLessThanOrEqual(0.12);
+  });
+
+  test("A0c — generátor vráti zalomenie aj vzor v jednom výstupe (aby to UI aj server videli rovnako)", () => {
+    const spec = buildStyleCardSpec({
+      recipeId: "EDITORIAL_COLLAGE",
+      kind: "headline",
+      text: "Za päť minút denne",
+      width: 1080,
+      height: 1920,
+    });
+    expect(spec.ok).toBe(true);
+    expect(spec.layout.lines.length).toBe(2);
+    expect(spec.pattern.boxCount).toBeGreaterThan(0);
+    expect(spec.assContent).toContain("\\N"); // ASS zlom riadku
+    expect(spec.notesSk.join(" ")).toContain("vynechal");
+  });
   test("A1 — paleta sa vyberá z palety receptu (pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia)", () => {
     const palette = chooseCardPalette(["#0A070B", "#4A3123", "#6F869D", "#E8E3DD"]);
     expect(luminance(palette.background)).toBeLessThan(luminance(palette.text));

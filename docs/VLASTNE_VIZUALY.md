@@ -61,6 +61,20 @@ odpoveď**, keď ju niekto skúsi (nikdy nepredstiera úspech).
 * **Nevrství cez seba naslepo.** Vizuál sa pridá ako obrazová vrstva (b-roll); ak by
   prekryl dôležitú mimiku, appka to prizná v poznámkach k rozhodnutiu.
 
+### Oprava nájdená pri vlastnej kontrole (poctivo)
+
+Prvá verzia generátora mala **dve reálne chyby** — našli sa na obrázku, nie v teste:
+
+1. **Text sa zrezal.** Dlhý text („ZA PÄŤ MINÚT DENNE“) sa nezmestil do šírky karty a ASS
+   (WrapStyle 2) ho nezalomil → v obraze bolo vidieť len „… MINÚT“.
+   **Oprava:** appka text **zalomí sama** a font **zmenší** tak, aby najdlhší riadok sedel
+   do 84 % šírky karty; ak zmenšila, **napíše to** (`layout.fitsSk`).
+2. **Vzor šel cez text** a bol príliš silný (veľké štvorce, 0,18).
+   **Oprava:** štvorce sa počítajú v generátore (dajú sa testovať), **vynechávajú pás textu**
+   a priehľadnosť je 0,10–0,12. Koľko štvorcov vypadlo, appka napíše.
+
+Obe chyby majú teraz **test** (`A0a`, `A0b`, `A0c` v `tests/ownVisual.test.ts`), aby sa nevrátili.
+
 ---
 
 ## 4. Ako to ide do videa (rovnaká cesta ako všetko ostatné)
@@ -87,7 +101,7 @@ prepis (6 viet, 19,9 s). Text karty je **doslovne z videa** (`70%.`) — nič ne
 | 4) Súbor → projekt | ✅ 2 vizuály importované cez `importMediaFile`, každý dostal klip (`clip_…`) |
 | 5) Apply (cieľ 🎓 Vzdelávanie) | ✅ 7 rozhodnutí prijatých, B-roll klipy 2 → 3 |
 | 6) Plán exportu | ✅ `canExport = áno`, **2 obrazové vrstvy** v pláne (karta + fotka) |
-| 7) **REAL EXPORT** | ✅ `vystup-s-vlastnym-vizualom.mp4` (**587 165 B**) — render cez skutočnú linku appky (`POST /api/export/burn-captions`), titulky v zadaní 6 |
+| 7) **REAL EXPORT** | ✅ `vystup-s-vlastnym-vizualom.mp4` (**584 746 B** po oprave; prvý beh 587 165 B) — render cez skutočnú linku appky (`POST /api/export/burn-captions`), titulky v zadaní 6 |
 
 **Snímky z hotového videa:** `/home/user/kontrola-vizual/snimka-s-vizualom.png`
 (karta „70%. / KRATŠÍ STRIH“ v obraze) a `/home/user/kontrola-vizual/snimka-kniznica.png`
@@ -100,7 +114,7 @@ Dáta: `/home/user/kontrola-vizual/vizual-dokaz.json` + `vizual-dokaz.txt`.
 
 | Úroveň | Stav |
 |---|---|
-| UNIT (generátor, licencie, determinizmus) | ✅ 17 testov — `tests/ownVisual.test.ts` |
+| UNIT (generátor, licencie, determinizmus, zlom textu, vzor) | ✅ 20 testov — `tests/ownVisual.test.ts` |
 | JSDOM / render (panel a jeho štyri cesty) | ✅ 7 testov — `tests/ownVisualPanel.render.test.tsx` |
 | REAL MEDIA (karta + obrázok z knižnice na reálnom videe) | ✅ |
 | REAL EXPORT (vizuál vo vyexportovanom videu) | ✅ 587 165 B + snímky |
@@ -121,7 +135,7 @@ Dáta: `/home/user/kontrola-vizual/vizual-dokaz.json` + `vizual-dokaz.txt`.
 | `src/App.tsx` | záložka **➕ Vlastný vizuál** + `handleAddOwnVisual` (cez `importMediaFile`) |
 | `src/ui/liveCoach.ts` | nový reálny signál `visual_added` + 3 kroky nástroja |
 | `src/ui/toolGuides.ts` | výučba nástroja + zaradenie do jednoduchého režimu |
-| `tests/ownVisual.test.ts`, `tests/ownVisualPanel.render.test.tsx` | 24 testov |
+| `tests/ownVisual.test.ts`, `tests/ownVisualPanel.render.test.tsx` | 27 testov |
 | `tools/verify-own-visual.ts` | dôkaz: štyri cesty → canonical os → REAL EXPORT |
 
 ---

@@ -1,24 +1,25 @@
    (runner nemá prehliadač: rozmery obrázkov čítam z hlavičky PNG/JPEG — hodnoty sú skutočné)
 Vstup: /home/user/real-media/real_speech.mp4, prepis 6 viet / 19.9 s, recept AI_CARD_DEMO
 Text karty z prepisu: „70%.“ + „kratší strih“ (doslovne z videa, nič nedoplnené)
-1) GENEROVANÝ VIZUÁL — OK: karta-ai_card_demo-statistic-9df65ac4.png (39139 B, 1080×1920)
+1) GENEROVANÝ VIZUÁL — OK: karta-ai_card_demo-statistic-688d2b4e.png (36285 B, 1080×1920)
    paleta: pozadie #111111, text #FFFFFF, akcent #F08A24
    – Farby: paleta receptu „AI karta (zadaj → výsledok)“ (4 farieb): pozadie najtmavšia, text najsvetlejšia, akcent najsýtejšia.
    – Typografia: bold-condensed → DejaVu Sans (VEĽKÉ PÍSMENÁ podľa receptu).
    – Vzor: recept je čistý (clean) → bez vzoru.
+   – Text je dlhší, preto som ho zmenšil na 334 px (a zalomil na 1 riadkov) — inak by sa zrezal.
 2) VOĽNÁ KNIŽNICA — OK: 12 použiteľných z 240 výsledkov (vyradené pre licenciu: 0)
    – 12 z 12 obrázkov vyžaduje uvedenie autora — text priznania ti appka ukáže a uloží k vizuálu.
    vybraný: „The New Study“ — KevinJump, licencia BY 2.0
    stiahnuté: kniznica-8131c6a2.jpg (171129 B) — Tento obrázok vyžaduje uvedenie autora — do popisu videa pridaj: „The New Study“ — KevinJump, licencia BY 2.0, zdroj: https://www.flickr.com/photos/84199233@N00/3885239844
 3) AI GENEROVANIE VIZUÁLU — NEDOSTUPNÉ: AI generovanie obrázkov je na tvojom kľúči nedostupné: obrázkové modely majú limit 0 (free tier). Použi lokálny generátor kariet alebo voľnú knižnicu — tie fungujú bez providera.
-4) SÚBOR Z DISKU → projekt: karta-ai_card_demo-statistic-9df65ac4.png (39139 B) → klip clip_23d8df6d-82ce-45b4-86e2-b2e40836f600
-4) SÚBOR Z DISKU → projekt: kniznica-8131c6a2.jpg (171129 B) → klip clip_1fc996c1-5899-409e-85f0-c61378d529d7
+4) SÚBOR Z DISKU → projekt: karta-ai_card_demo-statistic-688d2b4e.png (36285 B) → klip clip_71a8da74-4b41-4871-b677-b185625d586d
+4) SÚBOR Z DISKU → projekt: kniznica-8131c6a2.jpg (171129 B) → klip clip_8650a765-5a46-4f37-bc52-5aec7413fac5
 5) APPLY: OK — prijaté 7, B-roll klipy 2 → 3 (z 3 vizuálov)
    vrstvy pripravené na serveri: 2 z 2
 6) PLÁN EXPORTU: dá sa exportovať = áno, blokery: žiadne
-   obrazové vrstvy v pláne: 2 (karta-ai_card_demo-statistic-9df65ac4.png, kniznica-8131c6a2.jpg)
-   render spustený: job 2f4a3c96-5e0e-4200-a327-3936d1d713a3
-6) RENDER — OK: 587165 B → /home/user/kontrola-vizual/vystup-s-vlastnym-vizualom.mp4 (stav done, titulkov v zadaní 6)
+   obrazové vrstvy v pláne: 2 (karta-ai_card_demo-statistic-688d2b4e.png, kniznica-8131c6a2.jpg)
+   render spustený: job cfbcf3a7-0a9a-44dc-9719-0e4f3067a08d
+6) RENDER — OK: 584746 B → /home/user/kontrola-vizual/vystup-s-vlastnym-vizualom.mp4 (stav done, titulkov v zadaní 6)
    poznámky renderu: žiadne
-   snímka v čase vizuálu (1.20 s): 103765 B → /home/user/kontrola-vizual/snimka-s-vizualom.png
+   snímka v čase vizuálu (1.20 s): 90782 B → /home/user/kontrola-vizual/snimka-s-vizualom.png
    snímka mimo vizuálu (10.60 s): 54588 B → /home/user/kontrola-vizual/snimka-bez-vizualu.png
