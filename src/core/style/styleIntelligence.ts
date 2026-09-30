@@ -112,6 +112,10 @@ export interface StyleConsideredItem {
   kind: StyleDecisionKind;
   reasonSk: string;
   score: number;
+  /** Kde vo videu táto veta začína (aby sa dalo pozrieť aj na to, čo sme nevybrali). */
+  atSec: number;
+  /** Koniec vety (pre prípad, že si to chce človek pustiť celé). */
+  endSec?: number;
 }
 
 export interface StylePlanBasis {
@@ -129,6 +133,8 @@ export interface StylePlan {
   id: string;
   recipeId: StylePresetId;
   recipeName: string;
+  /** Slovenský názov receptu (na obrazovke a v texte plánu). */
+  recipeLabelSk: string;
   createdAt: number;
   basis: StylePlanBasis;
   controls: StyleControls;
@@ -563,6 +569,8 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
           kind: "supporting_visual",
           reasonSk: `Vyšiel by z pomeru rečníka (${Math.round(ratio.target * 100)} %) — radšej menej vizuálov, keď sú veta a rečník dôležitejšie.`,
           score: cand.score,
+          atSec: cand.s.start,
+          endSec: cand.s.end,
         });
         continue;
       }
@@ -577,6 +585,8 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
           kind: "supporting_visual",
           reasonSk: `Už ${MAX_CONSECUTIVE_COVERED} vety po sebe má vizuál — divák musí rečníka aj vidieť, preto tu nie.`,
           score: cand.score,
+          atSec: cand.s.start,
+          endSec: cand.s.end,
         });
         continue;
       }
@@ -630,6 +640,8 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
             ? "Emocionálna veta — vizuál by odvádzal pozornosť od tváre."
             : "Prvá veta — rečníka nezakrývam, aby divák hneď videl, kto hovorí.",
           score: supportingVisualScore(s),
+          atSec: s.start,
+          endSec: s.end,
         });
       }
       // Emócia ukončí zásahy (tvrdý guard); hook pokračuje textom a pohybom.
@@ -677,6 +689,8 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
             ? "Záverečná veta — vizuál by odviedol pozornosť z pointy."
             : "Podľa priority a pomeru rečníka si táto veta vizuál nevyžiadala.",
         score: supportingVisualScore(s),
+        atSec: s.start,
+        endSec: s.end,
       });
     }
 
@@ -756,6 +770,8 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
         kind: "composition",
         reasonSk: `Pauza ${s.pauseAfterSec} s — obraz má ostať prázdny, žiadne nové prvky (vizuálne vydýchanie).`,
         score: s.pauseAfterSec,
+        atSec: s.end,
+        endSec: s.end + s.pauseAfterSec,
       });
     }
   }
@@ -811,6 +827,7 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
     id: `styleplan_${recipe.id.toLowerCase()}_${shortHash(`${recipe.id}|${sentences.length}|${words.length}|${controls.intensity}`)}`,
     recipeId: recipe.id,
     recipeName: recipe.name,
+    recipeLabelSk: recipe.labelSk || recipe.name,
     createdAt: now,
     basis: {
       timingPrecision: index?.precision ?? "sentences",
@@ -860,6 +877,7 @@ function emptyPlan(
     id: `styleplan_${recipe.id.toLowerCase()}_empty`,
     recipeId: recipe.id,
     recipeName: recipe.name,
+    recipeLabelSk: recipe.labelSk || recipe.name,
     createdAt: now,
     basis: {
       timingPrecision: ctx.hasWords ? "words" : "estimate",

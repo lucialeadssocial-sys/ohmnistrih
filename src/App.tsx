@@ -1,5 +1,25 @@
 import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { AdaptiveDeviceExperienceProvider, useAdaptiveDeviceExperience } from "./contexts/AdaptiveDeviceExperienceContext";
+// Style Studio (krok 4) — obrazovka nad deterministickým Style Intelligence (kroky 1–3).
+const StyleStudioPanel = lazy(() => import("./components/StyleStudioPanel").then(m => ({ default: m.StyleStudioPanel })));
+
+/**
+ * Prevod reálnych tituliek z projektu na vstup pre Style Intelligence.
+ * Žiadne demo dáta: keď titulky nie sú, pošle sa prázdne pole a obrazovka to prizná.
+ */
+function toStyleSegments(captionProject: { segments?: Array<{ id?: string; start: number; end: number; text: string; words?: Array<{ word: string; start: number; end: number }> }> }) {
+  const segments = captionProject?.segments ?? [];
+  return segments
+    .filter((s) => Number.isFinite(s?.start) && Number.isFinite(s?.end) && typeof s?.text === "string")
+    .map((s) => ({
+      id: s.id,
+      start: s.start,
+      end: s.end,
+      text: s.text,
+      words: Array.isArray(s.words) ? s.words.map((w) => ({ word: w.word, start: w.start, end: w.end })) : undefined,
+    }));
+}
+
 import { Header } from "./components/Header";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { ContextualInspector } from "./components/ContextualInspector";
@@ -72,6 +92,7 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { mediaEngine } from "./core/media/mediaEngine";
+import { coreEngine } from "./core";
 import {
   VideoProjectSettings,
   CaptionSegment,
@@ -1202,7 +1223,7 @@ function MainApp() {
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<
-    "edl_autopilot" | "content_graph" | "pro_audio" | "qc_analytics" | "editor_brain" | "ai_orchestrator" | "ai_visual_director" | "pro_autopilot" | "system_test" | "pipeline" | "raw" | "story" | "jump" | "transitions" | "bilingual" | "audio" | "beat" | "attention" | "finder" | "cleanup" | "export" | "pack" | "retention" | "ab" | "pro_timeline" | "omnistrih" | "eraser" | "captions" | "burned_subtitles" | "opus" | "canva" | "thumbnail" | "os_hub" | "broll" | "toggles" | "zoomsfx" | "pro_toolbox" | "ai_voice" | "media_manager" | "director_briefing" | "workspace"
+    "edl_autopilot" | "content_graph" | "pro_audio" | "qc_analytics" | "editor_brain" | "ai_orchestrator" | "ai_visual_director" | "pro_autopilot" | "system_test" | "pipeline" | "raw" | "story" | "jump" | "transitions" | "bilingual" | "audio" | "beat" | "attention" | "finder" | "cleanup" | "export" | "pack" | "retention" | "ab" | "pro_timeline" | "omnistrih" | "eraser" | "captions" | "burned_subtitles" | "opus" | "canva" | "thumbnail" | "os_hub" | "broll" | "toggles" | "zoomsfx" | "pro_toolbox" | "ai_voice" | "media_manager" | "director_briefing" | "workspace" | "style_studio"
   >(() => {
     const saved = localStorage.getItem("omnistrih_active_tab");
     return (saved as any) || "pro_autopilot";
@@ -2375,6 +2396,23 @@ function MainApp() {
     },
   ]);
 
+  /**
+   * Koľko podporných médií má projekt reálne k dispozícii (bez hlavného videa).
+   * Style Studio podľa toho vie, či má zmysel navrhovať podporné vizuály.
+   */
+  const countSupportingMedia = (): number => {
+    try {
+      const project = coreEngine.getProject();
+      const clipsOnSupportingTracks = (project.tracks ?? [])
+        .filter((t) => t.type !== "video" && t.type !== "audio")
+        .reduce((sum, t) => sum + (t.clips?.length ?? 0), 0);
+      const visualAssets = (project.assets ?? []).filter((a) => a.type === "image" || a.type === "video").length;
+      return clipsOnSupportingTracks + Math.max(0, visualAssets - 1);
+    } catch {
+      return 0;
+    }
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3800);
@@ -3345,7 +3383,7 @@ function MainApp() {
                   <div className="bg-neutral-900 border-b border-neutral-800 px-3 py-2 flex items-center justify-between gap-2 shrink-0">
                     <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
                       {/* Category-Specific Sub-tabs */}
-                      {(['jump', 'story', 'transitions', 'eraser', 'burned_subtitles', 'pro_timeline', 'raw'].includes(activeTab) || activeTab === 'edit' as any) && [
+                      {(['jump', 'story', 'transitions', 'eraser', 'burned_subtitles', 'pro_timeline', 'raw', 'style_studio'].includes(activeTab) || activeTab === 'edit' as any) && [
                         { id: 'jump', label: isSk ? '✂️ Smart Cut' : '✂️ Smart Cut', icon: Scissors },
                         { id: 'story', label: isSk ? '📖 Story Builder' : '📖 Story Builder', icon: BookOpen },
                         { id: 'transitions', label: isSk ? '🎬 Prechody' : '🎬 Transitions', icon: Layers },
@@ -3353,6 +3391,7 @@ function MainApp() {
                         { id: 'burned_subtitles', label: isSk ? '🔤 Vypálené Titulky' : '🔤 Burned Subtitles', icon: Eraser },
                         { id: 'pro_timeline', label: isSk ? '⏱️ Pro Timeline' : '⏱️ Pro Timeline', icon: Layers },
                         { id: 'raw', label: isSk ? '🔍 Surová Analýza' : '🔍 Raw Ingest', icon: Search },
+                        { id: 'style_studio', label: isSk ? '🎨 Style Studio' : '🎨 Style Studio', icon: Palette },
                       ].map(tab => (
                         <button
                           key={tab.id}
@@ -3408,7 +3447,7 @@ function MainApp() {
                         </button>
                       ))}
 
-                      {['broll', 'finder', 'attention', 'thumbnail'].includes(activeTab) && [
+                      {['broll', 'finder', 'attention', 'thumbnail', 'style_studio'].includes(activeTab) && [
                         { id: 'broll', label: isSk ? '🎥 B-Roll Studio' : '🎥 B-Roll Studio', icon: Film },
                         { id: 'finder', label: isSk ? '🔍 B-Roll Finder' : '🔍 B-Roll Finder', icon: Search },
                         { id: 'attention', label: isSk ? '👁️ Vizuálna Pozornosť' : '👁️ Visual Attention', icon: Eye },
@@ -3951,6 +3990,17 @@ function MainApp() {
                     {activeTab === "retention" && <RetentionSimulator project={retentionProject} isAnalyzing={isAnalyzingRetention} onRunAnalysis={handleRunRetentionAnalysis} onSeek={handleSeek} currentTime={currentTime} language={language} />}
                     {activeTab === "ab" && <ABVersionGenerator project={abVersionProject} isGenerating={isGeneratingAB} onGenerate={handleGenerateABVersions} onPreview={(v) => handleSeek(0)} language={language} />}
                     {activeTab === "pro_timeline" && <ProTimeline duration={duration} currentTime={currentTime} isPlaying={isPlaying} onSeek={handleSeek} onTogglePlay={handleTogglePlay} language={language} />}
+                    {activeTab === "style_studio" && (
+                      <StyleStudioPanel
+                        language={language}
+                        segments={toStyleSegments(captionProject as any)}
+                        hasVideo={Boolean(currentVideoUrl)}
+                        availableSupportingVisuals={countSupportingMedia()}
+                        onSeek={handleSeek}
+                        onOpenCaptions={() => setActiveTab("captions")}
+                        showToast={showToast}
+                      />
+                    )}
                     {activeTab === "eraser" && <ObjectEraserSuite settings={settings} onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))} language={language} />}
                     {activeTab === "burned_subtitles" && (
                       <BurnedSubtitlesRemover
