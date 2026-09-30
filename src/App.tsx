@@ -92,6 +92,8 @@ const ProfessionalExportCenter = lazy(() => import("./components/ProfessionalExp
 const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then(m => ({ default: m.ImportMediaModal })));
 
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
+import { ToolGuideCard, GuideModal, SimpleModeStrip } from "./components/ToolGuide";
+import { guideFor } from "./ui/toolGuides";
 import { mediaEngine } from "./core/media/mediaEngine";
 import { coreEngine } from "./core";
 import { applyStylePlan, rollbackStyleApply } from "./core/style/styleApply";
@@ -2309,7 +2311,15 @@ function MainApp() {
   const [isBRollTimelineOpen, setIsBRollTimelineOpen] = useState<boolean>(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(true);
   const [smartCategory, setSmartCategory] = useState<SmartCategory>("titulky");
-  const [showAdvancedTools, setShowAdvancedTools] = useState<boolean>(false);
+  const [showAdvancedTools, setShowAdvancedTools] = useState<boolean>(() => {
+    // KROK 19: voľba „jednoduchý / expert“ sa pamätá medzi návštevami.
+    try {
+      return localStorage.getItem("omnistrih_expert_mode") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [rightPanelTab, setRightPanelTab] = useState<"smart_tools" | "ai_copilot">("smart_tools");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -3620,6 +3630,8 @@ function MainApp() {
 
                   {/* Scrollable Tool Workspace Panel */}
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                    {/* KROK 19 — výučba popri práci: čo práve otvorený nástroj robí */}
+                    <ToolGuideCard tabId={activeTab} language={isSk ? "sk" : "en"} onOpenGuide={() => setIsGuideOpen(true)} />
                     <Suspense fallback={<ToolSuspenseFallback isSk={isSk} />}>
                     {activeTab === "ai_orchestrator" && (
                       <AIOrchestratorStudio
@@ -4111,12 +4123,38 @@ function MainApp() {
                 </div>
                 )}
 
+                {/* KROK 19 — Sprievodca: všetky nástroje + čo robia */}
+                <GuideModal
+                  open={isGuideOpen}
+                  language={isSk ? "sk" : "en"}
+                  onClose={() => setIsGuideOpen(false)}
+                  onGoToTool={(tabId) => {
+                    setActiveTab(tabId as any);
+                    setShowAdvancedTools(true);
+                    try {
+                      localStorage.setItem("omnistrih_expert_mode", "1");
+                    } catch {}
+                    setIsGuideOpen(false);
+                    showToast(isSk ? `Otváram: ${guideFor(tabId)?.title ?? tabId}` : `Opening: ${guideFor(tabId)?.title ?? tabId}`);
+                  }}
+                />
+
                 {/* B. Center/Right Video Preview Player Viewport */}
                 <div className="flex-1 flex flex-col min-w-0 bg-neutral-950 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-4">
                   <div className="w-full max-w-4xl mx-auto flex items-center justify-between pb-2 text-xs text-neutral-400">
-                    <span className="text-[11px] font-bold text-neutral-400">
-                      {isSk ? "🎬 Náhľad videa" : "🎬 Video Preview"}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-neutral-400">
+                        {isSk ? "🎬 Náhľad videa" : "🎬 Video Preview"}
+                      </span>
+                      <button
+                        onClick={() => setIsGuideOpen(true)}
+                        title={isSk ? "Sprievodca: čo ktorý nástroj robí" : "Guide: what each tool does"}
+                        className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-rose-500/50 text-[11px] font-bold text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>📖</span>
+                        <span>{isSk ? "Sprievodca appkou" : "App guide"}</span>
+                      </button>
+                    </div>
                     <button
                       onClick={() => {
                         setShowAdvancedTools(prev => !prev);
@@ -4125,9 +4163,38 @@ function MainApp() {
                       className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-[11px] font-bold text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
                     >
                       <Sliders className="w-3.5 h-3.5 text-neutral-400" />
-                      <span>{showAdvancedTools ? (isSk ? "Skryť expertné nástroje" : "Hide Expert Tools") : (isSk ? "Expertné nástroje" : "Expert Tools")}</span>
+                      <span>
+                        {showAdvancedTools
+                          ? (isSk ? "Expert režim: ZAP → späť na jednoduchý" : "Expert mode: ON → back to simple")
+                          : (isSk ? "Jednoduchý režim → zapnúť experta" : "Simple mode → switch expert ON")}
+                      </span>
                     </button>
                   </div>
+
+                  {/* KROK 19 — jednoduchý postup stále na očiach */}
+                  <div className="w-full max-w-4xl mx-auto pb-2">
+                    <SimpleModeStrip
+                      language={isSk ? "sk" : "en"}
+                      activeTab={activeTab}
+                      expertMode={showAdvancedTools}
+                      onGoToTool={(tabId) => {
+                        setActiveTab(tabId as any);
+                        setShowAdvancedTools(true);
+                        try { localStorage.setItem("omnistrih_expert_mode", "1"); } catch {}
+                        showToast(isSk ? `Otváram: ${guideFor(tabId)?.title ?? tabId}` : `Opening: ${guideFor(tabId)?.title ?? tabId}`);
+                      }}
+                      onOpenGuide={() => setIsGuideOpen(true)}
+                      onToggleExpert={() => {
+                        setShowAdvancedTools((prev) => {
+                          const next = !prev;
+                          try { localStorage.setItem("omnistrih_expert_mode", next ? "1" : "0"); } catch {}
+                          return next;
+                        });
+                        playSynthesizedSFX("click", 0.4);
+                      }}
+                    />
+                  </div>
+
                   <div className="w-full max-w-4xl mx-auto my-auto flex flex-col items-center justify-center">
                     <VideoPlayer
                       settings={settings}
