@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { AdaptiveDeviceExperienceProvider, useAdaptiveDeviceExperience } from "./contexts/AdaptiveDeviceExperienceContext";
 // Style Studio (krok 4) — obrazovka nad deterministickým Style Intelligence (kroky 1–3).
 const StyleStudioPanel = lazy(() => import("./components/StyleStudioPanel").then(m => ({ default: m.StyleStudioPanel })));
@@ -94,6 +94,9 @@ const ImportMediaModal = lazy(() => import("./components/ImportMediaModal").then
 import { MediaManagerPanel } from "./components/MediaManagerPanel";
 import { ToolGuideCard, GuideModal, SimpleModeStrip } from "./components/ToolGuide";
 import { guideFor } from "./ui/toolGuides";
+import { LiveCoachCard } from "./components/LiveCoach";
+import { computeSignals, flowDoneCount, nextFlowTool, type LiveSignal } from "./ui/liveCoach";
+import { canonicalCaptionClips } from "./core/export/canonicalExport";
 import { mediaEngine } from "./core/media/mediaEngine";
 import { coreEngine } from "./core";
 import { applyStylePlan, rollbackStyleApply } from "./core/style/styleApply";
@@ -954,6 +957,7 @@ function MainApp() {
       if (allDone) {
         setIsExportingMulti(false);
         setMultiExportProject(prev => ({ ...prev, isExporting: false }));
+        recordLive("export_finished");
         showToast(isSk ? "✅ Všetky verzie boli úspešne vygenerované!" : "✅ All versions generated successfully!");
         playSynthesizedSFX("ding", 0.8);
       }
@@ -1416,6 +1420,7 @@ function MainApp() {
     setCurrentVideoUrl(url);
     currentVideoUrlRef.current = url;
     if (file) sourceFileRef.current = file;
+    recordLive("video_uploaded");
 
     // Phase 1: Register with the new Media Engine if it's a real file
     if (file) {
@@ -1681,6 +1686,7 @@ function MainApp() {
         ]
     });
     setIsAnalyzingRaw(false);
+    recordLive("analysis_done");
   };
 
   const handleGenerateStory = (config: { format: StoryFormat, platform: StoryPlatform, goal: StoryGoal, structure: StoryStructure, targetDuration: number }) => {
@@ -1909,6 +1915,7 @@ function MainApp() {
     showToast(isSk ? `✂️ Aplikujem ${selectedIds.length} strihov...` : `✂️ Applying ${selectedIds.length} cuts...`);
     
     setJumpSequence({ ...jumpSequence, isApplied: true });
+    recordLive("cuts_applied");
     playSynthesizedSFX("camera-shutter", 0.7);
   };
 
@@ -2320,6 +2327,34 @@ function MainApp() {
     }
   });
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
+
+  /**
+   * KROK 20 — živý sprievodca: zapisujeme LEN udalosti, ktoré sa naozaj stali.
+   * Nič sa neodhaduje: keď sa nič nestane, krok ostane neodškrtnutý.
+   */
+  const [liveLog, setLiveLog] = useState<LiveSignal[]>([]);
+  const recordLive = useCallback((signal: LiveSignal) => {
+    setLiveLog((prev) => (prev.includes(signal) ? prev : [...prev, signal]));
+  }, []);
+
+  /** Živý stav canonical osi (odber zmien z CommandManager-a) — titulky na osi sú pravda. */
+  const [canonicalTick, setCanonicalTick] = useState<number>(0);
+  useEffect(() => coreEngine.commandManager.subscribe(() => setCanonicalTick((t) => t + 1)), []);
+
+  const liveSignals = useMemo(() => {
+    let captions = 0;
+    let captionsWithWords = 0;
+    try {
+      const clips = canonicalCaptionClips(coreEngine.getProject());
+      captions = clips.length;
+      captionsWithWords = clips.filter((c) => (c.textConfig?.words?.length ?? 0) > 0).length;
+    } catch {
+      captions = 0;
+      captionsWithWords = 0;
+    }
+    return computeSignals({ log: liveLog, canonicalCaptions: captions, canonicalCaptionsWithWords: captionsWithWords });
+    // canonicalTick je zámerne v závislostiach: bez neho by sa stav neprepočítal po zmene osi
+  }, [liveLog, canonicalTick]);
   const [rightPanelTab, setRightPanelTab] = useState<"smart_tools" | "ai_copilot">("smart_tools");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -3632,6 +3667,18 @@ function MainApp() {
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                     {/* KROK 19 — výučba popri práci: čo práve otvorený nástroj robí */}
                     <ToolGuideCard tabId={activeTab} language={isSk ? "sk" : "en"} onOpenGuide={() => setIsGuideOpen(true)} />
+                    {/* KROK 20 — živý sprievodca: čo máš spraviť TERAZ (odškrtáva sa podľa skutočných udalostí) */}
+                    <LiveCoachCard
+                      tabId={activeTab}
+                      signals={liveSignals}
+                      language={isSk ? "sk" : "en"}
+                      onGoToTool={(tabId) => {
+                        setActiveTab(tabId as any);
+                        setShowAdvancedTools(true);
+                        try { localStorage.setItem("omnistrih_expert_mode", "1"); } catch {}
+                        showToast(isSk ? `Otváram: ${guideFor(tabId)?.title ?? tabId}` : `Opening: ${guideFor(tabId)?.title ?? tabId}`);
+                      }}
+                    />
                     <Suspense fallback={<ToolSuspenseFallback isSk={isSk} />}>
                     {activeTab === "ai_orchestrator" && (
                       <AIOrchestratorStudio
@@ -4066,8 +4113,17 @@ function MainApp() {
                         onSeek={handleSeek}
                         onOpenCaptions={() => setActiveTab("captions")}
                         showToast={showToast}
-                        onApplyStylePlan={(plan, decisionIds, edits) => applyStylePlan(coreEngine, plan, { decisionIds, edits })}
-                        onRollbackStyleApply={(report) => rollbackStyleApply(coreEngine, report)}
+                        onApplyStylePlan={(plan, decisionIds, edits) => {
+                          const result = applyStylePlan(coreEngine, plan, { decisionIds, edits });
+                          // Sprievodca odškrtne krok len keď sa canonical os naozaj zmenila.
+                          if (result && result.appliedCount > 0) recordLive("style_applied");
+                          return result;
+                        }}
+                        onRollbackStyleApply={(report) => {
+                          const result = rollbackStyleApply(coreEngine, report);
+                          recordLive("rollback_used");
+                          return result;
+                        }}
                         // KROK 7: náhľad aj export idú z TEJ ISTEJ canonical časovej osi.
                         // Projekt sa číta naživo a zmeny osi odoberá priamo panel —
                         // takže po Apply sa náhľad prekreslí a zvyšok appky sa nererenderuje.
@@ -4177,6 +4233,8 @@ function MainApp() {
                       language={isSk ? "sk" : "en"}
                       activeTab={activeTab}
                       expertMode={showAdvancedTools}
+                      doneCount={flowDoneCount(liveSignals)}
+                      nextTab={nextFlowTool(activeTab) ?? undefined}
                       onGoToTool={(tabId) => {
                         setActiveTab(tabId as any);
                         setShowAdvancedTools(true);
