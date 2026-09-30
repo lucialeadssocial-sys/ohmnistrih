@@ -73,6 +73,7 @@ import {
   lightStatsFromGrayFrames,
 } from "./src/core/export/lightMatch";
 import { STYLE_RECIPES } from "./src/core/style/styleRecipes";
+
 import {
   buildBundle,
   DEFAULT_GEOS,
@@ -743,61 +744,20 @@ app.post("/api/keys/test", async (req, res) => {
 // lokálny plán — aplikácia tak zostane použiteľná aj úplne bez API (0 tokenov).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type DirectorActionType =
-  | "CUT" | "KEEP" | "SPEED" | "ZOOM" | "CROP"
-  | "CAPTION" | "HOOK" | "HIGHLIGHT" | "BROLL" | "SFX" | "MUSIC";
+// KROK 0c — jeden slovník Directora (predtým tu bol duplicitný typ DirectorPlanItem,
+// tabuľka DIRECTOR_MODES aj zoznam DIRECTOR_ACTION_TYPES; klient mal vlastné kópie).
+import {
+  DIRECTOR_ACTION_TYPES,
+  DIRECTOR_MODES,
+  isDirectorActionType as isDirectorActionTypeShared,
+  normalizeDirectorMode,
+  suggestedGoalForMode,
+  type DirectorActionType,
+  type DirectorBasis,
+  type DirectorPlanItem as DirectorPlanItemShared,
+} from "./src/core/ai/directorVocabulary";
 
-interface DirectorPlanItem {
-  id: string;
-  type: DirectorActionType;
-  start: number;
-  end?: number;
-  label: string;
-  reason: string;
-  lesson?: string;
-  confidence: number;
-  status: "proposed";
-  /** Odkiaľ zásah pochádza: z konkrétnej vety prepisu, z odhadu, alebo od AI. */
-  basis?: "transcript" | "estimate" | "ai";
-}
-
-const DIRECTOR_MODES: Record<string, { labelSk: string; goalSk: string; minutesSavedPerRawMinute: number }> = {
-  SOCIAL: {
-    labelSk: "Retention Short (Reels / TikTok / Shorts)",
-    goalSk: "udržať pozornosť: silný hook, svižné tempo, dynamické titulky, punch-iny",
-    minutesSavedPerRawMinute: 4.2,
-  },
-  ADS: {
-    labelSk: "UGC / Reklama (performance)",
-    goalSk: "konverzia: hook → problém → riešenie → dôkaz → CTA, viac variantov hooku",
-    minutesSavedPerRawMinute: 3.8,
-  },
-  PODCAST: {
-    labelSk: "Podcast / Talking head",
-    goalSk: "čistý prirodzený strih bez fillerov a zakopnutí, zachovať rytmus reči",
-    minutesSavedPerRawMinute: 3.5,
-  },
-  YOUTUBE: {
-    labelSk: "YouTube / Long-form",
-    goalSk: "dlhodobá kontinuita, kapitoly, story struktúra, žiadne agresívne skoky",
-    minutesSavedPerRawMinute: 3.9,
-  },
-  CORPORATE: {
-    labelSk: "Firemné / Brand video",
-    goalSk: "čistý profesionálny dojem, konzistentný vizuál, dôveryhodnosť",
-    minutesSavedPerRawMinute: 3.2,
-  },
-  CUSTOM: {
-    labelSk: "Vlastný štýl",
-    goalSk: "rešpektovať poznámky používateľa",
-    minutesSavedPerRawMinute: 3.5,
-  },
-};
-
-const DIRECTOR_ACTION_TYPES: DirectorActionType[] = [
-  "CUT", "KEEP", "SPEED", "ZOOM", "CROP", "CAPTION", "HOOK", "HIGHLIGHT", "BROLL", "SFX", "MUSIC",
-];
-
+type DirectorPlanItem = DirectorPlanItemShared;
 /** Skráti a očistí text; ochrana proti obrovským odpovediam. */
 function clampText(value: any, max: number): string {
   return String(value ?? "").trim().slice(0, max);
@@ -808,9 +768,7 @@ function normalizeDirectorItem(raw: any, index: number): DirectorPlanItem | null
   if (!raw || typeof raw !== "object") return null;
 
   const rawType = clampText(raw.type, 20).toUpperCase();
-  const type = (DIRECTOR_ACTION_TYPES as string[]).includes(rawType)
-    ? (rawType as DirectorActionType)
-    : null;
+  const type = isDirectorActionTypeShared(rawType) ? (rawType as DirectorActionType) : null;
   if (!type) return null;
 
   const startNum = Number(raw.start);
@@ -1419,7 +1377,7 @@ app.post("/api/director/plan", async (req, res) => {
     } = req.body || {};
 
     const modeKey = String(mode).toUpperCase();
-    const safeMode = DIRECTOR_MODES[modeKey] ? modeKey : "CUSTOM";
+    const safeMode = normalizeDirectorMode(modeKey);
 
     // Word-level časovanie: berieme len to, čo dáva zmysel (čísla, rozumné limity).
     // Poškodené položky radšej zahodíme, než aby posunuli strih o nezmysel.
@@ -1464,11 +1422,25 @@ app.post("/api/director/plan", async (req, res) => {
         source,
         mode: safeMode,
         modeLabel: modeInfo.labelSk,
+        // NÁVRH cieľa podľa režimu (krok 26 má 9 cieľov). Cieľ si určuje používateľ
+        // a tento návrh ho NIKDY neprepíše — je to len pomôcka v UI.
+        suggestedGoalId: suggestedGoalForMode(safeMode),
         qualityMode,
         plan,
         summary: extra.summary,
+        // Odhad, NIE meranie — v UI musí byť takto označený.
         estimatedTimeSavedMinutes: estimateFrom(plan.length),
+        estimatedTimeSavedIsEstimate: true,
         rawDurationSeconds: durationSec,
+        // Poctivý pôvod celého plánu: z čoho server naozaj rozhodoval.
+        planBasis: plan.some((i) => i.basis === "transcript")
+          ? "transcript"
+          : plan.some((i) => i.basis === "analysis")
+            ? "analysis"
+            : "estimate",
+        dataQuality: plan.some((i) => i.basis === "transcript")
+          ? "SERVER_HAS_TEXT (vety prepisu; server nevidí projekt ani nameranú analýzu)"
+          : "NO_PROJECT_ANALYSIS (bez prepisu je plán len odhad)",
         ...extra,
       });
 

@@ -48,30 +48,24 @@ import {
  * alebo zamietnuť. Nič sa neaplikuje potichu a AI nikdy nerenderuje video.
  */
 
-export type DirectorActionType =
-  | "CUT" | "KEEP" | "SPEED" | "ZOOM" | "CROP"
-  | "CAPTION" | "HOOK" | "HIGHLIGHT" | "BROLL" | "SFX" | "MUSIC";
-
-export interface DirectorPlanItem {
-  id: string;
-  type: DirectorActionType;
-  start: number;
-  end?: number;
-  label: string;
-  reason: string;
-  lesson?: string;
-  confidence: number;
-  status: "proposed";
-  /** Odkiaľ zásah pochádza: z konkrétnej vety prepisu, z odhadu, alebo od AI. */
-  basis?: "transcript" | "estimate" | "ai";
-  /** Vysvetlenie od Edit DNA, prečo sa zmenila istota (nikdy nie potichu). */
-  dnaNote?: string;
-  dnaDelta?: number;
-}
+// KROK 0c — typy a zoznam typov zásahov už NIE SÚ skopírované tu.
+// Sú v jedinom spoločnom slovníku, ktorý používa aj server (`server.ts`),
+// aby panel a server nemohli „vedieť“ niečo iné. Re-export držíme, aby
+// existujúce importy (`App.tsx`, `RawToReadyPipeline.tsx`) fungovali ďalej.
+export type { DirectorActionType, DirectorPlanItem } from "../core/ai/directorVocabulary";
+import type { DirectorActionType, DirectorBasis, DirectorPlanItem } from "../core/ai/directorVocabulary";
 
 interface DirectorPlanResponse {
   success: boolean;
   source: "gemini" | "local-fallback";
+  /** KROK 0c — poctivý pôvod plánu zo servera (nikdy potichu). */
+  planBasis?: DirectorBasis;
+  /** KROK 0c — z čoho server naozaj rozhodoval. */
+  dataQuality?: string;
+  /** KROK 0c — NÁVRH cieľa z režimu; cieľ si určuje používateľ. */
+  suggestedGoalId?: string | null;
+  /** KROK 0c — či je „ušetrený čas“ odhad (true) alebo meranie. */
+  estimatedTimeSavedIsEstimate?: boolean;
   /** Režim strihu, ktorý server naozaj použil (môže sa líšiť od požiadaného). */
   mode?: string;
   modeLabel?: string;
@@ -79,7 +73,6 @@ interface DirectorPlanResponse {
   plan: DirectorPlanItem[];
   summary?: string;
   /** Na čom je celý plán postavený. */
-  planBasis?: "transcript" | "estimate" | "ai";
   anchoredSentences?: number;
   fallbackReason?: string;
   estimatedTimeSavedMinutes?: number;
@@ -355,6 +348,32 @@ export const DirectorPlanPanel: React.FC<DirectorPlanPanelProps> = ({
                   : `anchored on ${result.anchoredSentences} transcript lines`}
               </span>
             )}
+            {(result.dataQuality || result.suggestedGoalId) && (
+              <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800 text-[11px] text-neutral-400 space-y-1">
+                {result.dataQuality && (
+                  <div>
+                    <span className="text-neutral-500">
+                      {isSk ? "Z čoho plán vznikol: " : "What the plan is based on: "}
+                    </span>
+                    {result.dataQuality}
+                  </div>
+                )}
+                {result.suggestedGoalId && (
+                  <div>
+                    <span className="text-neutral-500">
+                      {isSk ? "Návrh cieľa podľa režimu: " : "Suggested goal from mode: "}
+                    </span>
+                    <span className="text-neutral-300">{result.suggestedGoalId}</span>
+                    <span className="text-neutral-500">
+                      {isSk
+                        ? " — je to len návrh; cieľ videa si určuješ v Style Studiu a nič ho neprepíše."
+                        : " — a suggestion only; you set the goal yourself in Style Studio."}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {result.planBasis === "estimate" && (
               <span className="text-[10px] px-2 py-1 rounded border bg-amber-500/10 text-amber-300 border-amber-500/30">
                 {isSk ? "odhad — bez prepisu" : "estimate — no transcript"}
