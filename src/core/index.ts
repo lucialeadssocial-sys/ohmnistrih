@@ -427,6 +427,16 @@ export class CoreEngine {
     return success;
   }
 
+  /**
+   * Vráti poslednú zmenu cez existujúci `CommandManager.undo()`.
+   *
+   * Používa to Apply Style Studia: keď sa zmena vykonala, ale nepodarilo sa zapísať
+   * rozhodnutie, zmena sa vráti — v projekte tak neostane zmena bez záznamu.
+   */
+  public undoLastCommand(): boolean {
+    return this.undo();
+  }
+
   public setTransform(clipId: string, transformProps: { scale?: number; scaleX?: number; scaleY?: number; positionX?: number; positionY?: number; rotation?: number; opacity?: number; anchorX?: number; anchorY?: number }): boolean {
     const success = this.commandManager.executeCommand(
       new SetTransformCommand(`Úprava transformácie clipu`, clipId, transformProps)
