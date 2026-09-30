@@ -1,0 +1,205 @@
+### REFERENČNÝ OBRÁZOK — REÁLNE MERANIE (3 rôzne reálne videa používateľa)
+
+==============================================================
+### ref-DXtdqsbAtEG (snímka v 40 s)
+==============================================================
+  ==============================================================================
+  REFERENČNÝ OBRÁZOK — REÁLNE MERANIE PIXELOV
+  ==============================================================================
+  vstup......................................... /home/user/referencie/ref-DXtdqsbAtEG.mp4 (snímka v 40 s)
+  analyzovaný rám............................... 480×854 (409920 pixelov)
+  
+  ── NAMERANÉ (z pixelov, nie z mena súboru) ──────────────────────────
+  paleta (podľa pokrytia)....................... #110D0B 65.8 % · #503932 17.6 % · #7D5F55 5.3 %
+  zvýraznenie (najsýtejšia)..................... #7D5F55 (5.3 %)
+  priemerný jas (0–255)......................... 36.66
+  kontrast (odchýlka jasu)...................... 38.97
+  sýtosť........................................ 42.2 %
+  teplota (R − B)............................... +15.19
+  tmavé / stredné / svetlé...................... 79 % / 21 % / 0 %
+  hustota hrán (0–1)............................ 0.033
+  jas pásiem hore/stred/dole.................... 38 / 48 / 23
+  
+  popis (po slovensky).......................... tmavý editorial (79 % pixelov je tmavých), teplý podtón, mierne sýte farby, stredný kontrast.
+  
+    Odporúčania odvodené z čísel:
+     • Nameraná paleta: #110D0B · #503932 · #7D5F55 (podľa pokrytia v obrázku).
+     • Podklad je prevažne tmavý (79 %) — svetlé titulky na ňom budú čitateľné bez podkladovej dosky.
+     • Najsýtejšia farba je #7D5F55 (5 % plochy) — vhodná na zvýraznenie jedného slova v titulku.
+     • Hustota hrán 0.03 — kompozícia je pokojná; unesie aj vrstvenie (fotky, diagramy).
+     • Pásma sa líšia o 25 jasu: najsvetlejšie v strede (48), najtmavšie dole (23) — v tom tmavšom mieste je prirodzené miesto pre text.
+  
+    Čo sa z obrázka ZMERAŤ NEDÁ (appka to netvrdí):
+     – Meno ani veľkosť fontu sa z obrázka nedajú určiť spoľahlivo — preto ich netvrdím (v referenciách som ich určil len vizuálne).
+     – Pohyb, easing a rytmus strihu sa z jedného obrázka zmerať nedajú — na to treba video.
+     – Zvuk a hudbu z obrázka nezískam.
+     – Sémantiku (čo je na obrázku ponuka a čo dôkaz) neviem — viem farby, jas, kontrast a hustotu hrán.
+  
+  metóda........................................ Reálne pixely (409920 vzoriek, krok 1): kvantovaný histogram 32×32×32, luma Rec. 709, kontrast = smerodajná odchýlka, hustota hrán = gradient lumy, pásma po tretinách výšky.
+  
+  ── CESTA AKO V APPKЕ (ReferenceStyleAnalyzer) ───────────────────────
+  dostupné...................................... áno
+  DNA accentColor (namerané).................... #7D5F55
+  DNA colorMood (namerané)...................... dark_editorial
+  istota (pokrytie palety)...................... 0.89
+  prevzaté z receptu (nemerateľné).............. 3 vlastností
+     – typografia (font, hrúbka, veľkosť) — z obrázka sa nedá určiť spoľahlivo
+     – tempo a rytmus (pacingVisual) — na to treba video, nie obrázok
+     – textúra a intenzita koláže — prevzaté z receptu, nie namerané
+  paleta pre recept............................. #110D0B · #7D5F55 · #503932
+  
+  bez pixelov (meno súboru „cinematic…“)........ NOT AVAILABLE (správne)
+  
+  ── DESKA ŠTYLU (dáta) ───────────────────────────────────────────────
+  #110D0B — hlavná plocha (najväčšie pokrytie).. 65.8 % plochy, sýtosť 39 %
+  #503932 — doplnková plocha.................... 17.6 % plochy, sýtosť 38 %
+  #7D5F55 — zvýraznenie (najsýtejšia farba)..... 5.3 % plochy, sýtosť 33 %
+  
+  poznámka o providerovi........................ PROVIDER UNAVAILABLE — appka nemá poskytovateľa na generovan…
+  
+  deska štýlu (PNG)............................. /tmp/board-ref-DXtdqsbAtEG.png (600379 B)
+  dáta desky (JSON)............................. /tmp/board-ref-DXtdqsbAtEG.json
+  ==============================================================================
+  Čo tento výsledok NEznamená:
+    • nie je to dôkaz o prehliadači (runner obchádza UI a volá funkciu priamo)
+    • snímka z videa nie je dizajnérska predloha — je to reálny obraz z reálneho videa
+    • typografia, tempo a textúra sa z obrázka nemerajú (appka ich nepredstiera)
+    • žiadne obrázky sa negenerujú — appka na to nemá providera (PROVIDER UNAVAILABLE)
+  ==============================================================================
+
+==============================================================
+### ref-Dd3vH4_FKAx (snímka v 8 s)
+==============================================================
+  ==============================================================================
+  REFERENČNÝ OBRÁZOK — REÁLNE MERANIE PIXELOV
+  ==============================================================================
+  vstup......................................... /home/user/referencie/ref-Dd3vH4_FKAx.mp4 (snímka v 8 s)
+  analyzovaný rám............................... 480×854 (409920 pixelov)
+  
+  ── NAMERANÉ (z pixelov, nie z mena súboru) ──────────────────────────
+  paleta (podľa pokrytia)....................... #0E0E17 12.9 % · #FAFAFB 9.1 % · #599CF3 8.8 % · #393A2D 5.4 % · #82899D 0.8 %
+  zvýraznenie (najsýtejšia)..................... #599CF3 (8.8 %)
+  priemerný jas (0–255)......................... 117.68
+  kontrast (odchýlka jasu)...................... 71.75
+  sýtosť........................................ 33.1 %
+  teplota (R − B)............................... -3.31
+  tmavé / stredné / svetlé...................... 27 % / 57 % / 15 %
+  hustota hrán (0–1)............................ 0.077
+  jas pásiem hore/stred/dole.................... 128 / 121 / 104
+  
+  popis (po slovensky).......................... stredne tmavý (27 % tmavých, 15 % svetlých), neutrálna teplota, mierne sýte farby, vysoký kontrast.
+  
+    Odporúčania odvodené z čísel:
+     • Nameraná paleta: #0E0E17 · #FAFAFB · #599CF3 · #393A2D (podľa pokrytia v obrázku).
+     • Najsýtejšia farba je #599CF3 (9 % plochy) — vhodná na zvýraznenie jedného slova v titulku.
+     • Hustota hrán 0.08 — kompozícia je pokojná; unesie aj vrstvenie (fotky, diagramy).
+     • Pásma sa líšia o 24 jasu: najsvetlejšie hore (128), najtmavšie dole (104) — v tom tmavšom mieste je prirodzené miesto pre text.
+  
+    Čo sa z obrázka ZMERAŤ NEDÁ (appka to netvrdí):
+     – Meno ani veľkosť fontu sa z obrázka nedajú určiť spoľahlivo — preto ich netvrdím (v referenciách som ich určil len vizuálne).
+     – Pohyb, easing a rytmus strihu sa z jedného obrázka zmerať nedajú — na to treba video.
+     – Zvuk a hudbu z obrázka nezískam.
+     – Sémantiku (čo je na obrázku ponuka a čo dôkaz) neviem — viem farby, jas, kontrast a hustotu hrán.
+  
+  metóda........................................ Reálne pixely (409920 vzoriek, krok 1): kvantovaný histogram 32×32×32, luma Rec. 709, kontrast = smerodajná odchýlka, hustota hrán = gradient lumy, pásma po tretinách výšky.
+  
+  ── CESTA AKO V APPKЕ (ReferenceStyleAnalyzer) ───────────────────────
+  dostupné...................................... áno
+  DNA accentColor (namerané).................... #599CF3
+  DNA colorMood (namerané)...................... vibrant_pop
+  istota (pokrytie palety)...................... 0.37
+  prevzaté z receptu (nemerateľné).............. 3 vlastností
+     – typografia (font, hrúbka, veľkosť) — z obrázka sa nedá určiť spoľahlivo
+     – tempo a rytmus (pacingVisual) — na to treba video, nie obrázok
+     – textúra a intenzita koláže — prevzaté z receptu, nie namerané
+  paleta pre recept............................. #0E0E17 · #FAFAFB · #599CF3 · #393A2D
+  
+  bez pixelov (meno súboru „cinematic…“)........ NOT AVAILABLE (správne)
+  
+  ── DESKA ŠTYLU (dáta) ───────────────────────────────────────────────
+  #0E0E17 — hlavná plocha (najväčšie pokrytie).. 12.9 % plochy, sýtosť 41 %
+  #FAFAFB — svetlá plocha / text na tmavom...... 9.1 % plochy, sýtosť 1 %
+  #599CF3 — zvýraznenie (najsýtejšia farba)..... 8.8 % plochy, sýtosť 63 %
+  #393A2D — doplnková plocha.................... 5.4 % plochy, sýtosť 22 %
+  #82899D — doplnková plocha.................... 0.8 % plochy, sýtosť 17 %
+  
+  poznámka o providerovi........................ PROVIDER UNAVAILABLE — appka nemá poskytovateľa na generovan…
+  
+  deska štýlu (PNG)............................. /tmp/board-ref-Dd3vH4_FKAx.png (979043 B)
+  dáta desky (JSON)............................. /tmp/board-ref-Dd3vH4_FKAx.json
+  ==============================================================================
+  Čo tento výsledok NEznamená:
+    • nie je to dôkaz o prehliadači (runner obchádza UI a volá funkciu priamo)
+    • snímka z videa nie je dizajnérska predloha — je to reálny obraz z reálneho videa
+    • typografia, tempo a textúra sa z obrázka nemerajú (appka ich nepredstiera)
+    • žiadne obrázky sa negenerujú — appka na to nemá providera (PROVIDER UNAVAILABLE)
+  ==============================================================================
+
+==============================================================
+### ref-DB6o-r3qWcl (snímka v 8 s)
+==============================================================
+  ==============================================================================
+  REFERENČNÝ OBRÁZOK — REÁLNE MERANIE PIXELOV
+  ==============================================================================
+  vstup......................................... /home/user/referencie/ref-DB6o-r3qWcl.mp4 (snímka v 8 s)
+  analyzovaný rám............................... 480×854 (409920 pixelov)
+  
+  ── NAMERANÉ (z pixelov, nie z mena súboru) ──────────────────────────
+  paleta (podľa pokrytia)....................... #B69975 28.7 % · #27240A 26.8 % · #FEFCFD 7.6 % · #D4B692 0.6 %
+  zvýraznenie (najsýtejšia)..................... #B69975 (28.7 %)
+  priemerný jas (0–255)......................... 105.34
+  kontrast (odchýlka jasu)...................... 71.89
+  sýtosť........................................ 46.0 %
+  teplota (R − B)............................... +37.87
+  tmavé / stredné / svetlé...................... 43 % / 48 % / 9 %
+  hustota hrán (0–1)............................ 0.024
+  jas pásiem hore/stred/dole.................... 43 / 114 / 159
+  
+  popis (po slovensky).......................... stredne tmavý (43 % tmavých, 9 % svetlých), teplý podtón, sýte farby, vysoký kontrast.
+  
+    Odporúčania odvodené z čísel:
+     • Nameraná paleta: #B69975 · #27240A · #FEFCFD · #D4B692 (podľa pokrytia v obrázku).
+     • Podklad je prevažne tmavý (43 %) — svetlé titulky na ňom budú čitateľné bez podkladovej dosky.
+     • Najsýtejšia farba je #B69975 (29 % plochy) — vhodná na zvýraznenie jedného slova v titulku.
+     • Hustota hrán 0.02 — kompozícia je pokojná; unesie aj vrstvenie (fotky, diagramy).
+     • Pásma sa líšia o 116 jasu: najsvetlejšie dole (159), najtmavšie hore (43) — v tom tmavšom mieste je prirodzené miesto pre text.
+  
+    Čo sa z obrázka ZMERAŤ NEDÁ (appka to netvrdí):
+     – Meno ani veľkosť fontu sa z obrázka nedajú určiť spoľahlivo — preto ich netvrdím (v referenciách som ich určil len vizuálne).
+     – Pohyb, easing a rytmus strihu sa z jedného obrázka zmerať nedajú — na to treba video.
+     – Zvuk a hudbu z obrázka nezískam.
+     – Sémantiku (čo je na obrázku ponuka a čo dôkaz) neviem — viem farby, jas, kontrast a hustotu hrán.
+  
+  metóda........................................ Reálne pixely (409920 vzoriek, krok 1): kvantovaný histogram 32×32×32, luma Rec. 709, kontrast = smerodajná odchýlka, hustota hrán = gradient lumy, pásma po tretinách výšky.
+  
+  ── CESTA AKO V APPKЕ (ReferenceStyleAnalyzer) ───────────────────────
+  dostupné...................................... áno
+  DNA accentColor (namerané).................... #B69975
+  DNA colorMood (namerané)...................... cinematic_warm
+  istota (pokrytie palety)...................... 0.64
+  prevzaté z receptu (nemerateľné).............. 3 vlastností
+     – typografia (font, hrúbka, veľkosť) — z obrázka sa nedá určiť spoľahlivo
+     – tempo a rytmus (pacingVisual) — na to treba video, nie obrázok
+     – textúra a intenzita koláže — prevzaté z receptu, nie namerané
+  paleta pre recept............................. #B69975 · #27240A · #FEFCFD
+  
+  bez pixelov (meno súboru „cinematic…“)........ NOT AVAILABLE (správne)
+  
+  ── DESKA ŠTYLU (dáta) ───────────────────────────────────────────────
+  #B69975 — zvýraznenie (najsýtejšia farba)..... 28.7 % plochy, sýtosť 36 %
+  #27240A — tmavá plocha / text na svetlom...... 26.8 % plochy, sýtosť 75 %
+  #FEFCFD — svetlá plocha / text na tmavom...... 7.6 % plochy, sýtosť 1 %
+  #D4B692 — doplnková plocha.................... 0.6 % plochy, sýtosť 31 %
+  
+  poznámka o providerovi........................ PROVIDER UNAVAILABLE — appka nemá poskytovateľa na generovan…
+  
+  deska štýlu (PNG)............................. /tmp/board-ref-DB6o-r3qWcl.png (582141 B)
+  dáta desky (JSON)............................. /tmp/board-ref-DB6o-r3qWcl.json
+  ==============================================================================
+  Čo tento výsledok NEznamená:
+    • nie je to dôkaz o prehliadači (runner obchádza UI a volá funkciu priamo)
+    • snímka z videa nie je dizajnérska predloha — je to reálny obraz z reálneho videa
+    • typografia, tempo a textúra sa z obrázka nemerajú (appka ich nepredstiera)
+    • žiadne obrázky sa negenerujú — appka na to nemá providera (PROVIDER UNAVAILABLE)
+  ==============================================================================
+
