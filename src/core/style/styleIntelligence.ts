@@ -27,6 +27,13 @@ import { isStrongCaptionWord } from "../export/subtitleRender";
 import { getStyleRecipe, type StylePresetId, type StyleRecipe } from "./styleRecipes";
 import { auditStyleExplicitness, explicitnessLineSk } from "./styleExplicitness";
 import {
+  VIDEO_GOALS,
+  goalRequirementsReport,
+  scoreSentenceForGoal,
+  type VideoGoalDefinition,
+  type VideoGoalId,
+} from "./videoGoal";
+import {
   DEFAULT_STYLE_CONTROLS,
   GENERATED_VISUALS_PROVIDER_AVAILABLE,
   GENERATED_VISUALS_STATUS_SK,
@@ -103,6 +110,13 @@ export interface StylePlanInput {
    * `0` = nemá → appka navrhne len text a pohyb (a povie to).
    */
   availableSupportingVisuals?: number;
+  /**
+   * KROK 26 — ČO má video dosiahnuť (`PREDAJ`, `ODBER`, `REACH`…).
+   * Cieľ je stratégia nad existujúcimi rozhodnutiami: prehodnotí ich poradie,
+   * doplní tie, ktoré cieľ vyžaduje (len ak na ne má dáta) a povie, čo v dátach
+   * chýba. Bez cieľa sa plán nemení vôbec.
+   */
+  goal?: string;
   /** Fixný čas pre deterministické testy (inak `Date.now()`). */
   now?: number;
 }
@@ -153,6 +167,23 @@ export interface StylePlan {
   audioPolicy: "ORIGINAL_VO_MASTER";
   /** Žiadny provider nebol použitý (deterministický engine). */
   provider: "NONE";
+  /**
+   * KROK 26 — cieľ videa, podľa ktorého boli rozhodnutia prehodnotené.
+   * Keď cieľ nie je zadaný, toto pole nie je (plán je presne ako predtým).
+   */
+  goal?: {
+    id: string;
+    labelSk: string;
+    purposeSk: string;
+    strategySk: string[];
+    /** Čo cieľ v dátach našiel a čo v nich chýba (appka nič nedopĺňa). */
+    foundSk: string[];
+    missingSk: string[];
+    /** Koľko rozhodnutí cieľ pridal / utlmil. */
+    promotedCount: number;
+    demotedCount: number;
+    notesSk: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -828,6 +859,23 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
   for (const gap of explicitness.closeGapsSk) notesSk.push(`Chýba pilier → ${gap}`);
   for (const extra of explicitness.notesSk) notesSk.push(extra);
 
+  // --- 6b) VIDEO GOAL (krok 26) — ČO má video dosiahnuť ---------------------
+  // Cieľ je stratégia NAD existujúcimi rozhodnutiami: prehodnotí ich poradie,
+  // doplní tie, ktoré cieľ vyžaduje (len ak na ne má reálne dáta), utlmí to,
+  // čo cieľu nepomáha — a poctivo povie, čo v dátach chýba. Bez cieľa sa plán
+  // nemení vôbec (žiadna regresia).
+  const goalResult = applyGoalToPlan({
+    goalId: input.goal,
+    sentences,
+    decisions,
+    considered,
+    notesSk,
+    now,
+    recipe,
+    durationSec,
+    availableSupportingVisuals: input.availableSupportingVisuals,
+  });
+
   const sorted = decisions.sort(
     (a, b) => (a.style?.whenSk.startSec ?? 0) - (b.style?.whenSk.startSec ?? 0) || String(a.type).localeCompare(String(b.type)),
   );
@@ -864,12 +912,388 @@ export function buildStylePlan(input: StylePlanInput): StylePlan {
     notesSk,
     audioPolicy: "ORIGINAL_VO_MASTER",
     provider: "NONE",
+    ...(goalResult ? { goal: goalResult } : {}),
   };
 }
 
 // ---------------------------------------------------------------------------
 // Pomocníci
 // ---------------------------------------------------------------------------
+
+/**
+ * KROK 26 — cieľ videa ako stratégia nad rozhodnutiami.
+ *
+ * Pravidlá:
+ *  - rozhodnutia sa neprepisujú naslepo: každé dostane `goalFit` (ako veľmi jeho
+ *    veta slúži cieľu) a dôvody,
+ *  - keď cieľ potrebuje viac textu, doplní ho z viet s najvyšším `goalFit` —
+ *    text sa vždy berie DOSLOVNE z vety (nikdy sa negeneruje),
+ *  - keď cieľ potrebuje pokojnejší obraz, utlmí pohybové rozhodnutia s najnižším
+ *    `goalFit` (a povie to v `considered`),
+ *  - keď cieľ vyžaduje niečo, čo v dátach nie je (výzva, otázka, číslo), appka to
+ *    napíše a NIČ nedoplní.
+ */
+function applyGoalToPlan(ctx: {
+  goalId?: string;
+  sentences: StyleSentenceSignal[];
+  decisions: EditDecision[];
+  considered: StyleConsideredItem[];
+  notesSk: string[];
+  now: number;
+  recipe: StyleRecipe;
+  durationSec: number;
+  availableSupportingVisuals?: number;
+}): StylePlan["goal"] | undefined {
+  const goalKey = String(ctx.goalId ?? "").toUpperCase();
+  if (!goalKey) return undefined;
+
+  const goal: VideoGoalDefinition | undefined = VIDEO_GOALS[goalKey as VideoGoalId];
+  if (!goal) {
+    ctx.notesSk.push(
+      `Cieľ „${ctx.goalId}“ nepoznám — pracujem bez neho (a nič som podľa neho nemenil). Známe ciele: ${Object.keys(VIDEO_GOALS).join(", ")}.`,
+    );
+    return undefined;
+  }
+  if (ctx.sentences.length === 0) return undefined;
+
+  const fits = ctx.sentences.map((sentence) =>
+    scoreSentenceForGoal(
+      {
+        index: sentence.index,
+        text: sentence.text,
+        start: sentence.start,
+        end: sentence.end,
+        durationSec: sentence.durationSec,
+        isQuestion: sentence.isQuestion,
+        isEmotional: sentence.isEmotional,
+        numberWords: sentence.numberWords,
+        topicShift: sentence.topicShift,
+        isHook: sentence.isHook,
+        isLast: sentence.isLast,
+      },
+      goal,
+      { totalSentences: ctx.sentences.length, durationSec: ctx.durationSec },
+    ),
+  );
+  const fitByIndex = new Map(fits.map((f) => [f.sentenceIndex, f]));
+
+  // 1) Každé rozhodnutie dostane, ako slúži cieľu (dohľadateľné v rozhodnutí).
+  for (const decision of ctx.decisions) {
+    const detail = decision.style;
+    if (!detail) continue;
+    const sentence = ctx.sentences.find((s) => Math.abs(s.start - detail.whenSk.startSec) < 0.001);
+    if (!sentence) continue;
+    const fit = fitByIndex.get(sentence.index);
+    if (!fit) continue;
+    detail.goalId = goal.id;
+    detail.goalFit = fit.score;
+    if (fit.reasonsSk.length > 0) detail.goalFitSk = fit.reasonsSk.slice(0, 3);
+    // Dôvod rozhodnutia sa rozšíri o cieľ — aby bolo vidieť, PREČO bolo vybrané.
+    if (fit.intentWordsSk.length > 0) {
+      detail.whySk = `${detail.whySk} Cieľ ${goal.labelSk}: veta nesie ${fit.intentWordsSk.slice(0, 2).join(", ")}.`;
+    }
+  }
+
+  const notesSk: string[] = [];
+  let promotedCount = 0;
+  let demotedCount = 0;
+
+  // 2) Utlmenie: cieľ, ktorý chce pokoj (vzdelávanie, značka…), zníži počet
+  //    pohybových rozhodnutí — vypadnú tie s najnižším goalFit (nie prvé v poradí).
+  const motionDecisions = ctx.decisions
+    .filter((d) => d.style?.kind === "motion")
+    .sort((a, b) => (a.style?.goalFit ?? 0) - (b.style?.goalFit ?? 0) || (a.style?.whenSk.startSec ?? 0) - (b.style?.whenSk.startSec ?? 0));
+  if (goal.caps.motion < 1 && motionDecisions.length > 0) {
+    const keep = Math.max(1, Math.round(motionDecisions.length * goal.caps.motion));
+    for (const drop of motionDecisions.slice(0, Math.max(0, motionDecisions.length - keep))) {
+      const idx = ctx.decisions.indexOf(drop);
+      if (idx >= 0) ctx.decisions.splice(idx, 1);
+      demotedCount++;
+      if (drop.style) {
+        ctx.considered.push({
+          sentenceIndex: Math.max(0, ctx.sentences.findIndex((s) => Math.abs(s.start - drop.style!.whenSk.startSec) < 0.001)),
+          kind: "motion",
+          reasonSk: `Cieľ ${goal.labelSk}: pohyb som utlmil — táto veta nesie cieľ len ${drop.style.goalFit ?? 0}/10, pri tomto cieli má prednosť jasnosť pred efektom.`,
+          score: drop.style.goalFit ?? 0,
+          atSec: drop.style.whenSk.startSec,
+          endSec: drop.style.whenSk.endSec,
+        });
+      }
+    }
+    if (demotedCount > 0) {
+      notesSk.push(
+        `Cieľ ${goal.labelSk}: utlmil som ${demotedCount} pohybových rozhodnutí (${motionDecisions.length} → ${keep}) — všetky sú v sekcii „čo som zvážil a nevybral“.`,
+      );
+    }
+  }
+
+  // 3) Dôraz na text:
+  //    a) keď cieľ potrebuje výzvu na akciu a veta ju má, zvýraznenie sa **posilní**
+  //       (existujúce rozhodnutie sa prehodnotí — nevzniká druhý text),
+  //    b) keď cieľ chce viac textu, dostane ho najsilnejšia veta, ktorá ešte text nemá,
+  //    c) keď cieľ chce menej textu (značka, príbeh), najslabšie texty sa utlmia.
+  const typographyDecisions = ctx.decisions.filter((d) => d.style?.kind === "typography");
+  const typographyAt = (startSec: number) => typographyDecisions.find((d) => Math.abs(d.style!.whenSk.startSec - startSec) < 0.001);
+
+  // (a) Výzva na akciu — najvyššie skóre medzi vetami s CTA.
+  const ctaFit = fits.filter((f) => f.actionWordsSk.length > 0).sort((a, b) => b.score - a.score)[0];
+  if (ctaFit) {
+    const sentence = ctx.sentences.find((s) => s.index === ctaFit.sentenceIndex);
+    const existing = sentence ? typographyAt(sentence.start) : undefined;
+    if (existing?.style) {
+      existing.style.action = {
+        ...existing.style.action,
+        typographyRole: "emphasis",
+        typographyText: actionTextFor(sentence!.text, ctaFit.actionWordsSk) || existing.style.action.typographyText || typographyTextFor(sentence!),
+        noteSk: `cieľ ${goal.id}: výzva na akciu`,
+      };
+      existing.style.signals = [...new Set([...(existing.style.signals ?? []), "call_to_action", "goal"])];
+      existing.style.whySk = `${existing.style.whySk} Cieľ ${goal.labelSk}: veta obsahuje výzvu (${ctaFit.actionWordsSk.slice(0, 2).join(", ")}) — preto je zvýraznená silnejšie.`;
+      existing.style.goalFit = ctaFit.score;
+      existing.style.goalFitSk = ctaFit.reasonsSk.slice(0, 3);
+      promotedCount++;
+    } else if (sentence) {
+      const text = actionTextFor(sentence.text, ctaFit.actionWordsSk) || typographyTextFor(sentence);
+      if (text) {
+        ctx.decisions.push(
+          makeDecision(ctx.now, {
+            kind: "typography",
+            recipeId: ctx.recipe.id,
+            whatSk: `Text „${text}“ ako výzva na akciu pre cieľ ${goal.labelSk}.`,
+            whenSk: { startSec: sentence.start, endSec: sentence.end },
+            whySk: `Cieľ ${goal.labelSk} potrebuje akciu: veta obsahuje výzvu (${ctaFit.actionWordsSk.slice(0, 2).join(", ")}) — divák ju má vidieť.`,
+            whenNotSk: "Nepoužiť, ak by text prekryl tvár alebo ak je rovnaký text už v titulkoch na tom istom mieste.",
+            alternativeSk: "Nechaj to len v titulkoch (bez samostatného textu).",
+            confidence: Math.min(0.85, 0.55 + ctaFit.score / 20),
+            evidenceSk: [...ctaFit.reasonsSk.slice(0, 3), "text je doslovne z vety (nič sa negeneruje)"],
+            signals: ["goal", "sentence_boundary", "call_to_action"],
+            action: { typographyRole: "emphasis", typographyText: text, noteSk: `cieľ ${goal.id}: výzva na akciu` },
+          } as never),
+        );
+        promotedCount++;
+      }
+    }
+  }
+
+  // (b) Viac textu pre cieľ: najsilnejšia veta bez textu (a bez CTA, tá je vybavená vyššie).
+  if (goal.caps.typography > 1) {
+    const want = Math.max(1, Math.round(typographyDecisions.length * (goal.caps.typography - 1)));
+    const candidates = fits
+      .filter((f) => f.score > 0 && f.actionWordsSk.length === 0)
+      .filter((f) => {
+        const sentence = ctx.sentences.find((s) => s.index === f.sentenceIndex);
+        if (!sentence) return false;
+        return !typographyAt(sentence.start) && f.intentWordsSk.length > 0;
+      })
+      .slice(0, want);
+    for (const fit of candidates) {
+      const sentence = ctx.sentences.find((s) => s.index === fit.sentenceIndex)!;
+      const text = typographyTextFor(sentence);
+      if (!text) continue;
+      ctx.decisions.push(
+        makeDecision(ctx.now, {
+          kind: "typography",
+          recipeId: ctx.recipe.id,
+          whatSk: `Text „${text}“ — veta nesie cieľ ${goal.labelSk} (${fit.intentWordsSk.slice(0, 2).join(", ")}).`,
+          whenSk: { startSec: sentence.start, endSec: sentence.end },
+          whySk: `Cieľ ${goal.labelSk}: veta nesie jeho slová (${fit.intentWordsSk.slice(0, 3).join(", ")}) a recept ju sám nezvýraznil.`,
+          whenNotSk: "Nepoužiť, ak by text prekryl tvár alebo ak je rovnaký text už v titulkoch na tom istom mieste.",
+          alternativeSk: "Nechaj to len v titulkoch (bez samostatného textu).",
+          confidence: Math.min(0.85, 0.5 + fit.score / 20),
+          evidenceSk: [...fit.reasonsSk.slice(0, 3), "text je doslovne z vety (nič sa negeneruje)"],
+          signals: ["goal", "sentence_boundary", "intent_words"],
+          action: { typographyRole: "keyword", typographyText: text, noteSk: `cieľ ${goal.id}` },
+        }),
+      );
+      promotedCount++;
+    }
+  }
+
+  // (c) Menej textu pre cieľ, ktorý chce pokoj (značka, príbeh, vzdelávanie).
+  if (goal.caps.typography < 1 && typographyDecisions.length > 1) {
+    const ordered = typographyDecisions
+      .slice()
+      .sort((a, b) => (a.style?.goalFit ?? 0) - (b.style?.goalFit ?? 0) || (a.style?.whenSk.startSec ?? 0) - (b.style?.whenSk.startSec ?? 0));
+    const keep = Math.max(1, Math.round(typographyDecisions.length * goal.caps.typography));
+    for (const drop of ordered.slice(0, Math.max(0, typographyDecisions.length - keep))) {
+      const idx = ctx.decisions.indexOf(drop);
+      if (idx >= 0) ctx.decisions.splice(idx, 1);
+      demotedCount++;
+      if (drop.style) {
+        ctx.considered.push({
+          sentenceIndex: Math.max(0, ctx.sentences.findIndex((s) => Math.abs(s.start - drop.style!.whenSk.startSec) < 0.001)),
+          kind: "typography",
+          reasonSk: `Cieľ ${goal.labelSk}: menej textu v obraze — táto veta nesie cieľ len ${drop.style.goalFit ?? 0}/10, preto text ustúpil.`,
+          score: drop.style.goalFit ?? 0,
+          atSec: drop.style.whenSk.startSec,
+          endSec: drop.style.whenSk.endSec,
+        });
+      }
+    }
+  }
+
+  // (d) HOOK: cieľ, ktorý stojí na pozornosti (vysoká váha hooku), dá prvej vete
+  //     priblíženie — ale len keď tam ešte žiadne nie je. Je to reálne rozhodnutie
+  //     nad reálnym signálom (`isHook`), nie vymyslený efekt.
+  const hookSentence = ctx.sentences.find((s) => s.isHook) ?? ctx.sentences.find((s) => s.index === 0);
+  if (goal.weights.hook >= 2.0 && hookSentence) {
+    const motionNearHook = ctx.decisions.filter(
+      (d) => d.style?.kind === "motion" && d.style!.whenSk.startSec <= hookSentence.end + 0.001,
+    );
+    if (motionNearHook.length === 0) {
+      const endSec = Math.min(hookSentence.end, hookSentence.start + 4);
+      ctx.decisions.push(
+        makeDecision(ctx.now, {
+          kind: "motion",
+          recipeId: ctx.recipe.id,
+          whatSk: "Priblíženie na úvodnú vetu (hook) — bez prekrytia tváre.",
+          whenSk: { startSec: hookSentence.start, endSec },
+          whySk: `Cieľ ${goal.labelSk}: rozhoduje prvých pár sekúnd — úvodná veta je hook (${hookSentence.text.slice(0, 40)}…) a recept jej nedal žiadny pohyb.`,
+          whenNotSk: "Nepoužiť, ak je rečník v zábere príliš blízko alebo ak máš vlastný opening (intro/logo).",
+          alternativeSk: "Ponechať úvod bez pohybu a spoliehať sa na titulky.",
+          confidence: 0.6,
+          evidenceSk: ["signál: prvá veta videa (hook)", `cieľ ${goal.id} stavia na pozornosti v prvých sekundách`],
+          signals: ["goal", "hook", "position"],
+          action: { motion: "punch", punchInScale: 1.08, noteSk: `cieľ ${goal.id}: hook` },
+        }),
+      );
+      promotedCount++;
+      notesSk.push(
+        `Cieľ ${goal.labelSk}: pridal som priblíženie na úvodnú vetu — bola bez pohybu a tento cieľ stojí na prvých sekundách.`,
+      );
+    }
+  }
+
+  // (e) VIAC OBRAZU: cieľ, ktorý chce striedanie obrazu, dá podporný vizuál na nové
+  //     myšlienky — presne toľko, koľko máš nahraných médií (nikdy viac, nič sa negeneruje).
+  if (goal.caps.supportingVisual > 1.2) {
+    const alreadySupporting = ctx.decisions.filter((d) => d.style?.kind === "supporting_visual").length;
+    const budget = Math.max(0, (ctx.availableSupportingVisuals ?? 0) - alreadySupporting);
+    const shifts = fits
+      .filter((f) => ctx.sentences.find((s) => s.index === f.sentenceIndex)?.topicShift)
+      .filter((f) => {
+        const sentence = ctx.sentences.find((s) => s.index === f.sentenceIndex)!;
+        return !ctx.decisions.some(
+          (d) => d.style?.kind === "supporting_visual" && Math.abs(d.style!.whenSk.startSec - sentence.start) < 0.001,
+        );
+      })
+      .slice(0, budget);
+    for (const fit of shifts) {
+      const sentence = ctx.sentences.find((s) => s.index === fit.sentenceIndex)!;
+      ctx.decisions.push(
+        makeDecision(ctx.now, {
+          kind: "supporting_visual",
+          recipeId: ctx.recipe.id,
+          whatSk: `Podporný vizuál na novú myšlienku (${sentence.text.slice(0, 40)}…) — z tvojich médií.`,
+          whenSk: { startSec: sentence.start, endSec: Math.min(sentence.end, sentence.start + 3.5) },
+          whySk: `Cieľ ${goal.labelSk}: chce striedanie obrazu — veta začína novú myšlienku, preto sa na ňu hodí podporný záber.`,
+          whenNotSk: "Nepoužiť, ak by vizuál prekryl pointu alebo ak je v zábere dôležitá mimika.",
+          alternativeSk: "Nechať rečníka a použiť len text.",
+          confidence: 0.55,
+          evidenceSk: ["signál: nová myšlienka (topic shift)", `máš ${ctx.availableSupportingVisuals ?? 0} médií na podporné vizuály`],
+          signals: ["goal", "topic_shift", "sentence_boundary"],
+          action: { targetTrackType: "b-roll", elementType: "b_roll", noteSk: `cieľ ${goal.id}: striedanie obrazu` },
+        }),
+      );
+      promotedCount++;
+    }
+    if (promotedCount > 0 && shifts.length > 0) {
+      notesSk.push(`Cieľ ${goal.labelSk}: pridal som ${shifts.length} podporných vizuálov z tvojich médií (iné sa negenerujú).`);
+    }
+    if (budget === 0) {
+      notesSk.push(
+        `Cieľ ${goal.labelSk} chce viac striedania obrazu, ale nemáš nahrané ďalšie médiá na podporné vizuály — nič som nepridal (nič si nevymýšľam).`,
+      );
+    }
+  }
+
+  // 4) Poctivé vyúčtovanie: čo cieľ v dátach našiel a čo nie.
+  const requirements = goalRequirementsReport(
+    ctx.sentences.map((s) => ({
+      index: s.index,
+      text: s.text,
+      start: s.start,
+      end: s.end,
+      durationSec: s.durationSec,
+      isQuestion: s.isQuestion,
+      isEmotional: s.isEmotional,
+      numberWords: s.numberWords,
+      topicShift: s.topicShift,
+      isHook: s.isHook,
+      isLast: s.isLast,
+    })),
+    goal,
+  );
+
+  if (requirements.missingSk.length > 0) {
+    notesSk.push(`Cieľ ${goal.labelSk}: v tvojom videe chýba ${requirements.missingSk.join("; ")} — nič som nedoplnil.`);
+    for (const missing of requirements.missingSk) {
+      // Chýbajúce veci idú do „zvážené“ — aby bolo vidieť, že o nich appka vie
+      // a vedome ich nevyrábala.
+      ctx.considered.push({
+        sentenceIndex: 0,
+        kind: goal.id === "KOMENTARE" ? "typography" : "composition",
+        reasonSk: `Cieľ ${goal.labelSk} vyžaduje: ${missing}`,
+        score: 0,
+        atSec: 0,
+        endSec: ctx.durationSec,
+      });
+    }
+  }
+
+  // 5) Posledná veta pri cieľoch s akciou: keď tam výzva NIE je, appka to povie
+  //    (nič do textu nedopíše).
+  const last = ctx.sentences[ctx.sentences.length - 1];
+  if (goal.requiresSk.some((r) => r.toLowerCase().includes("výzva")) && last) {
+    const lastFit = fitByIndex.get(last.index);
+    if (!lastFit || lastFit.actionWordsSk.length === 0) {
+      notesSk.push(
+        `Cieľ ${goal.labelSk}: v poslednej vete nie je výzva na akciu („${last.text.slice(0, 60)}${last.text.length > 60 ? "…" : ""}“) — nedopisujem ju, doplň ju ty.`,
+      );
+    }
+  }
+
+  if (promotedCount === 0 && demotedCount === 0) {
+    notesSk.push(
+      `Cieľ ${goal.labelSk} v tomto videe nemenil rozhodnutia — nemal na čo: ${requirements.missingSk.length > 0 ? requirements.missingSk.join("; ") : "plán už sedel s cieľom"}.`,
+    );
+  }
+
+  ctx.notesSk.push(...notesSk);
+
+  return {
+    id: goal.id,
+    labelSk: `${goal.emoji} ${goal.labelSk}`,
+    purposeSk: goal.purposeSk,
+    strategySk: goal.strategySk,
+    foundSk: requirements.foundSk,
+    missingSk: requirements.missingSk,
+    promotedCount,
+    demotedCount,
+    notesSk,
+  };
+}
+
+/**
+ * Text pre výzvu na akciu: **doslovný úsek vety** od jej začiatku po slovo
+ * s výzvou (max 6 slov). Nikdy sa negeneruje — je to podreťazec vety.
+ */
+function actionTextFor(text: string, actionWords: string[]): string {
+  const words = String(text ?? "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  const norm = (w: string) =>
+    w.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const wanted = actionWords.map(norm).filter(Boolean);
+  let end = words.length;
+  for (let i = 0; i < words.length; i++) {
+    const w = norm(words[i]);
+    if (wanted.some((x) => w.includes(x) || x.includes(w))) {
+      end = i + 1;
+      break;
+    }
+  }
+  return words.slice(0, Math.min(words.length, Math.max(end, 1))).slice(0, 6).join(" ");
+}
 
 function makeDecision(now: number, detail: Omit<StyleDecisionDetail, "confidence"> & { confidence: number }): EditDecision {
   const edit = styleDecisionToEditDecision(detail as StyleDecisionDetail);
