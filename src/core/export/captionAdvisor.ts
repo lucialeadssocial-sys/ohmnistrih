@@ -335,7 +335,7 @@ export function adviseCaptionStyle(input: CaptionAdviceInput = {}): CaptionAdvic
 export interface AdviceContextLike {
   /** Dĺžka klipu v sekundách. */
   durationSec?: number;
-  /** Počet strihov v klipе (na výpočet tempa). */
+  /** Počet strihov v klipe (na výpočet tempa). */
   cutCount?: number;
   /** Úseky s textom (titulky). */
   segments?: { start: number; end: number; text: string; words?: { word: string; start: number; end: number }[] }[];

@@ -1068,7 +1068,7 @@ export interface BurnArgsOptions {
   fontsDir?: string;
   /** Klipy, ktoré sa majú vystrihnúť (rovnaký EDL ako v náhľade). Prázdne = celé video. */
   keepSegments?: { start: number; end: number; scalePercent?: number; keyframes?: BurnZoomKeyframe[] }[];
-  /** Priblíženia na časovej osi (len keď sa nič nestrihá — čas videа sa nemení). */
+  /** Priblíženia na časovej osi (len keď sa nič nestrihá — čas videa sa nemení). */
   zoomWindows?: BurnZoomWindow[];
   /** Obrazové vrstvy z canonical osi (b-roll, fotky). */
   overlays?: BurnOverlay[];
@@ -1139,7 +1139,7 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
     baseLabel = "[vc]";
     audioFromConcat = true;
   } else if (zoomWindows.length > 0) {
-    // Bez strihu sa čas videа nemení → zvuk sa dá **kopírovať** (pôvodné audio
+    // Bez strihu sa čas videa nemení → zvuk sa dá **kopírovať** (pôvodné audio
     // zostáva bajtovo nedotknuté). Obraz sa však musí rozdeliť na okná, aby
     // priblíženie sedelo len na svojom úseku.
     const windows = zoomWindows

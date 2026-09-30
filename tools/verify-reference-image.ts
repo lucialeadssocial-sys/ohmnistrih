@@ -145,7 +145,7 @@ console.log("");
 // 3) Cez triedu (rovnaká cesta ako UI) + kontrola NOT AVAILABLE
 // ---------------------------------------------------------------------------
 
-console.log("── CESTA AKO V APPKЕ (ReferenceStyleAnalyzer) ───────────────────────");
+console.log("── CESTA AKO V APPKE (ReferenceStyleAnalyzer) ───────────────────────");
 const viaClass = ReferenceStyleAnalyzer.analyzeReferenceStyle("referencia.png", "verify", pixels, width, height);
 line("dostupné", viaClass.available ? "áno" : `NIE (${viaClass.reasonSk})`);
 if (viaClass.available) {
