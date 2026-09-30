@@ -23,7 +23,11 @@ export type LiveSignal =
   | "captions_with_words"
   | "style_applied"
   | "rollback_used"
-  | "export_finished";
+  | "export_finished"
+  // KROK 21 — spätná väzba z vnútra nástrojov: appka to vie, lebo sa zmenil
+  // stav projektu, ktorý ide do náhľadu (nie odhad, nie čas).
+  | "broll_applied"
+  | "voice_added";
 
 /** Reálne vstupy: čo appka naozaj vie (nie odhad). */
 export interface LiveInputs {
@@ -47,6 +51,8 @@ export function computeSignals(inputs: LiveInputs): Record<LiveSignal, boolean> 
     style_applied: fromLog("style_applied"),
     rollback_used: fromLog("rollback_used"),
     export_finished: fromLog("export_finished"),
+    broll_applied: fromLog("broll_applied"),
+    voice_added: fromLog("voice_added"),
   };
 }
 
@@ -103,7 +109,7 @@ export const TOOL_LIVE_STEPS: Record<string, LiveStep[]> = {
   ],
   broll: [
     { label: "Vyber záber, ktorý chceš pridať", where: "panel B-roll vľavo", manual: true },
-    { label: "Pridaj ho na časovú os", where: "tlačidlo pridať v paneli", manual: true },
+    { label: "Použi B-roll (aplikuj na video)", where: "tlačidlo použiť/aplikovať v paneli", signal: "broll_applied" },
   ],
   story: [
     { label: "Nechaj appku navrhnúť štruktúru príbehu", where: "panel Story Builder vľavo", manual: true },
@@ -139,7 +145,7 @@ export const TOOL_LIVE_STEPS: Record<string, LiveStep[]> = {
   ],
   ai_voice: [
     { label: "Vlož text, ktorý má byť prečítaný", where: "textové pole v paneli", manual: true },
-    { label: "Vyber hlas a vlož ho do projektu", where: "tlačidlo vložiť v paneli", manual: true },
+    { label: "Vyber hlas a vlož ho do projektu", where: "tlačidlo „pridať do projektu“ v paneli", signal: "voice_added" },
   ],
   canva: [
     { label: "Vyber hudbu na pozadí", where: "zoznam skladieb v paneli", manual: true },
@@ -151,7 +157,7 @@ export const TOOL_LIVE_STEPS: Record<string, LiveStep[]> = {
   ],
   finder: [
     { label: "Vyber pasáž, ku ktorej hľadáš záber", where: "zoznam v paneli", manual: true },
-    { label: "Pridaj vybraný záber do projektu", where: "tlačidlo pridať v paneli", manual: true },
+    { label: "Použi vybraný záber v projekte", where: "tlačidlo použiť (v B-roll paneli)", signal: "broll_applied" },
   ],
   attention: [
     { label: "Pozri si rizikové časti videa", where: "výsledok v paneli", manual: true },

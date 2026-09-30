@@ -1126,6 +1126,9 @@ function MainApp() {
 
   const handleApplyBroll = () => {
     setBrollProject({ ...brollProject, isApplied: true });
+    // KROK 21: sprievodca odškrtne krok len teraz — stav projektu sa naozaj zmenil
+    // a náhľad B-roll používa (`bRollOverlays={brollProject.items}`).
+    recordLive("broll_applied");
     showToast(isSk ? "🎬 B-roll aplikovaný na timeline!" : "🎬 B-roll applied to timeline!");
     playSynthesizedSFX("camera-shutter", 0.8);
   };
@@ -4170,6 +4173,7 @@ function MainApp() {
                         onChangeSettings={(s: any) => setSettings((prev: any) => ({ ...prev, ...s }))}
                         onAddVoiceClip={(clip) => {
                           setVoiceClips((prev) => [...prev, clip]);
+                          recordLive("voice_added");
                           showToast(isSk ? `Hlas pridaný: ${clip.voiceName}` : `Voice added: ${clip.voiceName}`);
                         }}
                       />

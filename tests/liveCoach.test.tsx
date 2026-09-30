@@ -40,7 +40,9 @@ const sig = (over: Partial<LiveInputs> = {}) => computeSignals({ ...EMPTY, ...ov
 describe("A) kroky sa odškrtávajú len podľa skutočnosti", () => {
   test("A1 — na začiatku nie je hotový ani jeden krok", () => {
     const s = sig();
-    expect(Object.values(s)).toEqual([false, false, false, false, false, false, false, false]);
+    const values = Object.values(s);
+    expect(values.length).toBe(10); // 8 pôvodných + 2 z kroku 21 (B-roll, hlas)
+    expect(values.every((v) => v === false)).toBe(true);
   });
 
   test("A2 — udalosť v logu odškrtne presne ten krok, ktorý s ňou súvisí", () => {
@@ -57,6 +59,13 @@ describe("A) kroky sa odškrtávajú len podľa skutočnosti", () => {
 
     const w = sig({ canonicalCaptions: 3, canonicalCaptionsWithWords: 3 });
     expect(w.captions_with_words).toBe(true);
+  });
+
+  test("A3b — signály z vnútra nástrojov (B-roll, hlas) sa tiež riadia len udalosťou", () => {
+    expect(sig().broll_applied).toBe(false);
+    expect(sig().voice_added).toBe(false);
+    expect(sig({ log: ["broll_applied"] }).broll_applied).toBe(true);
+    expect(sig({ log: ["voice_added"] }).voice_added).toBe(true);
   });
 
   test("A4 — žiadny krok nie je „hotový“ z času ani z odhadu (0 px ⇒ nič hotové)", () => {
@@ -241,6 +250,39 @@ describe("E) vykreslenie (server-side render — nie prehliadač)", () => {
   test("E5 — appka píše, že odškrtnuté je len to, čo naozaj vidí", () => {
     const html = renderToStaticMarkup(<LiveCoachCard tabId="raw" signals={sig()} language="sk" />);
     expect(html).toContain("Odškrtnuté je len to, čo appka naozaj vidí");
+  });
+});
+
+describe("G) krok 21 — kroky, ktoré už appka vie overiť (B-roll, hlas)", () => {
+  test("G1 — krok „použi B-roll“ je overiteľný (nie ručný)", () => {
+    const steps = liveStepsFor("broll");
+    const applyStep = steps.find((s) => s.label.toLowerCase().includes("použi"));
+    expect(Boolean(applyStep?.signal)).toBe(true);
+    expect(applyStep?.manual).toBeUndefined();
+
+    // a po reálnej udalosti sa naozaj odškrtne
+    const states = evaluateLiveSteps(steps, sig({ log: ["broll_applied"] }));
+    const done = states.filter((s) => s.status === "done");
+    expect(done.length).toBe(1);
+    expect(done[0].label.toLowerCase().includes("použi")).toBe(true);
+  });
+
+  test("G2 — krok „vlož hlas do projektu“ je overiteľný", () => {
+    const steps = liveStepsFor("ai_voice");
+    const voiceStep = steps.find((s) => s.label.toLowerCase().includes("hlas"));
+    expect(Boolean(voiceStep?.signal)).toBe(true);
+    const states = evaluateLiveSteps(steps, sig({ log: ["voice_added"] }));
+    expect(states.some((s) => s.status === "done")).toBe(true);
+  });
+
+  test("G3 — hľadanie B-rollu vie appka tiež overiť (použitie záberu)", () => {
+    const steps = liveStepsFor("finder");
+    expect(steps.filter((s) => s.signal).length).toBe(1);
+  });
+
+  test("G4 — nič sa nepredstiera: kým sa nič nestalo, krok je neodškrtnutý", () => {
+    const states = evaluateLiveSteps(liveStepsFor("broll"), sig());
+    expect(states.every((s) => s.status !== "done")).toBe(true);
   });
 });
 
