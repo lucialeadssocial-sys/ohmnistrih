@@ -7,6 +7,9 @@
 
 import { ProjectModel, ClipModel } from '../../core/types/project';
 import { MediaAnalysisIndex } from '../../core/media/mediaIntelligenceIndex';
+// KROK 0c — jedna hlava: Director Studio sa na plán NEPÝTA vlastnou logikou,
+// ale číta to, čo rozhodol spoločný DirectorEngine (`generateDirectorPlan`).
+import { directorEngine } from '../../core/ai/directorEngine';
 
 export interface DirectorTool {
   name: string;
@@ -47,6 +50,54 @@ export class DirectorToolRegistry {
   }
 
   private registerAllTools(): void {
+    // --- 0. JEDNA HLAVA: rozhodnutia spoločného DirectorEngine ---
+
+    this.registerTool({
+      name: 'getDirectorDecisions',
+      description:
+        'Vráti rozhodnutia, ktoré vydal spoločný DirectorEngine pre tento projekt (rovnaké, aké vidí zvyšok appky). Ak projekt nemá nameranú analýzu, vráti 0 rozhodnutí a dôvod — Director si nič nedomýšľa.',
+      permissions: ['READ_PROJECT'],
+      undoBehavior: 'Žiadny vplyv na dáta (Read-only)',
+      inputSchema: {},
+      outputSchema: {
+        decisions: 'array',
+        confidence: 'number',
+        basis: 'string',
+        unresolvedAmbiguities: 'array',
+      },
+      validate: () => true,
+      execute: (_, project) => {
+        if (!project) {
+          return { success: false, error: 'Projekt nie je k dispozícii.' };
+        }
+        const plan = directorEngine.generateDirectorPlan(project);
+        // Priznáme presne to, čo engine vie: bez analýzy nevznikne ani jedno rozhodnutie.
+        const basis = plan.decisions.length > 0 ? 'analysis' : 'none';
+        return {
+          success: true,
+          result: {
+            decisions: plan.decisions.map((d: any) => ({
+              id: d.id,
+              type: d.type,
+              start: d.startTime ?? d.start,
+              end: d.endTime ?? d.end,
+              label: d.label ?? d.description ?? d.type,
+              reason: d.reason ?? d.rationale ?? '',
+              confidence: d.confidence ?? 0,
+              basis,
+            })),
+            confidence: plan.confidence,
+            basis,
+            unresolvedAmbiguities: plan.unresolvedAmbiguities,
+            noteSk:
+              plan.decisions.length === 0
+                ? 'DirectorEngine nevydal žiadne rozhodnutie, lebo projekt nemá nameranú analýzu. Nič sa nedomýšľa.'
+                : 'Rozhodnutia vydal spoločný DirectorEngine z nameranej analýzy projektu.',
+          },
+        };
+      },
+    });
+
     // --- 1. RETRIEVAL TOOLS ---
 
     this.registerTool({

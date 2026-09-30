@@ -28,6 +28,8 @@ import {
   type WordTimingIndex,
 } from "../transcript/wordTiming";
 
+import type { DirectorBasis } from "../ai/directorVocabulary";
+
 export const DEFAULT_MIN_SEGMENT_SEC = 0.6;
 export const MIN_USEFUL_SEGMENT_SEC = 1.2;
 
@@ -40,7 +42,8 @@ export interface RetentionPlanItemLike {
   label?: string;
   reason?: string;
   confidence?: number;
-  basis?: "transcript" | "estimate" | "ai";
+  /** KROK 0c — rovnaký slovník pôvodu ako Director (`directorVocabulary`). */
+  basis?: DirectorBasis;
 }
 
 export interface RetentionPlatformSpec {
@@ -103,7 +106,7 @@ export interface RetentionEdl {
     cutsPerMinute: number;
   };
   /** Na čom je strih postavený — dedí sa z plánu. */
-  basis: "transcript" | "estimate" | "mixed" | "none";
+  basis: DirectorBasis | "mixed" | "none";
   /**
    * Na čom sú postavené ČASY strihu:
    *  - `words` — prichytené na hranice slov (presnosť ~0,1 s), z word-level tituliek
