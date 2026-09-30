@@ -1,0 +1,91 @@
+
+================================================================================================
+1) REÁLNE MÉDIUM (skutočný súbor, nie syntetický)
+================================================================================================
+súbor............................................. real_speech.mp4
+veľkosť........................................... 345651 B
+dĺžka (meraná ffmpeg)............................. 20.27 s
+appka............................................. http://127.0.0.1:3000
+
+================================================================================================
+2) REÁLNY PREPIS SO ČASOVANÍM SLOV
+================================================================================================
+prepis (HTTP)..................................... 200 | success=true | hasSpeech=true
+prepis uložený.................................... /home/user/real-media/segments-krok17.json
+zdroj............................................. reálny prepis z tohto videa (HTTP /api/transcribe-speech)
+viet / slov....................................... 6 / 50
+prvá veta......................................... Za päť minút ti ukážem, ako som za jeden mesiac zdvojnásobil predaj.
+
+================================================================================================
+3) CANONICAL ČASOVÁ OS — titulky sa zapíšu CEZ CommandManager
+================================================================================================
+titulkov zapísaných do canonical osi.............. 6
+z toho s časovaním slov........................... 6
+bez časovania..................................... 0
+
+================================================================================================
+4) EXPORTNÝ PLÁN Z CANONICAL OSI — nesie slová?
+================================================================================================
+nahrané do appky.................................. 8cb51795-9c49-4a74-a0d3-1bbb33dabb4d__real_speech.mp4 (real_speech.mp4)
+titulkov v zadaní................................. 6
+z toho s časovaním slov........................... 6
+blokery exportu................................... žiadne
+slov v zadaní (celkom)............................ 50
+  • plán: 6 titulkov pôjde do videa priamo z canonical časovej osi (štýl VIRAL_BOLD podľa canonical presetov).
+  • plán: 6 z 6 titulkov majú časovanie slov z prepisu — zvýrazňovanie hovoreného slova ide do videa.
+  • plán: Strih: žiadny — ide celé video. Zvuk sa kopíruje bez prekódovania (bajtovo rovnaký ako zdroj).
+prvý titulok so slovami........................... "Za päť minút ti ukážem, ako som za jeden mesiac zdvojnásobil predaj." 0.4–4.1 s · slová: Za@0.4, päť@0.6, minút@0.8, ti@1.1, …
+slová sedia v okne svojho titulku................. áno
+
+================================================================================================
+5) NÁHĽAD — vidí to isté slovo?
+================================================================================================
+  • titulok @0.4 s · čas 0.7 s (vnútri slova) → náhľad zvýrazní „päť“, zadanie „päť“ ✔
+  • titulok @4.9 s · čas 5.35 s (vnútri slova) → náhľad zvýrazní „som“, zadanie „som“ ✔
+  • titulok @7.7 s · čas 8.15 s (vnútri slova) → náhľad zvýrazní „som“, zadanie „som“ ✔
+parita náhľad ↔ zadanie........................... 3/3 sedí
+
+================================================================================================
+6) REAL EXPORT — existujúca linka, žiadny druhý render engine
+================================================================================================
+render spustený (jobId)........................... f1577d7b-5df2-4d30-896b-110114e93e2e
+server: zvýrazňovanie slov........................ ÁNO (wordHighlight=true)
+server: počet titulkov............................ 50
+  • server: Rozmery som si overil zo súboru: 1080×1920 — titulky sa kreslia v skutočnom rozmere videa.
+  • server: Snímková frekvencia zdroja 30 fps — výstup ju zachová (žiadne potichu vyhodené snímky).
+  • server: Zvýrazňovanie hovoreného slova je zapnuté — mám časovanie slov z automatických tituliek.
+  • server: Titulky majú animáciu vstupu (pop) — animuje sa len objavenie, počas čítania text stojí.
+stav renderu...................................... done
+uložené........................................... /home/user/export-krok17-slova.mp4 (1403473 B)
+
+================================================================================================
+7) MERANIE HOTOVÉHO SÚBORA — hýbe sa zvýraznenie po slovách?
+================================================================================================
+hash zvuku zdroj → výstup......................... f6f5e86a16ab9e4c → f6f5e86a16ab9e4c (rovnaký)
+rozmer výstupu.................................... 1080×1920
+  • „Za“ @0.5 s: žltých 2099 px (stred X 381) | „päť“ @0.7 s: žltých 3072 px (stred X 653) | to isté slovo (+0,03 s): 2232 px (X 376) | zdrojové video: 0 px
+  • „Najprv“ @5.05 s: žltých 6671 px (stred X 342) | „som“ @5.35 s: žltých 3460 px (stred X 820) | to isté slovo (+0,03 s): 6671 px (X 342) | zdrojové video: 0 px
+  • „Potom“ @7.85 s: žltých 6107 px (stred X 356) | „som“ @8.15 s: žltých 3409 px (stred X 809) | to isté slovo (+0,03 s): 6107 px (X 356) | zdrojové video: 0 px
+  • „Ráno“ @10.4 s: žltých 5121 px (stred X 298) | „plán,“ @10.85 s: žltých 4655 px (stred X 760) | to isté slovo (+0,03 s): 5121 px (X 298) | zdrojové video: 0 px
+  • „Za“ @12.3 s: žltých 2095 px (stred X 331) | „prvý“ @12.6 s: žltých 4035 px (stred X 645) | to isté slovo (+0,03 s): 2235 px (X 324) | zdrojové video: 0 px
+snímky so zvýrazneným slovom...................... 5/5
+zvýraznenie sa posunulo na iné slovo.............. 5/5 dvojíc
+zdrojové video žlté zvýraznenie nemá.............. 5/5 snímok
+kontrola: titulok je vôbec v obraze (zdroj vs výstup) 14.1554
+server hlási chýbajúce časovanie.................. NIE (časovanie má)
+server hlási zvýrazňovanie........................ ÁNO
+
+================================================================================================
+8) VERDIKT
+================================================================================================
+slová idú z canonical osi do videa................ áno (dôkaz vyššie)
+zvýrazňovanie hovoreného slova overené............ áno — merané na hotovom súbore
+
+Odpoveď na zadanie: „Zvýrazňuje video naozaj hovorené slovo a ide to z canonical časovej osi?“
+→ ÁNO (canonical os → plán snímky → existujúca renderovacia linka → zmerané vo videu).
+
+Klasifikácia:
+  • canonical os + slová v zadaní + render ................. REAL MEDIA VERIFIED (tento beh)
+  • náhľad (canvas v prehliadači) .......................... NOT VERIFIED (v prostredí nie je DOM)
+  • generovanie vizuálov ................................... PROVIDER UNAVAILABLE (negeneruje sa nič)
+dôkaz uložený..................................... /home/user/kontrola-krok17-slova.json
