@@ -203,11 +203,18 @@ export function parseFfmpegProbe(text: string): VideoProbe {
   }
 
   for (const line of String(text ?? "").split("\n")) {
-    const stream = line.match(/Stream #\d+:\d+.*?:\s*Video:\s*([A-Za-z0-9_]+)[^,]*,\s*[^,]*(?:,\s*)?(\d{2,5})x(\d{2,5})/);
-    if (stream && probe.width === null) {
-      probe.videoCodec = stream[1];
-      probe.width = Number(stream[2]);
-      probe.height = Number(stream[3]);
+    // Pozor: pôvodný regex hľadal rozmery hneď za kodekom a na bežnom riadku
+    // (`Video: h264 (High) (avc1 …), yuv420p(tv, bt709, progressive), 720x1280, 30 fps`)
+    // zlyhal, lebo formát pixlov obsahuje čiarky. Preto sa rozmery aj fps hľadajú
+    // v celom riadku video stopy — a keď sa nenájdu, radšej `null` než odhad.
+    const videoLine = line.match(/Stream #\d+:\d+.*?:\s*Video:\s*([A-Za-z0-9_]+)/);
+    if (videoLine && probe.width === null) {
+      probe.videoCodec = videoLine[1];
+      const size = line.match(/(\d{2,5})x(\d{2,5})/);
+      if (size) {
+        probe.width = Number(size[1]);
+        probe.height = Number(size[2]);
+      }
       const fps = line.match(/(\d+(?:\.\d+)?)\s*fps/);
       if (fps) probe.fps = Number(fps[1]);
     }

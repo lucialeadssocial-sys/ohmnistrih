@@ -1167,6 +1167,11 @@ export interface BurnArgsOptions {
   fontsDir?: string;
   /** Klipy, ktoré sa majú vystrihnúť (rovnaký EDL ako v náhľade). Prázdne = celé video. */
   keepSegments?: { start: number; end: number; scalePercent?: number; keyframes?: BurnZoomKeyframe[] }[];
+  /**
+   * KROK 25 — prechody na spojoch úsekov. Keď tu nič nie je, strihy zostávajú
+   * obyčajné a zvuk sa nemení (žiadna tichá zmena pôvodného audia).
+   */
+  transitions?: { junctionIndex: number; ffmpeg: string; durationSec: number }[];
   /** Priblíženia na časovej osi (len keď sa nič nestrihá — čas videa sa nemení). */
   zoomWindows?: BurnZoomWindow[];
   /** Obrazové vrstvy z canonical osi (b-roll, fotky). */
@@ -1235,8 +1240,52 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
         `;[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
       );
     });
-    const inputs = keep.map((_, i) => `[v${i}][a${i}]`).join("");
-    filters.push(...parts, `${inputs}concat=n=${keep.length}:v=1:a=1[vc][ac]`);
+    filters.push(...parts);
+
+    // KROK 25 — prechody na spojoch. Použijú sa len tie, ktoré dávajú zmysel
+    // (spoj musí existovať a typ musí byť vykresliteľný); ostatné sa ticho
+    // nezahadzujú — server ich vypíše do poznámok.
+    const activeTransitions = (o.transitions ?? [])
+      .filter((t) => Number.isInteger(t.junctionIndex) && t.junctionIndex >= 0 && t.junctionIndex < keep.length - 1)
+      .filter((t) => t.durationSec > 0.02)
+      .sort((a, b) => a.junctionIndex - b.junctionIndex);
+
+    if (activeTransitions.length === 0) {
+      const inputs = keep.map((_, i) => `[v${i}][a${i}]`).join("");
+      filters.push(`${inputs}concat=n=${keep.length}:v=1:a=1[vc][ac]`);
+    } else {
+      // Postupne zľava doprava: na spoji bez prechodu `concat`, na spoji
+      // s prechodom `xfade` (obraz) + `acrossfade` (zvuk). Vďaka tomu, že
+      // xfade prekrýva o `duration`, je výsledok kratší presne o súčet prekrytí.
+      const byJunction = new Map(activeTransitions.map((t) => [t.junctionIndex, t]));
+      let accV = "[v0]";
+      let accA = "[a0]";
+      let accLen = keep[0].end - keep[0].start;
+      for (let i = 1; i < keep.length; i++) {
+        const tr = byJunction.get(i - 1);
+        const segLen = keep[i].end - keep[i].start;
+        const last = i === keep.length - 1;
+        const outV = last ? "[vc]" : `[vx${i}]`;
+        const outA = last ? "[ac]" : `[ax${i}]`;
+        if (tr) {
+          const d = tr.durationSec.toFixed(3);
+          // Offset = kedy v prvom (už spojenom) prúde začína prechod.
+          const offset = Math.max(0, accLen - tr.durationSec).toFixed(3);
+          filters.push(
+            `${accV}[v${i}]xfade=transition=${tr.ffmpeg}:duration=${d}:offset=${offset}${outV}`,
+          );
+          filters.push(`${accA}[a${i}]acrossfade=d=${d}:curve1=tri:curve2=tri${outA}`);
+          accLen = accLen + segLen - tr.durationSec;
+        } else {
+          filters.push(`${accV}[v${i}]concat=n=2:v=1:a=0${outV}`);
+          filters.push(`${accA}[a${i}]concat=n=2:v=0:a=1${outA}`);
+          accLen = accLen + segLen;
+        }
+        accV = outV;
+        accA = outA;
+      }
+    }
+
     baseLabel = "[vc]";
     audioFromConcat = true;
   } else if (zoomWindows.length > 0) {

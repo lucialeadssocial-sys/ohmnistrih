@@ -114,6 +114,8 @@ export interface BurnSpec {
   width: number;
   height: number;
   keepRanges: KeepRange[];
+  /** KROK 25 — prechody na spojoch úsekov (len vykresliteľné typy). */
+  transitions?: { junctionIndex: number; ffmpeg: string; durationSec: number }[];
   fontFamily?: string;
   /** Priblíženia z canonical osi (krok 8). */
   zoom: {
@@ -154,6 +156,7 @@ export interface BurnSpec {
 }
 
 import { lightCorrectionWithinLimits, type LightCorrection } from "./lightMatch";
+import { TRANSITION_LIMITS, XFADE_TRANSITIONS } from "./transitions";
 
 export type BurnValidation =
   | { ok: true; spec: BurnSpec }
@@ -417,6 +420,41 @@ export function validateBurnRequest(body: any): BurnValidation {
     };
   }
 
+  // KROK 25 — prechody: prijmeme len to, čo vie ffmpeg vykresliť a čo sedí na
+  // existujúci spoj. Zlý vstup = jasná chyba (nič sa nepredstiera).
+  const rawTransitions = Array.isArray(body?.transitions) ? body.transitions : [];
+  if (rawTransitions.length > TRANSITION_LIMITS.maxCount) {
+    return {
+      ok: false,
+      errorSk: `Prechodov je príliš veľa (${rawTransitions.length}) — maximum je ${TRANSITION_LIMITS.maxCount}.`,
+    };
+  }
+  const transitions: { junctionIndex: number; ffmpeg: string; durationSec: number }[] = [];
+  for (const t of rawTransitions) {
+    const junctionIndex = Number(t?.junctionIndex);
+    const durationSec = Number(t?.durationSec);
+    const ffmpeg = String(t?.ffmpeg ?? "");
+    if (!Number.isInteger(junctionIndex) || junctionIndex < 0 || junctionIndex >= Math.max(0, keepRanges.length - 1)) {
+      return {
+        ok: false,
+        errorSk: `Prechod je na spoji ${t?.junctionIndex}, ktorý v strihu neexistuje (spojov je ${Math.max(0, keepRanges.length - 1)}).`,
+      };
+    }
+    if (!(XFADE_TRANSITIONS as readonly string[]).includes(ffmpeg)) {
+      return {
+        ok: false,
+        errorSk: `Prechod „${ffmpeg}“ neviem vykresliť — známe sú: ${XFADE_TRANSITIONS.join(", ")}.`,
+      };
+    }
+    if (!(durationSec >= TRANSITION_LIMITS.minDurationSec && durationSec <= TRANSITION_LIMITS.maxDurationSec)) {
+      return {
+        ok: false,
+        errorSk: `Dĺžka prechodu ${durationSec} s je mimo bezpečných hodnôt (${TRANSITION_LIMITS.minDurationSec}–${TRANSITION_LIMITS.maxDurationSec} s).`,
+      };
+    }
+    transitions.push({ junctionIndex, ffmpeg, durationSec });
+  }
+
   const uploadName = safeBaseName(body.uploadName, "video.mp4");
   const stem = path.basename(uploadName, path.extname(uploadName)) || "video";
   const outputName = `omnistrih-titulky-${stem}-${Date.now()}.mp4`.replace(/[^\w.\-]+/g, "-");
@@ -442,6 +480,7 @@ export function validateBurnRequest(body: any): BurnValidation {
       zoom,
       baseFilter,
       lightCorrection,
+      ...(transitions.length > 0 ? { transitions } : {}),
       overlays,
       ...(Object.keys(normalized.overrides).length > 0 ? { overrides: normalized.overrides } : {}),
       ...(normalized.notesSk.length > 0 ? { overrideNotesSk: normalized.notesSk } : {}),

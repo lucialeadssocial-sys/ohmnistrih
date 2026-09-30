@@ -1,0 +1,52 @@
+{
+  "krok": 25,
+  "zdroj": "/home/user/referencie/aikt-Db6EKCpOpLo.mp4",
+  "useky": [
+    {
+      "start": 0,
+      "sourceStart": 0,
+      "sourceEnd": 4
+    },
+    {
+      "start": 4,
+      "sourceStart": 6,
+      "sourceEnd": 10
+    },
+    {
+      "start": 8,
+      "sourceStart": 12,
+      "sourceEnd": 16
+    }
+  ],
+  "prechody": [
+    {
+      "clipId": "seg-1",
+      "type": "crossfade",
+      "duration": 0.4
+    },
+    {
+      "clipId": "seg-2",
+      "type": "dissolve",
+      "duration": 0.5
+    }
+  ],
+  "bezPrechodov": {
+    "subor": "/home/user/kontrola-prechody/bez-prechodov.mp4",
+    "jobId": "d3e17e72-0e8b-481c-9d2a-291dfd94368f",
+    "dlzkaSec": 12
+  },
+  "sPrechodmi": {
+    "subor": "/home/user/kontrola-prechody/s-prechodmi.mp4",
+    "jobId": "a7918837-71ab-45bd-9fa4-e2c9ef4991d6",
+    "dlzkaSec": 11.1
+  },
+  "ocakavane": {
+    "bezPrechodov": 12,
+    "sPrechodmi": 11.1,
+    "prekrytie": 0.9
+  },
+  "verdikt": {
+    "dlzka_sedi": true,
+    "xfade_v_linke": true
+  }
+}
