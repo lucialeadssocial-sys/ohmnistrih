@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -7,14 +7,22 @@ import {
   Flame,
   Info,
   Loader2,
+  Sparkles,
   Square,
   Type,
 } from "lucide-react";
 import {
   BURN_HONESTY_SK,
   CAPTION_STYLES,
+  type CaptionStyleCategory,
   type CaptionStyleId,
 } from "../core/export/subtitleRender";
+import {
+  adviceInputFromContext,
+  adviseCaptionStyle,
+  type CaptionAdvice,
+} from "../core/export/captionAdvisor";
+import { CaptionStylePreview } from "./CaptionStylePreview";
 import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 
 /**
@@ -42,6 +50,12 @@ interface BurnCaptionsPanelProps {
   durationSec?: number | null;
   /** Zdrojové video z prehliadača (bez neho sa nedá nahrať na server). */
   getSourceBlob?: () => Promise<Blob | null>;
+  /** Formát, pre ktorý klip je (TIKTOK/REELS/SHORTS/ADS) — vstup pre odporúčanie. */
+  platform?: string;
+  /** Počet strihov v klipе (tempo je dôležité pre voľbu štýlu). */
+  cutCount?: number;
+  /** Oblasť / typ klienta z knižnice trendov (napr. „b2b", „fitness"). */
+  niche?: string;
 }
 
 type Phase = "idle" | "uploading" | "rendering" | "done" | "error" | "canceled";
@@ -59,6 +73,13 @@ interface BurnStatus {
     summarySk: string;
   } | null;
 }
+
+/** Názvy skupín v UI (aby sa v 9 štýloch dalo orientovať za sekundu). */
+const STYLE_GROUPS: Record<CaptionStyleCategory, string> = {
+  viralne: "🔥 Virálne (krátke formáty bez zvuku)",
+  ciste: "🎬 Čisté (rozprávanie, YouTube, B2B)",
+  brand: "🏢 Brand (firemné a klientske zadania)",
+};
 
 const STYLE_HINT_SK: Record<string, string> = {
   VIRAL_BOLD: "Submagic/CapCut štýl — veľké tučné, 2–3 slová, aktuálne slovo žlté.",
@@ -126,6 +147,9 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
   keepRanges,
   durationSec,
   getSourceBlob,
+  platform,
+  cutCount,
+  niche,
 }) => {
   const isSk = language === "sk";
   const [styleId, setStyleId] = useState<CaptionStyleId>("VIRAL_BOLD");
@@ -139,6 +163,8 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
   const [notes, setNotes] = useState<string[]>([]);
   /** Parametre, ktoré server prečítal priamo zo súboru (nie z prehliadača). */
   const [verified, setVerified] = useState<{ width: number; height: number; fps: number | null } | null>(null);
+  /** Odporúčanie štýlu (počíta sa lokálne, 0 tokenov, s dôvodmi). */
+  const [showAdvice, setShowAdvice] = useState(true);
   const [server, setServer] = useState<{
     available: boolean;
     messageSk: string;
@@ -325,6 +351,28 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
     );
   };
 
+  // Poradca: čisto lokálny výpočet z toho, čo o klipe viem.
+  const advice: CaptionAdvice = useMemo(
+    () =>
+      adviseCaptionStyle({
+        platform,
+        niche,
+        width: verified?.width ?? 1080,
+        height: verified?.height ?? 1920,
+        ...adviceInputFromContext({
+          durationSec: clipSeconds > 0 ? clipSeconds : Number(durationSec) || undefined,
+          cutCount: Number(cutCount) || 0,
+          segments,
+        }),
+      }),
+    [platform, niche, verified, clipSeconds, durationSec, cutCount, segments],
+  );
+
+  const recommendedStyle = advice.recommended
+    ? CAPTION_STYLES.find((x) => x.id === advice.recommended) ?? null
+    : null;
+  const recommendedRank = advice.ranked.find((r) => r.id === advice.recommended) ?? null;
+
   const busy = phase === "uploading" || phase === "rendering";
   const result = status?.result ?? null;
   const blockedByNoFfmpeg = server !== null && !server.available;
@@ -370,31 +418,132 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
         </div>
       )}
 
-      {/* Štýl */}
+      {/* Poradca: ktorý štýl sa hodí a PREČO (0 tokenov, dá sa prečítať) */}
+      {recommendedStyle && recommendedRank && (
+        <div className="p-3 rounded-xl bg-sky-500/5 border border-sky-500/25 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-sky-300 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[10px] font-black text-sky-200 uppercase tracking-wider">
+                  {isSk ? "Odporúčam pre tento klip" : "Recommended for this clip"}
+                </p>
+                <p className="text-[11px] text-white font-bold mt-0.5">{recommendedStyle.labelSk}</p>
+                {!busy && styleId !== recommendedStyle.id && (
+                  <button
+                    type="button"
+                    onClick={() => setStyleId(recommendedStyle.id)}
+                    className="mt-1 px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[9px] font-bold uppercase tracking-wider"
+                  >
+                    {isSk ? "Použiť odporúčaný" : "Use recommended"}
+                  </button>
+                )}
+                {styleId === recommendedStyle.id && (
+                  <p className="text-[9px] text-emerald-300 mt-1">
+                    {isSk ? "✓ Toto je odporúčaný štýl" : "✓ Selected"}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvice((v) => !v)}
+              className="text-[9px] text-sky-300/80 hover:text-sky-200 underline shrink-0"
+            >
+              {showAdvice ? (isSk ? "skryť prečo" : "hide why") : isSk ? "prečo?" : "why?"}
+            </button>
+          </div>
+
+          {showAdvice && (
+            <div className="space-y-1.5 pt-1 border-t border-sky-500/20">
+              {recommendedRank.reasonsSk.slice(0, 4).map((r, i) => (
+                <p key={i} className="text-[9px] text-sky-100/80 leading-relaxed">
+                  • {r.textSk}
+                </p>
+              ))}
+              {advice.ranked.slice(1, 3).map((alt) => (
+                <p key={alt.id} className="text-[9px] text-neutral-400 leading-relaxed">
+                  {isSk ? "Alternatíva" : "Alternative"}: <span className="text-neutral-300 font-bold">
+                    {CAPTION_STYLES.find((x) => x.id === alt.id)?.labelSk ?? alt.id}
+                  </span>
+                  {alt.reasonsSk[0] ? ` — ${alt.reasonsSk[0].textSk}` : ""}
+                </p>
+              ))}
+              {advice.cautionSk.slice(0, 2).map((c, i) => (
+                <p key={`c${i}`} className="text-[9px] text-amber-200/80 leading-relaxed">
+                  ⚠️ {c}
+                </p>
+              ))}
+              <p className="text-[9px] text-neutral-500 leading-relaxed pt-1">{advice.basisSk}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Možnosti výberu tituliek — s náhľadom, aby sa nemuselo renderovať */}
       <div>
         <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
-          <Type className="h-3 w-3" /> {isSk ? "Štýl titulkov" : "Caption style"}
+          <Type className="h-3 w-3" /> {isSk ? "Možnosti výberu tituliek" : "Caption style options"}
+          <span className="text-[9px] font-normal text-neutral-500 normal-case">
+            {isSk ? `(${CAPTION_STYLES.length} štýlov · náhľad ukazuje tvoje slová, bez renderovania)` : ""}
+          </span>
         </label>
-        <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-          {CAPTION_STYLES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setStyleId(s.id)}
-              disabled={busy}
-              className={`px-2.5 py-2 rounded-xl border text-left transition-colors ${
-                styleId === s.id
-                  ? "border-orange-500/60 bg-orange-500/10"
-                  : "border-neutral-800 hover:border-neutral-700"
-              }`}
-            >
-              <span className="block text-[10px] font-bold text-white">{s.labelSk}</span>
-              <span className="block text-[9px] text-neutral-400 mt-0.5 leading-snug">
-                {STYLE_HINT_SK[s.id] || s.descriptionSk}
-              </span>
-            </button>
-          ))}
-        </div>
+
+        {(Object.keys(STYLE_GROUPS) as CaptionStyleCategory[]).map((cat) => (
+          <div key={cat} className="mt-2">
+            <p className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+              {STYLE_GROUPS[cat]}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {CAPTION_STYLES.filter((x) => x.category === cat).map((style) => {
+                const selected = styleId === style.id;
+                const isRecommended = advice.recommended === style.id;
+                return (
+                  <button
+                    key={style.id}
+                    type="button"
+                    onClick={() => setStyleId(style.id)}
+                    disabled={busy}
+                    title={`${style.descriptionSk} · ${style.inspirationSk}`}
+                    className={`p-2 rounded-xl border text-left transition-colors flex gap-2 ${
+                      selected ? "border-orange-500/60 bg-orange-500/10" : "border-neutral-800 hover:border-neutral-700"
+                    }`}
+                  >
+                    <CaptionStylePreview
+                      styleId={style.id}
+                      segments={segments}
+                      width={verified?.width ?? 1080}
+                      height={verified?.height ?? 1920}
+                      previewHeight={92}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-bold text-white flex items-center gap-1">
+                        {style.labelSk}
+                        {isRecommended && (
+                          <span className="text-[8px] px-1 py-0.5 rounded bg-sky-500/20 text-sky-200 border border-sky-500/30">
+                            {isSk ? "odporúčané" : "picked"}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[9px] text-neutral-400 mt-0.5 leading-snug">{style.bestForSk}</p>
+                      <p className="text-[8px] text-neutral-600 mt-0.5 leading-snug">{style.inspirationSk}</p>
+                      {selected && (
+                        <p className="text-[8px] text-orange-300 mt-0.5 leading-snug">
+                          {isSk ? "✓ vybrané · " : "✓ "}
+                          {style.highlightMode === "active-word"
+                            ? isSk ? "zvýrazňuje hovorené slovo" : "highlights spoken word"
+                            : style.highlightMode === "keywords"
+                              ? isSk ? "zdôrazní čísla a silné slová" : "emphasises numbers"
+                              : isSk ? "čistý text" : "plain text"}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Čo sa presne stane */}

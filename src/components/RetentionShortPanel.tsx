@@ -493,8 +493,11 @@ export const RetentionShortPanel: React.FC<RetentionShortPanelProps> = ({
             language={language}
             speechSegments={speechSegments}
             keepRanges={edl.segments.map((seg) => ({ start: seg.sourceStart, end: seg.sourceEnd }))}
-            durationSec={edl.sourceDurationSec}
+            durationSec={edlDuration(edl)}
             getSourceBlob={getSourceBlob}
+            // Formát a tempo klipu — z nich poradca odvodí, ktorý štýl titulkov sedí.
+            platform={target.id}
+            cutCount={edl.stats.keptSegments > 0 ? edl.stats.keptSegments - 1 : 0}
           />
 
           {/* Časová os výsledku */}

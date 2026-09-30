@@ -47,7 +47,7 @@ v jednom prekódovaní, priamo z appky.
 
 Klip pre TikTok/Reels/Shorts sa pozerá **bez zvuku** — bez titulkov v obraze je aj
 najlepší strih stratený. Preto appka vie klip vyrenderovať **s titulkami zapečenými
-do obrazu** (RAW → READY → krok 3 → panel „Titulky zapečené do obrazu"):
+do obrazu** (RAW → READY → krok 3 → panel „Titulky zapečené do obrazu“):
 
 - **strih a vypálenie v jednom prechode ffmpeg** — jedno prekódovanie, nie dve,
 - štýly: `VIRAL_BOLD` (Submagic/CapCut štýl, aktuálne slovo žlté), `CLEAN`, `MINIMAL`,
@@ -58,6 +58,13 @@ do obrazu** (RAW → READY → krok 3 → panel „Titulky zapečené do obrazu"
   nevyhadzuje snímky),
 - poctivo priznané: vypálené titulky sa nedajú vypnúť, táto cesta prekóduje,
   preto je pred spustením vedomé potvrdenie a skutočné percentá z ffmpeg,
+- **9 štýlov tituliek v troch skupinách** (virálne / čisté / brand) + **odporúčanie
+  s dôvodmi** (deterministické pravidlo, 0 tokenov — `captionAdvisor.ts`) +
+  **náhľad bez renderovania** s vlastnými slovami z videa (`captionPreview.ts`).
+  Odporúčanie **nesľubuje virálnosť** a prizná, čo o klipe nevie; testy to kontrolujú.
+  Detail: `docs/CAPTION_STYLES.md`.
+- **Zvýrazňovanie čísel a silných slov** je čitateľné pravidlo (`isStrongCaptionWord`),
+  nie AI — preto sa dá obhájiť a vypnúť výberom iného štýlu.
 - **AI stále nerenderuje** — render je ffmpeg na serveri, spúšťaný používateľom.
 
 Dokumentácia a overené čísla: `docs/BURNED_CAPTIONS.md`.
@@ -79,13 +86,14 @@ Dokumentácia a overené čísla: `docs/BURNED_CAPTIONS.md`.
 | Nič sa nezmení, kým to neschválim | ✅ `status: proposed` → akcia Použiť/Zrušiť |
 | Keď niečo zlyhá, viem prečo | ✅ `fallbackReason`, `rawError`, čestné `basis` |
 | Vypálené titulky = jediné prekódovanie, a to výslovne na požiadanie | ✅ žiadne tiché prekódovanie; čistý strih kopíruje packety |
-| Pri strihu sa nič „potichu" nemení (fps, rám, čas titulkov) | ✅ fps zo sondy, rám bez cropu, titulky prepočítané na čas klipu |
+| Pri strihu sa nič „potichu“ nemení (fps, rám, čas titulkov) | ✅ fps zo sondy, rám bez cropu, titulky prepočítané na čas klipu |
+| Čo sa nedá overiť na vyrenderovanej snímke, nie je hotové | ✅ každý štýl má test, ktorý kontroluje ASS riadok aj použité farby |
 | Bez plateného API na export | ✅ export zostáva lokálny |
 | Žiadne ťažké modely pri otvorení appky | ✅ Whisper/analýza len na vyžiadanie |
 
 ## 5. Virálny obsah a trendy
 
-**Stav: Trend Radar v1 je hotový** (krok 3 → prepínač „🔥 Trend Radar"):
+**Stav: Trend Radar v1 je hotový** (krok 3 → prepínač „🔥 Trend Radar“):
 
 - **Kontrola virality** — deterministická (0 tokenov), hodnotí hotový plán pre zvolenú
   platformu: hook do 3 s, prvá sekunda, titulky, tempo (strihy/min), framing, zvukový
@@ -112,20 +120,20 @@ Ešte chýba:
 ### 5.1 Živé signály z platforiem (F5) — hotové
 
 Knižnica (vyššie) je **naučené princípy**. Vedľa toho appka od 29. 9. 2026 ťahá
-**reálne dáta z platforiem** (Trend Radar → záložka „📡 Živé signály"):
+**reálne dáta z platforiem** (Trend Radar → záložka „📡 Živé signály“):
 
 - **Google Trends** (bez kľúča): čo ľudia práve hľadajú v SK/CZ/US — aj s približným
   záujmom a správou, ktorá to spustila.
 - **YouTube kanálové RSS** (bez kľúča): čerstvé príspevky kanálov, ktoré si pridáš.
   Počet zhliadnutí feed neposiela — appka to **prizná**, nevymýšľa.
 - **YouTube rebríček** (voliteľný bezplatný kľúč): oficiálny rebríček s počtami
-  zhliadnutí — jediný zdroj, ktorý hovorí „čo naozaj funguje".
+  zhliadnutí — jediný zdroj, ktorý hovorí „čo naozaj funguje“.
 
 Mantinely, ktoré platia (a sú otestované):
 
 1. **Nič sa nespúšťa samo** — otvorenie appky ani panelu neposiela na platformy ani
    jeden dotaz. Signály sa stiahnu len po kliknutí; cache má TTL 30 min.
-2. **Každé zlyhanie má dôvod** — aj „nemám kľúč" je vysvetlené s návodom, nie ticho.
+2. **Každé zlyhanie má dôvod** — aj „nemám kľúč“ je vysvetlené s návodom, nie ticho.
 3. **Žiadne sľuby** — signál je surovina, nie záruka zhliadnutí. Zhrnutie to hovorí samo.
 4. **Signály do plánu idú len cez výber človeka** a panel ukazuje **presne ten text**,
    ktorý ide AI (aby nič nešlo potichu).
