@@ -64,6 +64,15 @@ dá sa prečítať a skontrolovať očami.
   video cez ffmpeg a overia výsledok** (streamy, dĺžku, dekódovanie bez chýb,
   poradie hooku, rýchlosť, zrušenie, 6 úsekov v rade, ochranu pri zlom EDL).
   Bez ffmpeg v prostredí sa korektne preskočia, nezlyhnú.
+- `bun test tests/wordTiming.test.ts` — 22 testov (krok A): hranice slov, pauzy,
+  delenie viet, sanitizácia poškodených dát.
+- `bun test tests/subtitleRender.test.ts tests/burnPipeline.test.ts` — 59 testov
+  (krok B): ASS formát a jeho escapovanie, zalomenie textu, prepočet časov pri
+  strihu, validácia požiadavky, percentá z ffmpeg, stavová mašina renderu,
+  bezpečné názvy súborov, upratovanie — a **E2E s ffmpeg**, ktorý meria, že sú
+  titulky naozaj v obraze (a že výstup nemá menej snímok než zdroj).
+
+**Celkom: `bun test tests/` = 187 testov v 8 súboroch, 0 zlyhaní.**
 
 ## 7. Render klipu do súboru (F2b)
 
@@ -132,15 +141,32 @@ Teraz sa posielajú ďalej.
 
 | | bez časovania slov | s časovaním slov |
 |---|---|---|
-| strih 1 | 4,20 – 6,10 | **4,00 – 6,50** (do púaz) |
+| strih 1 | 4,20 – 6,10 | **4,00 – 6,50** (do páuz) |
 | strih 2 | 9,30 – 11,15 | **9,10 – 11,15** |
 | hlásenia | — | 3 posuny, najviac 0,40 s |
 
-## 8. Čo ešte nie je hotové (poctivo)
+## 9. Titulky zapečené do obrazu (krok B) — hotové
 
-- **Word-level časovanie** z prepisu: dnes sa časy viet odhadujú podľa dĺžky textu.
-  So skutočným časovaním slov budú strihy presné na desatinu sekundy.
-- **Render s efektmi** (titulky, zoom, prechody zapečené do obrazu) — to už
-  vyžaduje prekódovanie; naplánované ako ďalší krok nad FFmpeg.
+Klip s **titulkami v obraze** (pre TikTok/Reels/Shorts) sa renderuje na serveri
+cez ffmpeg — strih a vypálenie v **jednom prechode**. Toto je jediná vec, ktorá
+prekóduje obraz; preto je oddelená, výslovne potvrdená a hlási skutočné percentá.
+
+- pri strihu sa titulky **prepočítajú na čas klipu** (slová z vystrihnutých častí
+  vypadnú, slovo preseknuté strihom sa oreže, titulok rozdelený na dva sa rozdelí),
+- server si **overí rozmery a fps zo súboru** — v živom teste odhalil tichú chybu:
+  `concat` menil 30 fps na 25 (93 → 78 snímok); opravené filtrom `fps=<zdroj>`,
+- štýl `VIRAL_BOLD` (aktuálne slovo žlté), `CLEAN`, `MINIMAL`; bez word-level časov
+  sa zvýrazňovanie **vypne a povie to**,
+- poctivo priznané: nedá sa vypnúť po vypálení, prekóduje sa (CRF 20), rám videa
+  sa nemení.
+
+Celý popis, endpointy, limity a čísla z ostrého behu: **`docs/BURNED_CAPTIONS.md`**.
+
+## 10. Čo ešte nie je hotové (poctivo)
+
+- **Zoom, prechody a ďalšie efekty zapečené do obrazu** — krok B vie len titulky.
+  Zoom je samostatný krok (rovnaká infraštruktúra: server + ffmpeg + poctivý priebeh).
+- **Výber štýlu podľa klienta** — štýly sú hotové, ale vyberajú sa ručne;
+  napojenie na „VLASTNÝ štýl“ z Trend Radaru ešte nie je.
 - **Presné strihy bez posunu na kľúčový snímok** (smart-render cez FFmpeg s
   re-encodom len prvého GOP) — dnes je posun vždy priznaný, nie skrytý.

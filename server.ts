@@ -4,6 +4,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import {
   buildSentenceTimings,
   buildWordIndex,
@@ -11,6 +13,32 @@ import {
   speechCoverage,
   type SpeechSegmentLike,
 } from "./src/core/transcript/wordTiming";
+import {
+  buildAssForCut,
+  buildBurnFfmpegArgs,
+  burnSummarySk,
+  getCaptionStyle,
+  BURN_HONESTY_SK,
+} from "./src/core/export/subtitleRender";
+import {
+  BURN_LIMITS,
+  BURN_MAX_UPLOAD_SK,
+  BurnJobStore,
+  burnJobStatus,
+  dirSizeBytes,
+  isSafeStoredName,
+  pruneDir,
+  parseFfmpegProgress as parseFfmpegProgressLine,
+  safeBaseName,
+  uploadStorageName,
+  validateBurnRequest,
+} from "./src/core/export/burnJob";
+import {
+  FFMPEG_MISSING_SK,
+  findFfmpegPath,
+  prepareCaptionFont,
+  probeVideoFile,
+} from "./src/core/export/ffmpegEnv";
 import {
   buildBundle,
   DEFAULT_GEOS,
@@ -3453,6 +3481,338 @@ app.post("/api/trends/settings", async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ success: false, errorSk: `Nastavenia sa nepodarilo uložiť: ${err?.message || "chyba"}` });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VYPÁLENIE TITULKOV DO OBRAZU (krok B) — serverová časť
+//
+// Prečo server a nie prehliadač: zapečenie titulkov vyžaduje prekódovanie obrazu,
+// a to prehliadač (Mediabunny) nerobí. Idea appky zostáva: AI nič nerenderuje,
+// ťažkú prácu robí ffmpeg — tu konkrétne na serveri, na požiadanie používateľa.
+//
+// Tok (3 kroky, aby sa dalo hlásiť poctivo percentami):
+//   1. POST /api/export/upload           — surové video do .data/uploads
+//   2. POST /api/export/burn-captions    — spustí render, vráti jobId (nečaká sa)
+//   3. GET  /api/export/burn-captions/status?id=… — priebeh a výsledok
+//      GET  /api/export/file/<meno>      — stiahnutie / prehratie hotového klipu
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+const EXPORT_DIR = path.join(DATA_DIR, "exports");
+const FONT_DIR = path.join(DATA_DIR, "fonts");
+const burnJobs = new BurnJobStore();
+/** Bežiace ffmpeg procesy (kvôli zastaveniu renderu). */
+const burnProcesses = new Map<string, ReturnType<typeof spawn>>();
+
+function ensureDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+/** Stav ffmpeg na serveri — appka to ukáže ešte pred kliknutím na vypálenie. */
+app.get("/api/export/ffmpeg", (_req, res) => {
+  const found = findFfmpegPath();
+  res.json({
+    success: true,
+    available: Boolean(found),
+    ffmpegPath: found ? found.path : null,
+    source: found ? found.source : null,
+    messageSk: found
+      ? `ffmpeg je k dispozícii (${found.labelSk}). Vypálenie titulkov je pripravené.`
+      : FFMPEG_MISSING_SK,
+    limits: {
+      maxUploadMb: Math.round(BURN_LIMITS.maxUploadBytes / (1024 * 1024)),
+      maxCaptionSegments: BURN_LIMITS.maxCaptionSegments,
+    },
+    honestySk: BURN_HONESTY_SK,
+  });
+});
+
+/** 1) Nahranie zdrojového videa (surové telo požiadavky, nie base64 — o 33 % menej dát). */
+app.post(
+  "/api/export/upload",
+  express.raw({ type: () => true, limit: BURN_LIMITS.maxUploadBytes }),
+  (req, res) => {
+    try {
+      const body = req.body as Buffer;
+      if (!body || !Buffer.isBuffer(body) || body.length === 0) {
+        return res.status(400).json({
+          success: false,
+          errorSk: "Neprišli žiadne dáta videa — skús to znova (súbor sa možno nepodarilo prečítať).",
+        });
+      }
+      if (body.length > BURN_LIMITS.maxUploadBytes) {
+        return res.status(413).json({ success: false, errorSk: BURN_MAX_UPLOAD_SK });
+      }
+
+      ensureDir(UPLOAD_DIR);
+      const original = safeBaseName(req.query.name, "video.mp4");
+      const storageName = uploadStorageName(original, randomUUID());
+      const target = path.join(UPLOAD_DIR, storageName);
+      fs.writeFileSync(target, body);
+
+      // Nech tu nezostávajú desiatky starých videí.
+      pruneDir(UPLOAD_DIR, BURN_LIMITS.maxStoredUploads);
+
+      res.json({
+        success: true,
+        uploadId: storageName,
+        uploadName: original,
+        sizeBytes: body.length,
+        messageSk: `Video prijaté (${(body.length / (1024 * 1024)).toFixed(1)} MB).`,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        errorSk: `Video sa nepodarilo uložiť: ${err?.message || "neznáma chyba"}`,
+      });
+    }
+  },
+);
+
+/** 2) Spustenie vypálenia — vracia jobId hneď, render beží na pozadí. */
+app.post("/api/export/burn-captions", (req, res) => {
+  const found = findFfmpegPath();
+  if (!found) {
+    return res.status(503).json({ success: false, errorSk: FFMPEG_MISSING_SK });
+  }
+
+  const validation = validateBurnRequest(req.body);
+  if (!validation.ok) {
+    return res.status(400).json({ success: false, errorSk: validation.errorSk });
+  }
+  const spec = validation.spec;
+
+  if (!isSafeStoredName(spec.uploadId)) {
+    return res.status(400).json({ success: false, errorSk: "Neplatný identifikátor nahraného videa." });
+  }
+  const inputPath = path.join(UPLOAD_DIR, spec.uploadId);
+  if (!fs.existsSync(inputPath)) {
+    return res.status(404).json({
+      success: false,
+      errorSk: "Nahrané video už na serveri nie je (upratal som staršie súbory). Nahraj ho znova — je to na jedno kliknutie.",
+    });
+  }
+
+  ensureDir(EXPORT_DIR);
+  // Nech staré rendery nezaplnia disk (najnovších 25 zostáva).
+  pruneDir(EXPORT_DIR, BURN_LIMITS.maxStoredExports);
+  pruneDir(FONT_DIR, 40);
+
+  const style = getCaptionStyle(spec.styleId);
+  const font = prepareCaptionFont(FONT_DIR, spec.fontFamily);
+
+  // Rozmery a snímkovú frekvenciu **overíme sami** (ffmpeg prečíta súbor).
+  // Prehliadač môže hlásiť pootočené video alebo nič — a ASS aj strih musia
+  // sedieť na to, čo je naozaj v súbore. Keď sa sonda nepodarí, ide sa ďalej
+  // s tým, čo poslal prehliadač, a appka to napíše.
+  const probe = probeVideoFile(found.path, inputPath);
+  const width = probe?.width ?? spec.width;
+  const height = probe?.height ?? spec.height;
+
+  const built = buildAssForCut({
+    segments: spec.segments,
+    keepRanges: spec.keepRanges,
+    style,
+    width,
+    height,
+    ...(font ? { fontName: font.fontName } : {}),
+  });
+
+  const probeNotesSk: string[] = [];
+  if (probe && probe.width && probe.height) {
+    const claimed =
+      probe.width !== spec.width || probe.height !== spec.height
+        ? ` (prehliadač hlásil ${spec.width}×${spec.height})`
+        : "";
+    probeNotesSk.push(
+      `Rozmery som si overil zo súboru: ${probe.width}×${probe.height}${claimed} — titulky sa kreslia v skutočnom rozmere videa.`,
+    );
+  } else {
+    probeNotesSk.push(
+      `Parametre videa sa nepodarilo prečítať; použil som rozmery z prehliadača (${spec.width}×${spec.height}). Skontroluj výsledok.`,
+    );
+  }
+  if (probe?.fps) {
+    probeNotesSk.push(`Snímková frekvencia zdroja ${probe.fps} fps — výstup ju zachová (žiadne potichu vyhodené snímky).`);
+  } else {
+    probeNotesSk.push(
+      "Snímkovú frekvenciu zdroja neviem zistiť — ak výstup vyzerá menej plynulo, je to dôvod (vtedy skús vyrenderovať klip bez titulkov).",
+    );
+  }
+
+  const assPath = path.join(EXPORT_DIR, `${path.basename(spec.outputName, ".mp4")}.ass`);
+  fs.writeFileSync(assPath, built.ass, "utf8");
+
+  const outputPath = path.join(EXPORT_DIR, spec.outputName);
+  const args = [
+    "-progress",
+    "pipe:1",
+    "-nostats",
+    ...buildBurnFfmpegArgs({
+      inputPath,
+      outputPath,
+      assPath,
+      ...(font ? { fontsDir: font.fontsDir } : {}),
+      keepSegments: spec.keepRanges,
+      ...(probe?.fps ? { sourceFps: probe.fps } : {}),
+      // Zámerne NEPOSIELAME width/height → obraz sa neorezáva na iný formát.
+      // Vypálenie titulkov nesmie potichu zmeniť rám videa.
+    }),
+  ];
+
+  const job = burnJobs.create({
+    styleId: spec.styleId,
+    width: spec.width,
+    height: spec.height,
+    keepCount: spec.keepRanges.length,
+  });
+  burnJobs.patch(job.id, {
+    state: "rendering",
+    messageSk: `Vypaľujem ${built.eventCount} titulkov a prekódujem ${built.clipDurationSec.toFixed(1)} s videa…`,
+  });
+
+  const child = spawn(found.path, args, { stdio: ["ignore", "pipe", "pipe"] });
+  burnProcesses.set(job.id, child);
+
+  let stdoutBuffer = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutBuffer += chunk.toString("utf8");
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const percent = parseFfmpegProgressLine(line, built.clipDurationSec);
+      if (percent !== null) burnJobs.patch(job.id, { percent });
+      const speed = line.match(/^speed=\s*([\d.]+x)/);
+      if (speed) burnJobs.patch(job.id, { messageSk: `Vypaľujem titulky… ${speed[1]}` });
+    }
+  });
+
+  const stderrTail: string[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => {
+    for (const line of chunk.toString("utf8").split("\n")) {
+      if (line.trim()) stderrTail.push(line.trim());
+    }
+    if (stderrTail.length > 40) stderrTail.splice(0, stderrTail.length - 40);
+  });
+
+  child.on("error", (err) => {
+    burnProcesses.delete(job.id);
+    burnJobs.fail(job.id, `ffmpeg sa nepodarilo spustiť: ${err.message}`, stderrTail);
+  });
+
+  child.on("close", (code) => {
+    burnProcesses.delete(job.id);
+    const current = burnJobs.get(job.id);
+    if (current?.state === "canceled") {
+      try {
+        fs.rmSync(outputPath, { force: true });
+      } catch {
+        /* súbor ani nevznikol */
+      }
+      return;
+    }
+
+    if (code !== 0 || !fs.existsSync(outputPath)) {
+      burnJobs.fail(
+        job.id,
+        `Vypálenie titulkov zlyhalo (ffmpeg kód ${code}). Zdrojové video je nedotknuté.`,
+        stderrTail,
+      );
+      return;
+    }
+
+    const sizeBytes = fs.statSync(outputPath).size;
+    const notesSk = [...probeNotesSk, ...built.notesSk];
+    if (!font) {
+      notesSk.push(
+        "Nenašiel som písmo s úplnou diakritikou na serveri — použil som písmo, ktoré má libass. Skontroluj v klipе, či sedia háčky a dĺžne.",
+      );
+    }
+    if (built.eventCount === 0) {
+      notesSk.push("Klip sa vyrenderoval, ale bez titulkov — nebolo čo vypáliť.");
+    }
+
+    burnJobs.finish(job.id, {
+      outputName: spec.outputName,
+      outputUrl: `/api/export/file/${encodeURIComponent(spec.outputName)}`,
+      sizeBytes,
+      clipDurationSec: built.clipDurationSec,
+      summarySk: burnSummarySk(built, style, built.clipDurationSec),
+    });
+    burnJobs.patch(job.id, { logTail: notesSk.concat(BURN_HONESTY_SK) });
+  });
+
+  res.json({
+    success: true,
+    jobId: job.id,
+    eventCount: built.eventCount,
+    clipDurationSec: built.clipDurationSec,
+    wordHighlight: built.wordHighlight,
+    fontSk: font ? font.sourceSk : "písmo z prostredia (libass)",
+    probedWidth: width,
+    probedHeight: height,
+    probedFps: probe?.fps ?? null,
+    notesSk: [...probeNotesSk, ...built.notesSk],
+    honestySk: BURN_HONESTY_SK,
+  });
+});
+
+/** 3a) Priebeh a výsledok renderu. */
+app.get("/api/export/burn-captions/status", (req, res) => {
+  const job = burnJobs.get(String(req.query.id ?? ""));
+  if (!job) {
+    return res.status(404).json({ success: false, errorSk: "Tento render nepoznám (server sa medzitým reštartoval?)." });
+  }
+  res.json({ success: true, status: burnJobStatus(job), notesSk: job.logTail });
+});
+
+/** 3b) Zastavenie renderu — poctivé: rozpracovaný súbor sa zahodí. */
+app.post("/api/export/burn-captions/cancel", (req, res) => {
+  const id = String(req.body?.jobId ?? req.query.id ?? "");
+  const job = burnJobs.get(id);
+  if (!job) {
+    return res.status(404).json({ success: false, errorSk: "Tento render nepoznám." });
+  }
+  const child = burnProcesses.get(id);
+  burnJobs.cancel(id);
+  if (child) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* už skončil */
+    }
+  }
+  res.json({ success: true, messageSk: "Render zastavený. Zdrojové video je nedotknuté." });
+});
+
+/** 3c) Stiahnutie / prehratie hotového klipu (len z adresára exportov). */
+app.get("/api/export/file/:name", (req, res) => {
+  const name = String(req.params.name ?? "");
+  if (!isSafeStoredName(name)) {
+    return res.status(400).json({ success: false, errorSk: "Neplatné meno súboru." });
+  }
+  const full = path.join(EXPORT_DIR, name);
+  if (!full.startsWith(EXPORT_DIR + path.sep) || !fs.existsSync(full)) {
+    return res.status(404).json({ success: false, errorSk: "Súbor neexistuje (mohol byť uprataný)." });
+  }
+  const inline = String(req.query.inline ?? "") === "1";
+  res.setHeader("Content-Type", name.endsWith(".mp4") ? "video/mp4" : "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    `${inline ? "inline" : "attachment"}; filename="${name}"`,
+  );
+  res.sendFile(full);
+});
+
+/** Prehľad: čo je v .data (aby bolo vidieť, že sa upratuje). */
+app.get("/api/export/status", (_req, res) => {
+  res.json({
+    success: true,
+    exportDir: EXPORT_DIR,
+    exportsBytes: dirSizeBytes(EXPORT_DIR),
+    uploadsBytes: dirSizeBytes(UPLOAD_DIR),
+    limits: BURN_LIMITS,
+  });
 });
 
 async function startServer() {
