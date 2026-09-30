@@ -346,6 +346,10 @@ export function GuideModal({ open, language = "sk", onClose, onGoToTool }: Guide
 
 export interface SimpleModeStripProps {
   language?: Lang;
+  /** koľko z 5 krokov je NAOZAJ hotových (podľa reálnych udalostí v appke) */
+  doneCount?: number;
+  /** nasledujúci krok postupu (id nástroja) — zvýrazní sa „ďalej“ */
+  nextTab?: string;
   /** práve otvorený nástroj — krok, ktorý mu zodpovedá, sa zvýrazní */
   activeTab?: string;
   /** true = užívateľ má zapnutý expert režim */
@@ -363,6 +367,8 @@ export function SimpleModeStrip({
   language = "sk",
   activeTab,
   expertMode,
+  doneCount = 0,
+  nextTab,
   onGoToTool,
   onOpenGuide,
   onToggleExpert,
@@ -377,7 +383,17 @@ export function SimpleModeStrip({
     >
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="min-w-0">
-          <div className="text-[11px] font-black uppercase tracking-wide text-neutral-400">{t.stepsTitle}</div>
+          <div className="text-[11px] font-black uppercase tracking-wide text-neutral-400">
+            {t.stepsTitle}
+            {doneCount > 0 ? (
+              <span
+                data-testid="flow-done"
+                className="ml-2 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 normal-case font-bold"
+              >
+                {isSk ? `hotové: ${doneCount} z 5` : `done: ${doneCount} of 5`}
+              </span>
+            ) : null}
+          </div>
           <div className="text-[10px] text-neutral-500">{t.stepsHint}</div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -403,6 +419,7 @@ export function SimpleModeStrip({
       <div className="mt-2 flex items-stretch gap-1.5 overflow-x-auto custom-scrollbar pb-0.5">
         {FLOW_STEPS.map((step) => {
           const active = activeTab === step.tabId;
+          const flowDone = step.n <= doneCount;
           const simple = SIMPLE_MODE_TABS.includes(step.tabId);
           return (
             <button
@@ -416,15 +433,21 @@ export function SimpleModeStrip({
               }`}
             >
               <span
+                data-flow-done={flowDone ? "1" : "0"}
                 className={`w-4.5 h-4.5 min-w-[18px] h-[18px] rounded-full text-[10px] font-black flex items-center justify-center ${
-                  active ? "bg-rose-500 text-white" : "bg-neutral-800 text-neutral-300"
+                  flowDone ? "bg-emerald-500 text-white" : active ? "bg-rose-500 text-white" : "bg-neutral-800 text-neutral-300"
                 }`}
               >
-                {step.n}
+                {flowDone ? "✓" : step.n}
               </span>
               <span className={`text-[11px] font-bold whitespace-nowrap ${active ? "text-white" : "text-neutral-300"}`}>
                 {step.title}
               </span>
+              {step.tabId === nextTab ? (
+                <span className="text-[9px] font-bold text-rose-300 uppercase">
+                  {isSk ? "ďalej" : "next"}
+                </span>
+              ) : null}
               {!simple ? (
                 <span className="text-[9px] font-bold text-amber-400/80 uppercase">{isSk ? "expert" : "expert"}</span>
               ) : null}
