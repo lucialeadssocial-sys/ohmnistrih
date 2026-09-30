@@ -12,11 +12,13 @@
  *
  * Poctivo: náhľad je **vizuálna aproximácia** (prehliadač kreslí písmo inak než
  * libass). Hovorí to aj UI. Na presné rozhodnutie o veľkosti je render, tento
- * náhľad je na rýchle „áno/nie, toto je ono".
+ * náhľad je na rýchle „áno/nie, toto je ono“.
  */
 
 import {
   getCaptionStyle,
+  applyCaptionOverrides,
+  type CaptionOverrides,
   isStrongCaptionWord,
   wrapAssLines,
   type CaptionStyleId,
@@ -106,10 +108,12 @@ export function buildCaptionPreview(options: {
   width?: number;
   height?: number;
   previewHeight?: number;
-  /** Ktoré slovo je „práve hovorené" (index v rámci ukážky). */
+  /** Ktoré slovo je „práve hovorené“ (index v rámci ukážky). */
   activeWordIndex?: number;
+  /** Odchýlky vlastného štýlu klienta (farba, veľkosť…) — náhľad ich musí ukázať. */
+  overrides?: CaptionOverrides;
 }): CaptionPreviewModel {
-  const style = getCaptionStyle(options.styleId);
+  const style = applyCaptionOverrides(getCaptionStyle(options.styleId), options.overrides);
   const width = Number(options.width) > 0 ? Number(options.width) : 1080;
   const height = Number(options.height) > 0 ? Number(options.height) : 1920;
   const previewHeight = Number(options.previewHeight) > 0 ? Number(options.previewHeight) : 190;

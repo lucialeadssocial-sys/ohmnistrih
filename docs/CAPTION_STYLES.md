@@ -4,7 +4,8 @@
 > Kód: `src/core/export/subtitleRender.ts` (katalóg štýlov), `captionAdvisor.ts`
 > (odporúčanie), `captionPreview.ts` + `src/components/CaptionStylePreview.tsx` (náhľad),
 > `BurnCaptionsPanel.tsx` (UI).
-> Testy: `bun test tests/captionStyles.test.ts` (38 testov).
+> Testy: `bun test tests/captionStyles.test.ts` (38 testov) +
+> `tests/captionProfiles.test.ts` (47 testov — animácie a brand kit).
 
 ## 1. Prečo to existuje
 
@@ -129,14 +130,15 @@ Pravidlo do budúcna: **čo sa nedá overiť na snímke, nie je hotové.**
 
 ## 8. Čo ešte nie je hotové (poctivo)
 
-- **Vlastné farby a font** (logo klienta, brandové farby) — dnes sa vyberá z 9
-  pripravených štýlov.
-- **Animované efekty** (pop-in, typewriter, progresívne odkrývanie) — appka vie
-  zväčšenie aktívneho slova (bounce), nič viac.
+- **Vlastný font klienta (súbor .ttf)** — v katalógu je 9 pripravených štýlov
+  a vlastné **farby, veľkosť, okraj, animácia a umiestnenie** (brand kit,
+  `docs/CAPTION_BRAND_KIT.md`); nahratie vlastného písma ešte nie je.
+- **Ďalšie animácie** — hotové sú pop / punch / fade (animuje sa len objavenie,
+  aby sa text dal čítať). Typewriter a progresívne odkrývanie po slovách nie sú;
+  zvyšok riadku, ktorý ešte nie je vyslovený, by vyzeral ako chyba videa.
 - **Viac riadkov s pevným počtom znakov na riadok podľa fontu** — dnes je zalomenie
   podľa odhadu šírky znaku (0,55 × veľkosť fontu), čo je overené, ale nie presné
   meranie fontu.
-- **Uloženie „môj štýl“ pre klienta** — poradca odporúča, ale voľba sa zatiaľ
-  nepamätá medzi sedeniami (napojenie na Edit DNA je najbližší krok).
+- ~~Uloženie „môj štýl“ pre klienta~~ — **hotové** v kroku B++ (profily na serveri).
 - **Automatické čítanie štýlu z minulých videí** — Edit DNA vie, ktoré zásahy
-  prijímaš; štýl titulkov sa zatiaľ nepamätá.
+  prijímaš; štýl titulkov sa zatiaľ nepamätá (napojenie je najbližší krok).

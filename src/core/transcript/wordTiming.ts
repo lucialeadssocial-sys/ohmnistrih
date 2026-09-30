@@ -14,10 +14,10 @@
  *
  * Zásady (rovnaké ako inde v projekte):
  *  - Modul je **čistý** — žiadne siete, žiadny stav, dá sa testovať bez videa.
- *  - **Nič sa nedomýšľa.** Keď slová nie sú, vráti sa poctivé „nemám presné časovanie"
+ *  - **Nič sa nedomýšľa.** Keď slová nie sú, vráti sa poctivé „nemám presné časovanie“
  *    a volajúci sa rozhodne (typicky fallback na odhad podľa textu).
  *  - **Každý zásah je viditeľný.** Keď sa strih posunul kvôli hranici slova,
- *    výsledok to hlási — v desatinách sekundy, nie „približne".
+ *    výsledok to hlási — v desatinách sekundy, nie „približne“.
  */
 
 // ---------------------------------------------------------------------------
@@ -149,8 +149,8 @@ export function buildWordIndex(words: WordTimingLike[], minGapSec = 0.08): WordT
   const gaps: SpeechGap[] = [];
 
   // Hranica existuje na ZAČIATKU aj na KONCI každého slova. Obe sú legitímne
-  // miesta na strih: začiatok = „odtiaľto strihám", koniec = „sem to slovo ešte
-  // patrí". Bez koncových hraníc by sa strih prichytil na začiatok slova,
+  // miesta na strih: začiatok = „odtiaľto strihám“, koniec = „sem to slovo ešte
+  // patrí“. Bez koncových hraníc by sa strih prichytil na začiatok slova,
   // ktoré malo ostať celé — presne to odhalil test.
   for (let i = 0; i < list.length; i++) {
     const prev = list[i - 1];
@@ -312,7 +312,7 @@ export function snapRangeToWords(
 /**
  * Poskladá vety s PRESNÝMI časmi z titulkových segmentov.
  *
- * Titulky sú krátke (2–6 slov), takže samy o sebe nie sú „veta". Spájame ich,
+ * Titulky sú krátke (2–6 slov), takže samy o sebe nie sú „veta“. Spájame ich,
  * kým nenarazíme na koniec vety (`. ! ? …`) alebo na **pauzu** dlhšiu než
  * `pauseBreakSec` — pauza v reči je prirodzená hranica myšlienky, aj keď
  * interpunkcia chýba.
@@ -390,7 +390,7 @@ function round3(n: number): number {
 
 /**
  * Zistí, aká časť videa je pokrytá rečou — hodí sa na rozhodnutie, či má zmysel
- * strihať „ticho" (napr. keď je reči 95 %, strihanie ticha nič neprinesie).
+ * strihať „ticho“ (napr. keď je reči 95 %, strihanie ticha nič neprinesie).
  */
 export function speechCoverage(words: WordTimingLike[], durationSec: number): { ratio: number; speechSec: number } {
   const list = (Array.isArray(words) ? words : []).filter((w) => cleanWord(w?.word));

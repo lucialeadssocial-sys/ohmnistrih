@@ -45,6 +45,26 @@ export type CaptionStyleCategory = "viralne" | "ciste" | "brand";
  */
 export type CaptionHighlightMode = "active-word" | "keywords" | "none";
 
+/**
+ * Animácia vstupu titulku. Zámerne len tri, ktoré sa v praxi osvedčili —
+ * a hlavne: **animuje sa len vstup**, text počas čítania stojí. Titulok, ktorý sa
+ * hýbe celý čas, sa nedá čítať (to je najčastejšia chyba „cool“ titulkov).
+ *
+ *  - `none` — bez animácie (pokojné štýly),
+ *  - `pop` — text vyrastie z 86 % na 100 % (živý, ale čitateľný),
+ *  - `punch` — text priletí z 114 % a sadne na 100 % (agresívnejšie, pre hooky),
+ *  - `fade` — jemné objavenie a zmiznutie (decentné, pre rozprávanie).
+ */
+export type CaptionAnimation = "none" | "pop" | "punch" | "fade";
+
+/** Ako dlho animácia trvá (ms). Nad 250 ms už pôsobí pomaly. */
+export const CAPTION_ANIMATION_MS: Record<CaptionAnimation, number> = {
+  none: 0,
+  pop: 130,
+  punch: 160,
+  fade: 150,
+};
+
 export interface CaptionStyleSpec {
   id: CaptionStyleId;
   labelSk: string;
@@ -52,7 +72,7 @@ export interface CaptionStyleSpec {
   /** Kategória pre UI (virálne / čisté / brand). */
   category: CaptionStyleCategory;
   /**
-   * Odkiaľ štýl je — poctivo: „princíp bežný v X". Nie je to kópia cudzieho
+   * Odkiaľ štýl je — poctivo: „princíp bežný v X“. Nie je to kópia cudzieho
    * kódu ani sľub, že to vyzerá 1:1 ako iný nástroj.
    */
   inspirationSk: string;
@@ -75,8 +95,10 @@ export interface CaptionStyleSpec {
   highlightMode: CaptionHighlightMode;
   /** Kedy sa zvýraznenie vypne, keď niet časovania slov (keywords zostávajú). */
   highlightNeedsWordTiming: boolean;
-  /** Rozdiel veľkosti (‰) zvýrazneného slova — „bounce" efekt virálnych štýlov. */
+  /** Rozdiel veľkosti (‰) zvýrazneného slova — „bounce“ efekt virálnych štýlov. */
   activeWordScale?: number;
+  /** Animácia vstupu titulku (viď `CaptionAnimation`). */
+  animation?: CaptionAnimation;
   /** Text na farebnej placce (ASS BorderStyle 3) namiesto obrysu. */
   boxed?: boolean;
   /** Farba placky (ASS &HAABBGGRR), keď je `boxed`. */
@@ -121,6 +143,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     wordsPerChunk: 3,
     highlightMode: "active-word",
     highlightNeedsWordTiming: true,
+    animation: "pop",
     bottomMarginRatio: 0.16,
   },
   {
@@ -143,6 +166,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     highlightMode: "active-word",
     highlightNeedsWordTiming: true,
     activeWordScale: 112,
+    animation: "fade",
     bottomMarginRatio: 0.2,
   },
   {
@@ -188,6 +212,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     highlightNeedsWordTiming: true,
     boxed: true,
     boxColor: C.PLATE_PURPLE,
+    animation: "pop",
     bottomMarginRatio: 0.18,
   },
   {
@@ -209,6 +234,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     wordsPerChunk: 0,
     highlightMode: "keywords",
     highlightNeedsWordTiming: false, // zdôraznenie čísel funguje aj bez časov slov
+    animation: "fade",
     bottomMarginRatio: 0.15,
   },
 
@@ -298,6 +324,7 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
     highlightMode: "none",
     highlightNeedsWordTiming: false,
     letterSpacing: 2,
+    animation: "fade",
     bottomMarginRatio: 0.22,
   },
 ];
@@ -319,7 +346,7 @@ const STRONG_WORDS_SK = [
 const NUMBER_PATTERN = /\d|[€$£%]|\bx\d/i;
 
 /**
- * Je toto slovo „silné" (má sa farebne zdôrazniť)?
+ * Je toto slovo „silné“ (má sa farebne zdôrazniť)?
  * Zdôrazňujeme: čísla a meny, veľké skratky (VIP, B2B), slová z krátkeho
  * zoznamu silných slov a slová písané VEĽKÝMI (autor ich sám zdôraznil).
  */
@@ -381,7 +408,7 @@ export interface AssBuildResult {
 export function assTime(seconds: number): string {
   const t = Math.max(0, Number(seconds) || 0);
   // Počíta sa v stotinách a zaokrúhľuje — inak by plávajúca desatinná čiarka
-  // odsekla poslednú stotinu (61.23 s dávalo „.22").
+  // odsekla poslednú stotinu (61.23 s dávalo „.22“).
   const totalCs = Math.round(t * 100);
   const h = Math.floor(totalCs / 360000);
   const m = Math.floor((totalCs % 360000) / 6000);
@@ -502,7 +529,7 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
       // Poistka: prázdne pole by libass prečítal ako čiernu a štýl by ticho
       // zmenil farbu (presne to sa raz stalo pri placce — placka sčernela).
       style.outlineColor || C.BLACK,
-      // Pri „placce" (BorderStyle 3) je BackColour farba podkladu, inak priehľadná.
+      // Pri „placce“ (BorderStyle 3) je BackColour farba podkladu, inak priehľadná.
       style.boxed ? (style.boxColor || C.PLATE_DARK) : C.TRANSPARENT_BACK,
       style.bold ? "-1" : "0",
       "0",
@@ -528,11 +555,34 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 
   const events: string[] = [];
 
+  /**
+   * Animačný prefix vstupu titulku. Vždy sa animuje **len vstup** — text potom
+   * stojí, aby sa dal čítať, a zároveň animácia nezväčšuje počet udalostí
+   * (jedno slovo = jedna udalosť, ako doteraz).
+   */
+  const requestedAnimation: CaptionAnimation = style.animation ?? "none";
+  const isScaleAnimation = requestedAnimation === "pop" || requestedAnimation === "punch";
+  // Zmerané vo ffmpeg: ak má štýl zväčšenie aktívneho slova (inline `\\fscx`),
+  // libass ním **zruší** animáciu zmeny veľkosti na celej udalosti — animácia by
+  // ticho nič nerobila. Vtedy radšej jemné objavenie (iná vlastnosť) a appka to povie.
+  const scaleAnimationDead =
+    isScaleAnimation && Boolean(style.activeWordScale) && style.highlightMode === "active-word";
+  const effectiveAnimation: CaptionAnimation = scaleAnimationDead ? "fade" : requestedAnimation;
+
+  const animPrefix = (() => {
+    const ms = CAPTION_ANIMATION_MS[effectiveAnimation] ?? 0;
+    if (effectiveAnimation === "none" || ms <= 0) return "";
+    if (effectiveAnimation === "fade") return `{\\fad(${ms},${Math.round(ms * 0.8)})}`;
+    if (effectiveAnimation === "pop") return `{\\fscx86\\fscy86\\t(0,${ms},\\fscx100\\fscy100)}`;
+    if (effectiveAnimation === "punch") return `{\\fscx114\\fscy114\\t(0,${ms},\\fscx100\\fscy100)}`;
+    return "";
+  })();
+
   const pushDialogue = (startSec: number, endSec: number, text: string) => {
     const s = Math.max(0, startSec + offset);
     const e = Math.min(endSec + offset, limit + offset);
     if (e - s < 0.08) return; // príliš krátke na prečítanie — radšej vynechať
-    events.push(`Dialogue: 0,${assTime(s)},${assTime(e)},Default,,0,0,0,,${text}`);
+    events.push(`Dialogue: 0,${assTime(s)},${assTime(e)},Default,,0,0,0,,${animPrefix}${text}`);
     eventCount++;
   };
 
@@ -588,7 +638,7 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
       continue;
     }
 
-    // ── 2) Režim „len text" (čisté štýly) ────────────────────────────────
+    // ── 2) Režim „len text“ (čisté štýly) ────────────────────────────────
     if (mode === "none") {
       const text = words.map((w) => w.word).join(" ");
       const shown = style.uppercase ? text.toUpperCase() : text;
@@ -661,6 +711,16 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
       "Zdôraznené sú čísla a silné slová (pravidlo, nie AI) — dá sa prečítať v appke a vypnúť výberom iného štýlu.",
     );
   }
+  if (effectiveAnimation !== "none") {
+    notesSk.push(
+      `Titulky majú animáciu vstupu (${effectiveAnimation}) — animuje sa len objavenie, počas čítania text stojí.`,
+    );
+  }
+  if (scaleAnimationDead) {
+    notesSk.push(
+      `Animáciu „${requestedAnimation}“ som nahradil jemným objavením: tento štýl zväčšuje aktívne slovo a libass by animáciu veľkosti ticho zrušil (zmerané vo videu).`,
+    );
+  }
   if (style.boxed) {
     notesSk.push(
       "Tento štýl kreslí text na farebnú placku — je najčitateľnejší aj na svetlom a rušivom zábere.",
@@ -682,8 +742,8 @@ export function buildAssFile(options: AssBuildOptions): AssBuildResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Slovenské tvary podľa počtu: 1 → „1 slovo", 2–4 → „2 slová", 5+ → „5 slov".
- * Texty v appke číta človek — „1 titulkov ležalo" je vidieť, aj keď to nie je
+ * Slovenské tvary podľa počtu: 1 → „1 slovo“, 2–4 → „2 slová“, 5+ → „5 slov“.
+ * Texty v appke číta človek — „1 titulkov ležalo“ je vidieť, aj keď to nie je
  * funkčná chyba. Preto to riešime raz a tu.
  */
 export function pluralSk(count: number, one: string, few: string, many: string): string {
@@ -992,7 +1052,7 @@ export function buildBurnFfmpegArgs(o: BurnArgsOptions): string[] {
     // Strih: každý úsek orežeme a spojíme. `concat` vyžaduje rovnaké parametre
     // (sú, lebo je to ten istý zdroj), takže obraz aj zvuk sa dajú spájať naraz.
     // Pozor: časti sa spájajú `;` — takže NESMÚ končiť `;`, inak vznikne
-    // prázdny filter a ffmpeg spadne na „No such filter: ''" (odhalené testom).
+    // prázdny filter a ffmpeg spadne na „No such filter: ''“ (odhalené testom).
     // `fps=` drží pôvodnú snímkovú frekvenciu zdroja — bez neho `concat` ticho
     // prepne na 25 fps a snímky sa stratia (odhalené live testom).
     const fpsFilter = o.sourceFps && o.sourceFps > 0 ? `,fps=${o.sourceFps}` : "";
@@ -1051,7 +1111,7 @@ export function escapeFilterPath(p: string): string {
 
 export function burnSummarySk(result: AssBuildResult, style: CaptionStyleSpec, seconds: number): string {
   const hl = result.wordHighlight ? "so zvýrazňovaním slova" : "bez zvýrazňovania (nemám časovanie slov)";
-  return `Vypálim ${result.eventCount} titulkov v štýle „${style.labelSk}" ${hl}. Prekódovanie: ${Math.round(seconds)} s videa, kvalita CRF 20.`;
+  return `Vypálim ${result.eventCount} titulkov v štýle „${style.labelSk}“ ${hl}. Prekódovanie: ${Math.round(seconds)} s videa, kvalita CRF 20.`;
 }
 
 export const BURN_HONESTY_SK = [
@@ -1059,3 +1119,196 @@ export const BURN_HONESTY_SK = [
   "Táto cesta **prekódováva** video (na rozdiel od čistého strihu). Kvalita zostáva vysoká (CRF 20), ale nie je to už bit-po-bite originál.",
   "Rám videa sa nemení — nič sa neorezáva ani nezoomie. Titulky sa píšu do pôvodných rozmerov, aby klip vyzeral presne ako zdroj.",
 ];
+
+// ---------------------------------------------------------------------------
+// Farby: UI tvar (#RRGGBB) ↔ ASS tvar (&HAABBGGRR)
+// ---------------------------------------------------------------------------
+
+/**
+ * `#RRGGBB` → ASS `&H00BBGGRR`.
+ * Pozor: v ASS je poradie **BGR**, nie RGB — to je najčastejšia chyba pri
+ * prenose farieb z brand manuálu do titulkov.
+ */
+export function hexToAssColor(hex: string): string | null {
+  const raw = String(hex ?? "").trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return null;
+  const r = raw.slice(0, 2).toUpperCase();
+  const g = raw.slice(2, 4).toUpperCase();
+  const b = raw.slice(4, 6).toUpperCase();
+  return `&H00${b}${g}${r}`;
+}
+
+/** ASS `&HAABBGGRR` → `#RRGGBB` (pre farebné políčka v UI). */
+export function assColorToHex(ass: string): string | null {
+  const raw = String(ass ?? "").replace(/&H/i, "").replace(/&/g, "").trim();
+  if (!/^[0-9a-fA-F]{6,8}$/.test(raw)) return null;
+  const padded = raw.padStart(8, "0");
+  const b = padded.slice(2, 4);
+  const g = padded.slice(4, 6);
+  const r = padded.slice(6, 8);
+  return `#${r}${g}${b}`.toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
+// Odchýlky (overrides)
+// ---------------------------------------------------------------------------
+
+/** Rozsahy, v ktorých sa odchýlky pohybujú. Mimo nich sa orežú (a appka to povie). */
+export const OVERRIDE_LIMITS = {
+  fontSizeRatio: [30, 130] as const,
+  wordsPerChunk: [0, 6] as const,
+  bottomMarginRatio: [0.04, 0.35] as const,
+  letterSpacing: [-2, 4] as const,
+  activeWordScale: [100, 160] as const,
+  outlineWidth: [0, 24] as const,
+} as const;
+
+export interface CaptionOverrides {
+  /** Farby v tvare `#RRGGBB` (prehliadač ich vie vykresliť v náhľade). */
+  primaryHex?: string;
+  highlightHex?: string;
+  outlineHex?: string;
+  boxHex?: string;
+  fontSizeRatio?: number;
+  wordsPerChunk?: number;
+  uppercase?: boolean;
+  boxed?: boolean;
+  animation?: CaptionAnimation;
+  bottomMarginRatio?: number;
+  letterSpacing?: number;
+  activeWordScale?: number;
+  outlineWidth?: number;
+  /** Zarovnanie: 2 = dole, 5 = stred, 8 = hore (ASS hodnoty). */
+  alignment?: 2 | 5 | 8;
+}
+
+export interface NormalizedOverrides {
+  overrides: CaptionOverrides;
+  /** Čo sa orežalo alebo zahodilo — pre človeka, po slovensky. */
+  notesSk: string[];
+}
+
+const ANIMATIONS: CaptionAnimation[] = ["none", "pop", "punch", "fade"];
+
+function clamp(v: number, range: readonly [number, number]): { value: number; clipped: boolean } {
+  if (v < range[0]) return { value: range[0], clipped: true };
+  if (v > range[1]) return { value: range[1], clipped: true };
+  return { value: v, clipped: false };
+}
+
+/**
+ * Skontroluje odchýlky: čísla oreže do rozsahu, farby prevedie, neznáme veci
+ * zahodí — a ku každej oprave pridá vetu. Vstupom môže byť čokoľvek (aj
+ * poškodené dáta z uloženého profilu).
+ */
+export function normalizeOverrides(input: unknown): NormalizedOverrides {
+  const notesSk: string[] = [];
+  const overrides: CaptionOverrides = {};
+  if (!input || typeof input !== "object") return { overrides, notesSk };
+
+  const src = input as Record<string, unknown>;
+
+  const numberKeys: [keyof CaptionOverrides, readonly [number, number], string][] = [
+    ["fontSizeRatio", OVERRIDE_LIMITS.fontSizeRatio, "veľkosť písma"],
+    ["wordsPerChunk", OVERRIDE_LIMITS.wordsPerChunk, "počet slov na obrazovke"],
+    ["bottomMarginRatio", OVERRIDE_LIMITS.bottomMarginRatio, "odstup od spodku"],
+    ["letterSpacing", OVERRIDE_LIMITS.letterSpacing, "rozostup písmen"],
+    ["activeWordScale", OVERRIDE_LIMITS.activeWordScale, "zväčšenie aktívneho slova"],
+    ["outlineWidth", OVERRIDE_LIMITS.outlineWidth, "hrúbka obrysu"],
+  ];
+
+  for (const [key, range, labelSk] of numberKeys) {
+    const raw = src[key as string];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      notesSk.push(`„${labelSk}“ nebolo číslo — nastavenie som vynechal.`);
+      continue;
+    }
+    const rounded = key === "bottomMarginRatio" ? Math.round(n * 1000) / 1000 : Math.round(n);
+    const { value, clipped } = clamp(rounded, range);
+    if (clipped) {
+      notesSk.push(`„${labelSk}“ bolo mimo rozsahu — použil som ${value} (rozsah ${range[0]}–${range[1]}).`);
+    }
+    (overrides as Record<string, unknown>)[key as string] = value;
+  }
+
+  for (const key of ["primaryHex", "highlightHex", "outlineHex", "boxHex"] as const) {
+    const raw = src[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const hex = String(raw).trim();
+    const ass = hexToAssColor(hex);
+    if (!ass) {
+      notesSk.push(`Farba „${hex}“ nie je v tvare #RRGGBB — vynechal som ju (radšej pôvodná farba než náhodná).`);
+      continue;
+    }
+    overrides[key] = `#${hex.replace(/^#/, "").toUpperCase()}`;
+  }
+
+  if (typeof src.uppercase === "boolean") overrides.uppercase = src.uppercase;
+  if (typeof src.boxed === "boolean") overrides.boxed = src.boxed;
+
+  if (src.animation !== undefined && src.animation !== null && src.animation !== "") {
+    const anim = String(src.animation) as CaptionAnimation;
+    if (ANIMATIONS.includes(anim)) overrides.animation = anim;
+    else notesSk.push(`Neznáma animácia „${anim}“ — nechal som pôvodnú. Na výber je: ${ANIMATIONS.join(", ")}.`);
+  }
+
+  if (src.alignment !== undefined && src.alignment !== null && src.alignment !== "") {
+    const a = Number(src.alignment);
+    if (a === 2 || a === 5 || a === 8) overrides.alignment = a as 2 | 5 | 8;
+    else notesSk.push(`Zarovnanie „${src.alignment}“ nepoznám — na výber je dole (2), stred (5), hore (8).`);
+  }
+
+  return { overrides, notesSk };
+}
+
+/**
+ * Naloží odchýlky na hotový štýl. Vracia **nový** objekt (pôvodný katalóg sa
+ * nikdy nemení — inak by si jedna zakázka pokazila štýl pre všetkých).
+ */
+export function applyCaptionOverrides(
+  style: CaptionStyleSpec,
+  overrides: CaptionOverrides | undefined,
+): CaptionStyleSpec {
+  const { overrides: o } = normalizeOverrides(overrides ?? {});
+  if (Object.keys(o).length === 0) return style;
+
+  const out: CaptionStyleSpec = { ...style };
+
+  const colorKeys = ["primaryHex", "highlightHex", "outlineHex", "boxHex"] as const;
+  for (const key of colorKeys) {
+    const hex = o[key];
+    if (!hex) continue;
+    const ass = hexToAssColor(hex);
+    if (!ass) continue;
+    if (key === "primaryHex") out.primaryColor = ass;
+    if (key === "highlightHex") out.highlightColor = ass;
+    if (key === "outlineHex") out.outlineColor = ass;
+    if (key === "boxHex") out.boxColor = ass;
+  }
+
+  if (o.fontSizeRatio !== undefined) out.fontSizeRatio = o.fontSizeRatio;
+  if (o.wordsPerChunk !== undefined) out.wordsPerChunk = o.wordsPerChunk;
+  if (o.uppercase !== undefined) out.uppercase = o.uppercase;
+  if (o.bottomMarginRatio !== undefined) out.bottomMarginRatio = o.bottomMarginRatio;
+  if (o.letterSpacing !== undefined) out.letterSpacing = o.letterSpacing;
+  if (o.activeWordScale !== undefined) out.activeWordScale = o.activeWordScale;
+  if (o.outlineWidth !== undefined) out.outlineWidth = o.outlineWidth;
+  if (o.alignment !== undefined) out.alignment = o.alignment;
+
+  if (o.boxed !== undefined) {
+    out.boxed = o.boxed;
+    if (o.boxed && !out.boxColor) out.boxColor = "&H00141414";
+  }
+  if (o.animation !== undefined) out.animation = o.animation;
+
+  // Zarovnanie hore/stred znamená iný okraj — inak by text liezol do rozhrania.
+  if (o.alignment === 8) out.bottomMarginRatio = Math.max(out.bottomMarginRatio ?? 0.12, 0.08);
+  if (o.alignment === 5) out.bottomMarginRatio = 0.5;
+
+  // „Placka“ bez farby podkladu by nebola placka.
+  if (out.boxed && !out.boxColor) out.boxColor = "&H00141414";
+
+  return out;
+}

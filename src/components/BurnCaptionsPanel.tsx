@@ -14,6 +14,7 @@ import {
 import {
   BURN_HONESTY_SK,
   CAPTION_STYLES,
+  type CaptionOverrides,
   type CaptionStyleCategory,
   type CaptionStyleId,
 } from "../core/export/subtitleRender";
@@ -23,6 +24,7 @@ import {
   type CaptionAdvice,
 } from "../core/export/captionAdvisor";
 import { CaptionStylePreview } from "./CaptionStylePreview";
+import { CaptionProfileBar } from "./CaptionProfileBar";
 import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 
 /**
@@ -32,7 +34,7 @@ import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
  * prekódovanie. Appka preto:
  *  1. vopred zistí, či je na serveri ffmpeg (a keď nie, povie to **pred** kliknutím),
  *  2. ukáže čo sa stane (štýl, počet titulkov, strih, dĺžka klipu),
- *  3. pýta si vedomé potvrdenie („viem, že sa to už nedá vypnúť"),
+ *  3. pýta si vedomé potvrdenie („viem, že sa to už nedá vypnúť“),
  *  4. hlási skutočný priebeh v percentách z ffmpeg — žiadne točiace sa koliesko
  *     naslepo a žiadne tiché zlyhanie.
  *
@@ -54,7 +56,7 @@ interface BurnCaptionsPanelProps {
   platform?: string;
   /** Počet strihov v klipе (tempo je dôležité pre voľbu štýlu). */
   cutCount?: number;
-  /** Oblasť / typ klienta z knižnice trendov (napr. „b2b", „fitness"). */
+  /** Oblasť / typ klienta z knižnice trendov (napr. „b2b“, „fitness“). */
   niche?: string;
 }
 
@@ -153,6 +155,10 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
 }) => {
   const isSk = language === "sk";
   const [styleId, setStyleId] = useState<CaptionStyleId>("VIRAL_BOLD");
+  /** Odchýlky vlastného štýlu klienta (brand kit) — idú do renderu aj do náhľadu. */
+  const [overrides, setOverrides] = useState<CaptionOverrides>({});
+  /** Názov aktívneho profilu (len na vysvetlenie v UI, render ide podľa hodnôt). */
+  const [styleName, setStyleName] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [percent, setPercent] = useState(0);
@@ -300,6 +306,7 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
           uploadId: uploaded.uploadId,
           uploadName: uploaded.uploadName,
           styleId,
+          overrides,
           width: size?.width ?? 1080,
           height: size?.height ?? 1920,
           segments,
@@ -374,6 +381,8 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
   const recommendedRank = advice.ranked.find((r) => r.id === advice.recommended) ?? null;
 
   const busy = phase === "uploading" || phase === "rendering";
+  /** Koľko vlastných nastavení klienta je aktívnych (aby to bolo vidieť pred klikom). */
+  const overrideCount = Object.values(overrides).filter((v) => v !== undefined && v !== "").length;
   const result = status?.result ?? null;
   const blockedByNoFfmpeg = server !== null && !server.available;
 
@@ -480,6 +489,25 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
         </div>
       )}
 
+      {/* Vlastný štýl klienta: uložené farby a vzhľad na jeden klik */}
+      <CaptionProfileBar
+        styleId={styleId}
+        overrides={overrides}
+        segments={segments}
+        width={verified?.width ?? 1080}
+        height={verified?.height ?? 1920}
+        disabled={busy}
+        onApply={(id, o, name) => {
+          setStyleId(id);
+          setOverrides(o);
+          setStyleName(name);
+        }}
+        onOverridesChange={(o) => {
+          setOverrides(o);
+          setStyleName(null);
+        }}
+      />
+
       {/* Možnosti výberu tituliek — s náhľadom, aby sa nemuselo renderovať */}
       <div>
         <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -502,7 +530,11 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
                   <button
                     key={style.id}
                     type="button"
-                    onClick={() => setStyleId(style.id)}
+                    onClick={() => {
+                      setStyleId(style.id);
+                      // Základný štýl sa mení, doladenie klienta zostáva — je to
+                      // častá práca („rovnaké farby, iný štýl“).
+                    }}
                     disabled={busy}
                     title={`${style.descriptionSk} · ${style.inspirationSk}`}
                     className={`p-2 rounded-xl border text-left transition-colors flex gap-2 ${
@@ -511,6 +543,7 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
                   >
                     <CaptionStylePreview
                       styleId={style.id}
+                      overrides={style.id === styleId ? overrides : undefined}
                       segments={segments}
                       width={verified?.width ?? 1080}
                       height={verified?.height ?? 1920}
@@ -564,6 +597,19 @@ export const BurnCaptionsPanel: React.FC<BurnCaptionsPanelProps> = ({
               <span className="text-white font-bold">{keep.length}</span> {isSk ? "úsekov" : "segments"} (
               {fmtSec(clipSeconds)})
             </>
+          )}
+        </p>
+        <p className="text-[9px] text-neutral-300">
+          {isSk ? "Štýl: " : "Style: "}
+          <span className="font-bold text-white">
+            {CAPTION_STYLES.find((x) => x.id === styleId)?.labelSk ?? styleId}
+          </span>
+          {styleName && <span className="text-fuchsia-300"> · profil „{styleName}“</span>}
+          {overrideCount > 0 && !styleName && (
+            <span className="text-fuchsia-300"> · vlastné farby/nastavenia ({overrideCount})</span>
+          )}
+          {overrideCount > 0 && (
+            <span className="text-neutral-500"> — náhľady vyššie už kreslia tvoj vzhľad</span>
           )}
         </p>
         {verified && verified.width > 0 && (

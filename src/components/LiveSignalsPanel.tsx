@@ -27,7 +27,7 @@ import {
  * ŽIVÉ SIGNÁLY — reálne dáta z platforiem pre Trend Radar (F5).
  *
  * Princípy (rovnaké ako inde v appke):
- *  - **Nikdy nič samo.** Signály sa načítajú len po kliknutí na „Obnoviť".
+ *  - **Nikdy nič samo.** Signály sa načítajú len po kliknutí na „Obnoviť“.
  *    Otvorenie panelu číta uloženú cache a povie, ako je stará.
  *  - **Každé zlyhanie má dôvod** — aj to, že niečo nejde, je informácia.
  *  - **Žiadne sľuby.** Signál je surovina, nie záruka zhliadnutí.

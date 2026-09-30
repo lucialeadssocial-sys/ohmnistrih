@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { buildCaptionPreview } from "../core/export/captionPreview";
-import type { CaptionStyleId } from "../core/export/subtitleRender";
+import type { CaptionOverrides, CaptionStyleId } from "../core/export/subtitleRender";
 import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
 
 /**
@@ -8,7 +8,7 @@ import type { SpeechSegmentLike } from "../core/transcript/wordTiming";
  *
  * Prehliadač kreslí písmo trochu inak než libass, takže je to vizuálna
  * aproximácia (a UI to tak aj pomenuje). Zmizne však slučka „vyrenderuj → pozri
- * → zmeň", ktorá je pri titulkoch najväčšia strata času.
+ * → zmeň“, ktorá je pri titulkoch najväčšia strata času.
  *
  * Všetko je inline (žiadne externé fonty ani obrázky) — náhľad funguje všade.
  */
@@ -21,8 +21,10 @@ interface CaptionStylePreviewProps {
   /** Výška náhľadu v pixeloch (všetko sa na ňu prepočíta). */
   previewHeight?: number;
   activeWordIndex?: number;
-  /** Popisok pod náhľadom (napr. „toto uvidí divák"). */
+  /** Popisok pod náhľadom (napr. „toto uvidí divák“). */
   caption?: string;
+  /** Odchýlky vlastného štýlu klienta — náhľad sa musí zhodovať s renderom. */
+  overrides?: CaptionOverrides;
   className?: string;
 }
 
@@ -34,18 +36,19 @@ export const CaptionStylePreview: React.FC<CaptionStylePreviewProps> = ({
   previewHeight = 190,
   activeWordIndex = 0,
   caption,
+  overrides,
   className = "",
 }) => {
   const model = useMemo(
-    () => buildCaptionPreview({ styleId, segments, width, height, previewHeight, activeWordIndex }),
-    [styleId, segments, width, height, previewHeight, activeWordIndex],
+    () => buildCaptionPreview({ styleId, segments, width, height, previewHeight, activeWordIndex, ...(overrides ? { overrides } : {}) }),
+    [styleId, segments, width, height, previewHeight, activeWordIndex, overrides],
   );
 
   const aspect = width > 0 && height > 0 ? width / height : 9 / 16;
   const previewWidth = Math.round(previewHeight * aspect);
 
   // Obrys textu: ASS kreslí obrys dookola, prehliadač vie len tieň — preto
-  // 8 tieňov (štýl „všetkými smermi") + 1. Je to aproximácia, nie presná kópia.
+  // 8 tieňov (štýl „všetkými smermi“) + 1. Je to aproximácia, nie presná kópia.
   const outline = model.outlinePx;
   const textShadow = model.boxed
     ? "none"
@@ -70,7 +73,7 @@ export const CaptionStylePreview: React.FC<CaptionStylePreviewProps> = ({
           background: "linear-gradient(160deg, #16202b 0%, #0b1117 60%, #1d1418 100%)",
         }}
       >
-        {/* Naznačenie „tváre", aby bolo vidieť, čo titulok zakrýva */}
+        {/* Naznačenie „tváre“, aby bolo vidieť, čo titulok zakrýva */}
         <div
           className="absolute rounded-full opacity-20"
           style={{

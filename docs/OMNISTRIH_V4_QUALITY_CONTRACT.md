@@ -38,7 +38,7 @@ v jednom prekódovaní, priamo z appky.
 | PODCAST / talking head | nič nerozbíjať, zachovať kontext a pointu | ✅ konzervatívnejší strih (max 3 zásahy) |
 | YOUTUBE long-form | kapitoly, kontinuita, menej efektov | ⚠️ F2/F3 — kapitoly + kontinuita |
 | FIREMNÉ / BRAND | čistota a konzistencia pred efektom | ⚠️ šablóny prídu vo F3 |
-| VLASTNÝ štýl | riadi sa mojimi poznámkami | ✅ pole „Poznámky pre AI“ |
+| VLASTNÝ štýl | riadi sa mojimi poznámkami | ✅ pole „Poznámky pre AI“ + **vlastný štýl klienta (brand kit)** |
 
 **Profesionálne znamená aj:** žiadny efekt len preto, aby tam bol. Preto má plán režim
 **PORTFÓLIO** (menej, ale kvalitnejších zásahov) a každý zásah musí obhájiť svoj dôvod.
@@ -67,6 +67,26 @@ do obrazu** (RAW → READY → krok 3 → panel „Titulky zapečené do obrazu�
   nie AI — preto sa dá obhájiť a vypnúť výberom iného štýlu.
 - **AI stále nerenderuje** — render je ffmpeg na serveri, spúšťaný používateľom.
 
+**Krok B++ (30. 9. 2026) — hotové:**
+
+- **animácie vstupu titulkov** (`pop` 130 ms, `punch` 160 ms, `fade` 150 ms, `none`) —
+  animuje sa **len objavenie**; počas čítania text stojí (titulok, ktorý sa hýbe
+  celý čas, sa nedá čítať). Animácia nemení počet udalostí v ASS.
+- **zmeraná pasca:** pri štýle, ktorý zväčšuje aktívne slovo inline (`\fscx`), libass
+  animáciu veľkosti **ticho zruší** (merané: 50 070 vs 50 063 pixelov) → appka ju
+  nahradí jemným objavením **a napíše to**.
+- **vlastný štýl klienta (brand kit):** profil = základný štýl + odchýlky (farby
+  `#RRGGBB` → ASS `&HAABBGGRR`, veľkosť, slová na obrazovke, okraj, animácia,
+  umiestnenie, placka, veľké písmená). Ukladá sa **na serveri**
+  (`.data/caption-profiles.json`), takže prežije nové nahranie aj iné zariadenie.
+- **3 štartovacie šablóny** (Firemné / E-shop / Podcast) — aby sa dalo začať bez
+  klikania farieb; náhľad kreslí **tvoje** farby ešte pred renderom.
+- **nič sa nerobí ticho:** hodnota mimo rozsahu sa oreže **a napíše sa na akú**;
+  zlá farba sa vynechá (nie náhodná); profil nikdy nemení pôvodný štýl v katalógu.
+- **overené na živom renderi:** profil so zlatou `#FFC400` → **12 994 zlatých
+  pixelov** vo výslednom videu, ten istý klip bez profilu **0**. Detail:
+  `docs/CAPTION_BRAND_KIT.md`.
+
 Dokumentácia a overené čísla: `docs/BURNED_CAPTIONS.md`.
 
 ## 3. Kreatívne — ale nie náhodne
@@ -87,7 +107,8 @@ Dokumentácia a overené čísla: `docs/BURNED_CAPTIONS.md`.
 | Keď niečo zlyhá, viem prečo | ✅ `fallbackReason`, `rawError`, čestné `basis` |
 | Vypálené titulky = jediné prekódovanie, a to výslovne na požiadanie | ✅ žiadne tiché prekódovanie; čistý strih kopíruje packety |
 | Pri strihu sa nič „potichu“ nemení (fps, rám, čas titulkov) | ✅ fps zo sondy, rám bez cropu, titulky prepočítané na čas klipu |
-| Čo sa nedá overiť na vyrenderovanej snímke, nie je hotové | ✅ každý štýl má test, ktorý kontroluje ASS riadok aj použité farby |
+| Čo sa nedá overiť na vyrenderovanej snímke, nie je hotové | ✅ každý štýl má test, ktorý kontroluje ASS riadok aj použité farby; animácie a vlastné farby klienta sú zmerané vo ffmpeg |
+| Vlastný štýl klienta sa nemôže pokaziť ticho | ✅ hodnoty mimo rozsahu sa orežú s vetou, zlé farby sa vynechajú (nie nahradia) |
 | Bez plateného API na export | ✅ export zostáva lokálny |
 | Žiadne ťažké modely pri otvorení appky | ✅ Whisper/analýza len na vyžiadanie |
 
