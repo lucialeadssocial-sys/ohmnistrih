@@ -400,6 +400,138 @@ export function speechCoverage(words: WordTimingLike[], durationSec: number): { 
 }
 
 // ---------------------------------------------------------------------------
+// Zvýrazňovanie hovoreného slova (krok 17)
+// ---------------------------------------------------------------------------
+//
+// Titulkový klip nesie **relatívne** časy slov (k začiatku klipu), pretože klip sa
+// dá presúvať po osi. Prepis (a server, ktorý páli titulky) pracuje s **absolútnymi**
+// časmi. Prevod robia funkcie nižšie — aby bol na jednom mieste a aby sa nedalo
+// zabudnúť na posun klipu.
+//
+// Zásada: **nič sa nevymýšľa.** Keď slová nie sú, funkcie vrátia prázdno alebo `null`
+// a zvýrazňovanie sa vypne — appka to povie, neuhádne.
+
+/** Slovo s časovaním. V `TextConfig` klipu je `start`/`end` **relatívne k začiatku klipu**. */
+export interface RelativeWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+/** Prevod časov slov na relatívne k začiatku klipu (prepis → titulkový klip). */
+export function wordsToRelative(words: WordTimingLike[], clipStartSec: number): RelativeWord[] {
+  const base = num(clipStartSec, 0);
+  return (Array.isArray(words) ? words : [])
+    .map((w) => ({
+      word: cleanWord(w?.word),
+      start: round3(num(w?.start, 0) - base),
+      end: round3(num(w?.end, num(w?.start, 0) + 0.2) - base),
+    }))
+    .filter((w) => w.word.length > 0 && w.end >= w.start);
+}
+
+/** Prevod časov slov z klipu na absolútne (titulkový klip → prepis na serveri). */
+export function wordsToAbsolute(words: RelativeWord[], clipStartSec: number): RelativeWord[] {
+  const base = num(clipStartSec, 0);
+  return (Array.isArray(words) ? words : [])
+    .map((w) => ({
+      word: cleanWord(w?.word),
+      start: round3(num(w?.start, 0) + base),
+      end: round3(num(w?.end, num(w?.start, 0) + 0.2) + base),
+    }))
+    .filter((w) => w.word.length > 0 && w.end >= w.start);
+}
+
+/**
+ * Nechá len slová, ktoré do okna patria (a oreže tie, čo doň zasahujú zvonka).
+ * Používa sa pri exportovaní klipu, ktorý je na osi kratší než prepis — do videa
+ * nemá ísť zvýrazňovanie slova, ktoré divák neuvidí.
+ */
+export function clampWordsToWindow(
+  words: RelativeWord[],
+  fromSec: number,
+  toSec: number,
+): RelativeWord[] {
+  const from = num(fromSec, 0);
+  const to = num(toSec, from);
+  if (to <= from) return [];
+  return (Array.isArray(words) ? words : [])
+    .map((w) => ({
+      word: cleanWord(w?.word),
+      start: Math.max(from, num(w?.start, from)),
+      end: Math.min(to, num(w?.end, num(w?.start, from) + 0.2)),
+    }))
+    .filter((w) => w.word.length > 0 && w.end > w.start)
+    .map((w) => ({ ...w, start: round3(w.start), end: round3(w.end) }));
+}
+
+/** True, keď je časovanie použiteľné (aspoň jedno slovo s textom a kladnou dĺžkou). */
+export function hasUsableWordTiming(words: RelativeWord[] | undefined | null): boolean {
+  return (Array.isArray(words) ? words : []).some(
+    (w) => cleanWord(w?.word).length > 0 && num(w?.end, 0) > num(w?.start, 0),
+  );
+}
+
+export interface ActiveWord {
+  /** Index slova v zozname. */
+  index: number;
+  word: string;
+  /** Čas, od ktorého je slovo „hovorené“ (vrátane). */
+  fromSec: number;
+  /** Čas, dokedy je „hovorené“ (bez konca). */
+  toSec: number;
+}
+
+/**
+ * Ktoré slovo je v čase `t` hovorené.
+ *
+ * Rovnaké pravidlo, aké používa vypaľovanie titulkov (inak by náhľad a video
+ * ukazovali iné slovo): slovo je zvýraznené od svojho začiatku po **začiatok
+ * ďalšieho slova** — ticho medzi slovami teda patrí predchádzajúcemu slovu.
+ * Posledné slovo platí do svojho konca (a ak je to jediné slovo, do `declaredEndSec`).
+ *
+ * Pred prvým slovom vráti `null` (nič nie je hovorené — nič sa nezvýrazňuje).
+ */
+export function activeWordAt(
+  words: RelativeWord[],
+  t: number,
+  declaredEndSec?: number,
+): ActiveWord | null {
+  const list = (Array.isArray(words) ? words : [])
+    .map((w) => ({ word: cleanWord(w?.word), start: num(w?.start, 0), end: num(w?.end, 0) }))
+    .filter((w) => w.word.length > 0 && w.end >= w.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  if (list.length === 0) return null;
+
+  const time = num(t, 0);
+  if (time < list[0].start) return null;
+
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    const next = list[i + 1];
+    const from = w.start;
+    const to = next ? next.start : Math.max(w.end, num(declaredEndSec, w.end));
+    if (time >= from && time < to) {
+      return { index: i, word: w.word, fromSec: round3(from), toSec: round3(to) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Porovnanie tokenu v texte s hovoreným slovom (rovnaké pravidlo ako pri vypaľovaní:
+ * bez interpunkcie a diakritiky-veľkosti, toleruje sa spoločný začiatok slova).
+ * Je to jedna funkcia pre náhľad aj export — aby zvýrazňovali to isté slovo.
+ */
+export function wordsShareToken(token: string, spokenWord: string): boolean {
+  const bare = (s: string) => String(s ?? "").replace(/\\/g, "").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  const a = bare(token);
+  const b = bare(spokenWord);
+  if (!a || !b) return false;
+  return a === b || b.startsWith(a) || a.startsWith(b);
+}
+
+// ---------------------------------------------------------------------------
 // Texty pre človeka
 // ---------------------------------------------------------------------------
 
