@@ -27,6 +27,13 @@ import {
   sampleTimes,
   scenesFromBoundaries,
 } from './frameMetrics';
+import {
+  SemanticIndex,
+  SemanticMatch,
+  buildSemanticIndex,
+  findRedundantSegments,
+  type SemanticEmbeddingFn,
+} from './semanticSegments';
 
 export interface DuplicateShot {
   shot1Timestamp: number;
@@ -105,6 +112,12 @@ export interface MediaAnalysisIndex {
 
   // 7. Visual Similarity & Duplicates
   duplicateShots: DuplicateShot[];
+
+  // 8. Sémantika (krok 1) — porovnanie VÝZNAMU viet, nie počtu slov.
+  //    Prázdne + `dataQuality.semantic_units = NOT_AVAILABLE`, keď nie je
+  //    prepis alebo lokálny embedding model. Nič sa nedomýšľa.
+  semanticUnits: SemanticIndex['segments'];
+  semanticRedundancy: SemanticMatch[];
 }
 
 export type InvalidationTag = 'file' | 'transcript' | 'crop' | 'audio';
@@ -122,6 +135,41 @@ export interface DAGTaskNode {
     progressCallback: (pct: number) => void,
     signal: AbortSignal
   ) => Promise<Partial<MediaAnalysisIndex>>;
+}
+
+/**
+ * Rozdelí slová s časmi na vety/pasáže. Delí na interpunkcii A na pauze,
+ * ktorá v reči znamená hranicu myšlienky (nie „každé 2 sekundy“).
+ */
+export function splitIntoSentences(
+  words: { word: string; start: number; end: number }[],
+  pauseSec = 0.8,
+  maxChars = 220,
+): { text: string; start: number; end: number }[] {
+  const out: { text: string; start: number; end: number }[] = [];
+  let buf: string[] = [];
+  let start = 0;
+  let prevEnd = 0;
+
+  const flush = (end: number) => {
+    const text = buf.join(' ').trim();
+    if (text.length > 0) out.push({ text, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) });
+    buf = [];
+  };
+
+  words.forEach((w, i) => {
+    if (buf.length === 0) start = w.start;
+    buf.push(w.word);
+    const endsSentence = /[.!?…]$/.test(w.word.trim());
+    const next = words[i + 1];
+    const longPause = next ? next.start - w.end >= pauseSec : false;
+    if (endsSentence || longPause || buf.join(' ').length >= maxChars || i === words.length - 1) {
+      flush(w.end);
+    }
+    prevEnd = w.end;
+  });
+  void prevEnd;
+  return out;
 }
 
 export const INITIAL_MEDIA_INDEX = (assetId: string): MediaAnalysisIndex => ({
@@ -149,7 +197,9 @@ export const INITIAL_MEDIA_INDEX = (assetId: string): MediaAnalysisIndex => ({
   // Priemer sa počíta z nameraných snímok; 0 = ešte nič (predtým tu bolo falošných 128/80).
   averageBrightness: 0,
   averageBlurScore: 0,
-  duplicateShots: []
+  duplicateShots: [],
+  semanticUnits: [],
+  semanticRedundancy: []
 });
 
 export class MediaIntelligenceEngine {
@@ -164,6 +214,13 @@ export class MediaIntelligenceEngine {
   private transcriptProvider: ((asset: MediaAsset) => Promise<{ text: string; words: { word: string; start: number; end: number; confidence: number }[] } | null>) | null = null;
 
   /** Registrácia reálneho zdroja prepisu (appka / lokálny Whisper). */
+  /** Vstreknutá funkcia embedovania (appka dodá lokálny model). Core na AI vrstve nezávisí. */
+  private embeddingProvider: SemanticEmbeddingFn | null = null;
+
+  public setEmbeddingProvider(provider: SemanticEmbeddingFn | null): void {
+    this.embeddingProvider = provider;
+  }
+
   public setTranscriptProvider(
     provider: ((asset: MediaAsset) => Promise<{ text: string; words: { word: string; start: number; end: number; confidence: number }[] } | null>) | null,
   ): void {
@@ -634,6 +691,62 @@ export class MediaIntelligenceEngine {
             representativeFrames: frames,
             duplicateShots: duplicates,
             __quality: 'DERIVED' as const,
+            __reason: '',
+          };
+        }
+      },
+
+      // Node 8: Sémantické jednotky (KROK 1) — porovnanie VÝZNAMU, nie slov
+      {
+        id: 'semantic_units',
+        name: 'Semantic Units (real embeddings)',
+        deps: ['transcript'],
+        version: 1,
+        invalidatesOn: ['file', 'transcript'],
+        execute: async (_, __, currentIndex, progress) => {
+          progress(20);
+          const words = currentIndex.wordTimestamps || [];
+          const text = currentIndex.transcriptText || '';
+
+          // Bez prepisu niet čo porovnávať — žiadne vymyslené vety.
+          if (!text || words.length === 0) {
+            return {
+              semanticUnits: [],
+              semanticRedundancy: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason:
+                'Porovnanie významu sa nemeria — v indexe nie je prepis (slová s časmi). ' +
+                'Načítajte titulky z projektu alebo zapnite lokálny Whisper.',
+            };
+          }
+
+          const sentence = splitIntoSentences(words);
+          const built = await buildSemanticIndex(
+            sentence.map((s, i) => ({
+              id: `s${i}`,
+              assetId: currentIndex.assetId,
+              text: s.text,
+              start: s.start,
+              end: s.end,
+            })),
+            this.embeddingProvider,
+          );
+
+          if (built.quality !== 'MEASURED') {
+            return {
+              semanticUnits: [],
+              semanticRedundancy: [],
+              __quality: 'NOT_AVAILABLE' as const,
+              __reason: built.reasonSk,
+            };
+          }
+
+          progress(80);
+          const redundancy = findRedundantSegments(built);
+          return {
+            semanticUnits: built.segments,
+            semanticRedundancy: redundancy,
+            __quality: 'MEASURED' as const,
             __reason: '',
           };
         }

@@ -11,24 +11,7 @@ import {
   INITIAL_MEDIA_INDEX,
   InvalidationTag
 } from '../core/media/mediaIntelligenceIndex';
-import {
-  Brain,
-  Play,
-  Pause,
-  RefreshCw,
-  Scissors,
-  CheckCircle2,
-  Clock,
-  Layers,
-  Sparkles,
-  Volume2,
-  Film,
-  Zap,
-  Eye,
-  Copy,
-  Sliders,
-  AlertCircle
-} from 'lucide-react';
+import { AlertCircle, AlertTriangle, Brain, CheckCircle2, Clock, Copy, Eye, Film, Layers, Pause, Play, RefreshCw, Scissors, Sliders, Sparkles, Volume2, Zap } from "lucide-react";
 
 export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
   isOpen,
@@ -95,7 +78,7 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
   };
 
   const completedNodeCount = indexData ? Object.keys(indexData.completedTasks).length : 0;
-  const totalNodeCount = 8;
+  const totalNodeCount = 9;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
@@ -214,6 +197,7 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 { key: 'scene_boundaries', label: 'Hranice Scén' },
                 { key: 'representative_frames', label: 'Jasnosť & Rozostrenie' },
                 { key: 'duplicate_shots', label: 'Duplicitné Zábery' },
+                { key: 'semantic_units', label: 'Význam viet (sémantika)' },
               ].map((node) => {
                 const isDone = indexData?.completedTasks[node.key];
                 const quality = indexData?.dataQuality?.[node.key];
@@ -358,6 +342,46 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
+                  {indexData.dataQuality?.semantic_units === 'NOT_AVAILABLE' || !(indexData.semanticUnits?.length > 0) ? (
+                    <div className="p-4 bg-amber-950/20 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-1">
+                      <div className="font-semibold flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4" /> Význam viet sa NEMERAL
+                      </div>
+                      <p className="text-amber-200/80">
+                        {indexData.unavailableSk?.semantic_units ||
+                          'Porovnanie významu sa nemeria — chýba prepis alebo lokálny sémantický model.'}
+                      </p>
+                      <p className="text-amber-200/60">
+                        „Prečo nie“ (napr. „video 12 opakuje 07“) sa preto nesmie domýšľať. Keď sú v projekte titulky a model sa načíta, údaj sa doplní.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-zinc-300">
+                          Význam viet — {indexData.semanticUnits.length} pasáží, {indexData.semanticUnits[0]?.vector?.length ?? 0} dimenzií
+                        </span>
+                        <span className="text-emerald-400">NAMERANÉ (lokálny model)</span>
+                      </div>
+                      {(indexData.semanticRedundancy?.length ?? 0) === 0 ? (
+                        <p className="text-zinc-400">
+                          Žiadna pasáž neopakuje inú (prah zhody {Math.round(0.53 * 100)} %, meraný na slovenských vetách).
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          <p className="text-amber-300">
+                            {indexData.semanticRedundancy.length}× to isté povedané inak (podklad pre stĺpec „prečo nie“):
+                          </p>
+                          {indexData.semanticRedundancy.slice(0, 6).map((m, i) => (
+                            <div key={i} className="p-2 rounded-lg bg-amber-950/20 border border-amber-900/50 text-amber-200">
+                              {m.reasonSk}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {indexData.dataQuality?.transcript === 'NOT_AVAILABLE' || !indexData.transcriptText ? (
                     <div className="p-3 bg-amber-950/30 border border-amber-800/70 rounded-lg text-amber-200 space-y-1">
                       <p className="font-semibold uppercase tracking-wide text-[11px]">Prepis: nemám dáta</p>

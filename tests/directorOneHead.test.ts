@@ -35,7 +35,7 @@ describe("KROK 0c — jeden slovník Directora", () => {
     expect(DIRECTOR_ACTION_TYPES.length).toBe(11);
     expect(isDirectorActionType("CUT")).toBe(true);
     expect(isDirectorActionType("cut")).toBe(false); // veľkosť písmen rieši volajúci
-    expect(planVocabularyIssues([{ type: "CUT" }, { type: "MAGIC" }]).length).toBe(1);
+    expect(planVocabularyIssues([{ type: "CUT" }, { type: "MAGIC" as any }]).length).toBe(1);
   });
 
   test("neznámy režim padá na CUSTOM, nie na vymyslený režim", () => {
