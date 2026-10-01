@@ -69,9 +69,38 @@ s prepisom“ musí dodať používateľka; appka ich spočíta, keď ich nahrá
 
 ## 5. Čo zostáva
 
-1. **Časovanie z reálneho prepisu** — keď používateľka nahrá 30+ videí a spustí prepis
-   (Whisper je v projekte WIRED), mapa bude mať presné časy pasáží, nie len text.
-2. **Vizuálna zložka rozhodnutia** — dnes mapa hodnotí text; „slabá pointa“ môže byť vizuálne
-   silná (a naopak). Vizuálne metriky má krok 30b (`frameMetrics`), prepojenie je krok 3+.
-3. **UI Použité/Nepoužité/WHY NOT** (krok 3 podľa poradia) — Content Map je hotová, ale
-   samostatná obrazovka s filtrami a prenosom do timeline ešte nie.
+1. **Časovanie z reálneho prepisu** — pri konkrétnom projekte závisí od dostupných tituliek/prepisu;
+   Content Map nevytvára transcript a časy si nevymýšľa.
+2. **Vizuálna zložka rozhodnutia** — mapa dnes vyhodnocuje text, nie obraz; vizuálne metriky má krok 30b
+   (`frameMetrics`), no ich prepojenie s výberom pasáží ešte nie je hotové.
+3. **Prenos návrhu do timeline** — Content Map je read-only. Nič tu nie je „aplikované“ a táto obrazovka
+   zatiaľ nevytvára `EditDecision[]` ani nemení canonical timeline.
+
+## 6. Krok 3 — prehľad Odporúčané / Nepoužité / WHY NOT
+
+Krok 3 pridáva samostatnú kartu v existujúcom **Media Intelligence Inspector** (nie nový editor ani
+nový timeline): `src/components/ContentMapReview.tsx`.
+
+- Filtre: všetko, odporúčané pasáže, médiá bez použiteľných pasáží a WHY NOT.
+- Ďalšie filtre: rola, zdroj/text/dôvod vyhľadávanie; WHY NOT možno zúžiť na opakovanie, slabú pointu
+  alebo chýbajúci text.
+- `whyNotList()` dodáva počet vyradených pasáží; médium bez tituliek sa zobrazuje oddelene ako
+  **NEMÁ DÁTA / neposúdené**, nie ako obsahovo nevhodné.
+- Zoznam sa dávkuje po 40 položkách, aby veľký projekt nevykreslil všetky pasáže naraz.
+- Viditeľné upozornenie: ide o **návrh**, nie o stav canonical timeline. Žiadne Apply, CommandManager
+  ani timeline mutácie sa v tomto kroku nepridávajú.
+- Výber cieľa sám mapu nepočíta; nový cieľ sa použije až po kliknutí na výpočet. Chyba výpočtu sa
+  zobrazí používateľovi a nevymaže predchádzajúcu mapu.
+
+### Dôkazy kroku 3
+
+- `tests/contentMapReview.test.tsx`: **9 pass / 0 fail, 32 assertions**; čisté testy filtrov a SSR
+  vykreslenia pokrývajú chýbajúci prepis, WHY NOT typy, vyhľadávanie, roly, click-only stav a chybu.
+- Full `bun test`: **893 pass / 13 skipped / 0 fail** (906 testov, 41 súborov, 4 237 assertions).
+  13 end-to-end testov je označených skip v existujúcej sade; nie sú to browser testy tohto UI.
+- `bun run lint`: TypeScript bez chýb. `bun run build`: exit 0; Vite vypísal upozornenia na `__dirname`
+  v configu, veľkosť chunkov a ineffective dynamic import.
+- Dev server: HTTP 200 na `/`; Vite servoval oba moduly (`MediaIntelligenceInspector.tsx`,
+  `ContentMapReview.tsx`) s HTTP 200. Toto je **runtime serving**, nie kliknutie v prehliadači.
+- **UI SSR VERIFIED; BROWSER VERIFIED — NOT VERIFIED.** Filter kliknutia v reálnom prehliadači,
+  skutočné dáta používateľkinho 30-videového projektu a reálny export z tohto prehľadu sa netvrdia.
