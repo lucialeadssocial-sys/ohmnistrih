@@ -1,0 +1,86 @@
+==============================================================================
+KROK 1 — REAL-MEDIA DÔKAZ: lokálna AI (sémantika viet + VAD)
+==============================================================================
+model: Xenova/paraphrase-multilingual-MiniLM-L12-v2 (dtype q8)
+
+— MODEL —
+stav ................................. READY (Sémantický model pripravený)
+načítanie ............................ 1.1 s
+kvalita .............................. MEASURED
+dimenzie vektora ..................... 384
+
+— PRAH NA SLOVENSKÝCH VETÁCH (merané, nie odhadnuté) —
+parafrázy (4 dvojice) ................ priemer 0.815 · najnižšia 0.790
+nesúvisiace (4 dvojice) .............. priemer 0.169 · najvyššia 0.284
+odstup ............................... 0.506
+nastavený prah ....................... 0.53
+prah oddelí obe skupiny .............. ÁNO
+
+— DETERMINIZMUS —
+dva behy dávajú rovnaké vektory ....... ÁNO
+
+— REÁLNY PREPIS (to isté médium ako kroky 16–18) —
+slová ................................ 48
+viet/pasáží (delenie podľa interpunkcie a pauzy) 6
+kvalita indexu ....................... MEASURED
+namerané opakovania .................. 0
+jedinečných pasáží ................... 6 / 6
+  (v tomto prepise sa neopakuje tá istá myšlienka — nekryjem to tvrdením)
+hľadanie podľa významu („tržby a predaj“): 1 zásahov
+  • 0.349 — „Za päť minút ti ukážem, ako som za jeden mesiac zdvojnásobil predaj.…“
+
+— REÁLNY KORPUS 12 VIDEÍ (naprieč médiami) —
+videí ................................ 12
+viet/pasáží .......................... 103
+kvalita indexu ....................... MEASURED
+NAJDENÉ OPAKOVANIA (to isté povedané inak) ... 51
+  • video 01: v01s2 opakuje v01s0 v tom istom videe (zhoda významu 63 %) — neprináša nový význam.
+  • video 01: v01s4 opakuje v01s0 v tom istom videe (zhoda významu 65 %) — neprináša nový význam.
+  • video 01: v01s5 opakuje v01s2 v tom istom videe (zhoda významu 64 %) — neprináša nový význam.
+  • video 03 opakuje video 01 (zhoda významu 87 %) — neprináša nový význam.
+  • video 06 opakuje video 01 (zhoda významu 81 %) — neprináša nový význam.
+  • video 10 opakuje video 01 (zhoda významu 93 %) — neprináša nový význam.
+  • video 11 opakuje video 01 (zhoda významu 90 %) — neprináša nový význam.
+  • video 03: v03s3 opakuje v03s0 v tom istom videe (zhoda významu 55 %) — neprináša nový význam.
+videí s opakujúcim sa obsahom ......... 10 / 12
+jedinečných pasáží ................... 52 / 103
+
+— BEZ MODELU (poctivosť) —
+kvalita .............................. NOT_AVAILABLE
+dôvod ................................ Lokálny embedding model nie je pripojený — porovnanie významu sa nemeria.
+segmenty ............................. 0 (žiadny hash vektor)
+
+— VAD NA REÁLNOM ZVUKU —
+súbor ................................ /home/user/real-media/real_speech.mp4
+ffmpeg silencedetect (nezávislé) ..... 4 úsekov, spolu 1.48 s
+najdlhšie ticho ...................... 0.51 s
+Poznámka: náš VAD beží cez WebAudio (RMS) a je overený v prehliadači, nie tu.
+Porovnanie oboch meraní patrí do kroku 4 (meranie zvuku, LUFS/silence).
+
+— VÝSLEDOK —
+OK    model vracia vektory (nie prázdno) — 384 dimenzií
+OK: model vracia vektory (nie prázdno) — 384 dimenzií
+OK    prah oddelí parafrázy od nesúvisiacich (na reálnych SK vetách) — parafrázy ≥ 0.790 > 0.53 > 0.284 ≥ nesúvisiace
+OK: prah oddelí parafrázy od nesúvisiacich (na reálnych SK vetách) — parafrázy ≥ 0.790 > 0.53 > 0.284 ≥ nesúvisiace
+OK    dva behy = rovnaké vektory — rovnaký vstup, rovnaký model
+OK: dva behy = rovnaké vektory — rovnaký vstup, rovnaký model
+OK    index z reálneho prepisu je MEASURED — 6 pasáží
+OK: index z reálneho prepisu je MEASURED — 6 pasáží
+OK    hľadanie podľa významu nájde pasáž bez doslovnej zhody — najlepšia zhoda 0.349
+OK: hľadanie podľa významu nájde pasáž bez doslovnej zhody — najlepšia zhoda 0.349
+OK    žiadne opakovanie pod prahom — 0 pod prahom
+OK: žiadne opakovanie pod prahom — 0 pod prahom
+OK    na reálnom korpuse 12 videí sa nájde opakovanie (podklad pre WHY NOT) — 51× · „video 01: v01s2 opakuje v01s0 v tom istom videe (zhoda významu 63 %) — neprináša nový význam.“
+OK: na reálnom korpuse 12 videí sa nájde opakovanie (podklad pre WHY NOT) — 51× · „video 01: v01s2 opakuje v01s0 v tom istom videe (zhoda významu 63 %) — neprináša nový význam.“
+OK    opakovania sú naprieč RÔZNYMI médiami (nie v jednej vete) — 15 dvojíc
+OK: opakovania sú naprieč RÔZNYMI médiami (nie v jednej vete) — 15 dvojíc
+OK    bez modelu vráti NOT_AVAILABLE + dôvod (nič sa nedomýšľa) — Lokálny embedding model nie je pripojený — porovnanie významu sa nemeria.
+OK: bez modelu vráti NOT_AVAILABLE + dôvod (nič sa nedomýšľa) — Lokálny embedding model nie je pripojený — porovnanie významu sa nemeria.
+OK    zlyhanie modelu = NOT_AVAILABLE, nie náhradný vektor — Embedding model zlyhal (simulované zlyhanie modelu) — nič sa nedomýšľa.
+OK: zlyhanie modelu = NOT_AVAILABLE, nie náhradný vektor — Embedding model zlyhal (simulované zlyhanie modelu) — nič sa nedomýšľa.
+OK    nezávislé ffmpeg meranie ticha existuje — 4 úsekov (1.48 s)
+OK: nezávislé ffmpeg meranie ticha existuje — 4 úsekov (1.48 s)
+
+Úroveň dôvodu: REAL MODEL + REAL MEDIA VERIFIED pre sémantiku viet (model bol naozaj načítaný).
+NIE JE BROWSER VERIFIED: v prehliadači beží ten istý kód, ale musí ho otvoriť používateľ.
+Úroveň dôvodu: REAL MODEL + REAL MEDIA VERIFIED pre sémantiku viet; BROWSER VERIFIED nie.

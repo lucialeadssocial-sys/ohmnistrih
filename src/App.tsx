@@ -29,6 +29,7 @@ import { TimelineControls } from "./components/TimelineControls";
 import { FeatureToggles } from "./components/FeatureToggles";
 import { ErrorDebuggerOverlay } from "./components/ErrorDebuggerOverlay";
 import { detectHardcodedSubtitles } from "./utils/videoInpainter";
+import { wireLocalAIToMediaIndex } from "./ai/wireLocalAI";
 import { AnimatePresence } from "motion/react";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { AIJobQueue, ProxyQuality, generateProxyJob, LastSeekWinsCoordinator, InstantMediaRegistry, ResourceManager } from "./utils/performanceEngine";
@@ -1260,6 +1261,19 @@ function MainApp() {
    */
   const timelineMeasurement = useMemo(() => measureProject(coreEngine.getProject()), [projectVersion]);
   const [aiStatusLevel, setAiStatusLevel] = useState<string>("AI AVAILABLE");
+
+  /**
+   * KROK 1 — napojenie lokálnej AI na analýzu médií (jedno miesto, nič potichu).
+   * Embeddingy dávajú porovnanie VÝZNAMU (Content Map, „prečo nie“), prepis berie
+   * titulky z projektu. Keď model nie je k dispozícii, index vráti NOT_AVAILABLE
+   * s dôvodom — appka to musí povedať nahlas.
+   */
+  useEffect(() => {
+    const report = wireLocalAIToMediaIndex(() => coreEngine.getProject());
+    if (report.embeddingQuality === "NOT_AVAILABLE") {
+      console.warn("[Krok 1] Lokálna AI (sémantika) nedostupná:", report.reasonSk);
+    }
+  }, []);
 
   useEffect(() => {
     const unsubscribe = aiOrchestrator.subscribe((state) => {
