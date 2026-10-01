@@ -1,0 +1,61 @@
+==============================================================================
+KROK 2 — REAL-DATA DÔKAZ: Content Map naprieč médiami
+==============================================================================
+zdroj textov ......................... popisy-tiktok.json (popisy videí, NIE prepis reči)
+médiá ................................ 13
+pasáže ............................... 109
+
+sémantický model ..................... MEASURED
+
+CIEĽ: Pozornosť / dosah (REACH) — cieľ určuje používateľka, mapa len počíta
+
+— SÚHRN (presne to, čo vidí používateľka) —
+Použiteľné 12/13; hook video 03 (čas sa nedá určiť — pasáž nemá časovanie); 89 vyradených (50 opakovanie, 39 slabá pointa); 1 nepoužitých.
+
+— ROLE —
+OTVORENIE 1 · TELO 0 · PRODUKT 18 · DÔKAZ 0 · ZÁVER 1 · NEPOUŽIŤ 89
+
+— „PREČO NIE“ (vzorka) —
+  • veta s2 opakuje vetu s0 v tom istom videe (zhoda významu 63 %) — neprináša nový význam.
+  • slabá pointa — relatívna relevance 0 % je pod prahom 25 % (žiadny zásah cieľa sa nenašiel).
+  • veta s4 opakuje vetu s0 v tom istom videe (zhoda významu 65 %) — neprináša nový význam.
+  • veta s5 opakuje vetu s2 v tom istom videe (zhoda významu 64 %) — neprináša nový význam.
+  • slabá pointa — relatívna relevance 7 % je pod prahom 25 % (zásah cieľa: záver videa).
+  • slabá pointa — relatívna relevance 19 % je pod prahom 25 % (zásah cieľa: číslo vo vete: 0, 2).
+  • slabá pointa — relatívna relevance 19 % je pod prahom 25 % (zásah cieľa: číslo vo vete: 5).
+  • slabá pointa — relatívna relevance 0 % je pod prahom 25 % (žiadny zásah cieľa sa nenašiel).
+
+— MÉDIÁ —
+  video 01               použiteľné  2 /  7 pasáží · vyradené 5 · MEASURED
+  video 02               použiteľné  2 /  3 pasáží · vyradené 1 · MEASURED
+  video 03               použiteľné  1 /  5 pasáží · vyradené 4 · MEASURED
+  video 04               použiteľné  2 /  6 pasáží · vyradené 4 · MEASURED
+  video 05               použiteľné  4 / 22 pasáží · vyradené 18 · MEASURED
+  video 06               použiteľné  1 /  9 pasáží · vyradené 8 · MEASURED
+  video 07               použiteľné  1 /  4 pasáží · vyradené 3 · MEASURED
+  video 08               použiteľné  2 / 22 pasáží · vyradené 20 · MEASURED
+  video 09               použiteľné  1 /  9 pasáží · vyradené 8 · MEASURED
+  video 10               použiteľné  0 / 11 pasáží · vyradené 11 · MEASURED
+  video 11               použiteľné  1 /  3 pasáží · vyradené 2 · MEASURED
+  video 12               použiteľné  1 /  2 pasáží · vyradené 1 · MEASURED
+  video R (prepis reči)  použiteľné  2 /  6 pasáží · vyradené 4 · MEASURED
+
+— VÝSLEDOK —
+OK    mapa má súhrn v tvare zo zadania — Použiteľné 12/13; hook video 03 (čas sa nedá určiť — pasáž nemá časovanie); 89 vyradených (50 opakovanie, 39 slabá pointa); 1 nepoužitých.
+OK: mapa má súhrn v tvare zo zadania — Použiteľné 12/13; hook video 03 (čas sa nedá určiť — pasáž nemá časovanie); 89 vyradených (50 opakovanie, 39 slabá pointa); 1 nepoužitých.
+OK    hook je konkrétne médium (alebo priznaná nemožnosť) — video 03 (čas sa nedá určiť — pasáž nemá časovanie)
+OK: hook je konkrétne médium (alebo priznaná nemožnosť) — video 03 (čas sa nedá určiť — pasáž nemá časovanie)
+OK    každá vyradená pasáž má vysvetlenie — 89 vyradených
+OK: každá vyradená pasáž má vysvetlenie — 89 vyradených
+OK    opakovanie sa meria (nie odhaduje) — Opakovanie merané lokálnym modelom na 109 pasážach.
+OK: opakovanie sa meria (nie odhaduje) — Opakovanie merané lokálnym modelom na 109 pasážach.
+OK    každá pasáž má práve jednu rolu a dôvod — 109 pasáží
+OK: každá pasáž má práve jednu rolu a dôvod — 109 pasáží
+OK    determinizmus (druhý beh = rovnaká mapa) — kontroluje sa druhým behom nižšie
+OK: determinizmus (druhý beh = rovnaká mapa) — kontroluje sa druhým behom nižšie
+
+Úroveň dôvodu: REAL DATA VERIFIED pre obsahovú mapu (reálne texty reálneho tvorcu, reálny model).
+POZOR: texty sú POPISY videí, nie prepis reči — časovanie preto chýba a hook to priznáva.
+Pre 30+ surových videí s prepisom treba reálne dáta používateľky (appka ich spočíta, keď ich nahrá).
+Úroveň dôvodu: REAL DATA VERIFIED (popisy videí + reálny model); časovanie z popisov sa neberie.
+Pre 30+ surových videí s prepisom treba reálne dáta používateľky.

@@ -6,6 +6,16 @@
 import React, { useState, useEffect } from 'react';
 import { useCoreProject } from '../core';
 import {
+  buildContentMap,
+  whyNotList,
+  USAGE_ROLE_LABELS_SK,
+  type ContentMap,
+} from '../core/media/contentMap';
+import { splitIntoSentences } from '../core/media/mediaIntelligenceIndex';
+import { VIDEO_GOALS, type VideoGoalId } from '../core/style/videoGoal';
+import { localEmbeddingProvider } from '../ai/providers/LocalEmbeddingProvider';
+import { transcriptFromProject } from '../ai/wireLocalAI';
+import {
   mediaIntelligenceEngine,
   MediaAnalysisIndex,
   INITIAL_MEDIA_INDEX,
@@ -22,6 +32,14 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
   const [indexData, setIndexData] = useState<MediaAnalysisIndex | null>(null);
 
   const [isRunning, setIsRunning] = useState(false);
+  /**
+   * KROK 2 — Content Map naprieč médiami (read-only pohľad, nič nemení).
+   * Počíta sa LEN na kliknutie: beh modelu na všetky médiá naraz nie je niečo,
+   * čo sa má spúšťať pri každom otvorení panela (výkon).
+   */
+  const [contentMap, setContentMap] = useState<ContentMap | null>(null);
+  const [isMapRunning, setIsMapRunning] = useState(false);
+  const [mapGoal, setMapGoal] = useState<VideoGoalId>('PREDAJ');
   const [currentTaskName, setCurrentTaskName] = useState('');
   const [overallProgress, setOverallProgress] = useState(0);
 
@@ -62,6 +80,49 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
       console.error('[MediaInspector] Analysis error:', e);
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  /**
+   * Content Map: obsah kažného média v projekte + 9 cieľov na výber.
+   * Zdroj textu = TITULKY V PROJEKTE (reálne dáta, ktoré používateľka má).
+   * Médium bez tituliek sa nezahmlieva — dostane dôvod.
+   */
+  const handleBuildContentMap = async () => {
+    setIsMapRunning(true);
+    try {
+      const media = project.assets.map((asset) => {
+        const transcript = transcriptFromProject(project, asset.id);
+        if (!transcript) {
+          return {
+            assetId: asset.id,
+            sourceLabel: asset.name || asset.id,
+            durationSec: asset.duration ?? null,
+            segments: [],
+            unavailableSk: 'v projekte nie sú titulky pre toto médium — obsah sa nedá posúdiť',
+          };
+        }
+        const sentences = splitIntoSentences(transcript.words);
+        return {
+          assetId: asset.id,
+          sourceLabel: asset.name || asset.id,
+          durationSec: asset.duration ?? null,
+          segments: sentences.map((sen, i) => ({ id: `s${i}`, text: sen.text, start: sen.start, end: sen.end })),
+        };
+      });
+
+      const quality = localEmbeddingProvider.getQuality();
+      const map = await buildContentMap({
+        media,
+        goalId: mapGoal,
+        embed: quality.quality === 'MEASURED' ? (texts) => localEmbeddingProvider.embedBatch(texts) : null,
+      });
+      setContentMap(map);
+    } catch (e) {
+      console.error('[ContentMap] výpočet zlyhal:', e);
+      setContentMap(null);
+    } finally {
+      setIsMapRunning(false);
     }
   };
 
@@ -342,6 +403,107 @@ export const MediaIntelligenceInspector: React.FC<{ isOpen: boolean; onClose: ()
                 </h3>
 
                 <div className="space-y-2 text-xs">
+                  {/* KROK 2 — CONTENT MAP NAPRIEČ MÉDIAMI (read-only) */}
+                  <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-zinc-200">Content Map naprieč médiami</div>
+                        <div className="text-[11px] text-zinc-500">
+                          Ktoré médium je na čo použiteľné a PREČO NIE — z tituliek v projekte. Relevance je
+                          <span className="text-zinc-400"> relatívna</span> (poradie v tejto sade), nie kalibrované skóre.
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={mapGoal}
+                          onChange={(e) => setMapGoal(e.target.value as VideoGoalId)}
+                          className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-200"
+                        >
+                          {Object.values(VIDEO_GOALS).map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.emoji} {g.labelSk}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleBuildContentMap}
+                          disabled={isMapRunning || project.assets.length === 0}
+                          className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-xs font-medium text-white"
+                        >
+                          {isMapRunning ? 'Počítam…' : 'Vypočítať Content Map'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {contentMap ? (
+                      <div className="space-y-3">
+                        <div className="p-3 rounded-lg bg-purple-950/30 border border-purple-800/60 text-xs text-purple-100">
+                          {contentMap.summarySk}
+                        </div>
+                        <div className="text-[11px] text-zinc-400">
+                          {contentMap.semanticQuality === 'MEASURED' ? (
+                            <>Opakovanie: <span className="text-emerald-400">NAMERANÉ</span> — {contentMap.semanticReasonSk}</>
+                          ) : (
+                            <span className="text-amber-300">
+                              Opakovanie sa NEMERALO — {contentMap.semanticReasonSk} Mapa preto neuvádza ani jeden dôvod „opakuje“.
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          {contentMap.rows.map((row) => (
+                            <div key={row.assetId} className="p-2.5 rounded-lg bg-zinc-900/60 border border-zinc-800">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-200">{row.sourceLabel}</span>
+                                <span className="text-zinc-500">
+                                  použiteľné {row.usableSegments}/{row.segments.length} pasáží
+                                </span>
+                              </div>
+                              {row.quality === 'NOT_AVAILABLE' ? (
+                                <div className="mt-1 text-[11px] text-amber-300">NEMÁ DÁTA — {row.reasonSk}</div>
+                              ) : (
+                                <div className="mt-1 space-y-1">
+                                  {row.segments.map((seg) => (
+                                    <div key={seg.id} className="flex items-start gap-2 text-[11px]">
+                                      <span
+                                        className={`shrink-0 px-1.5 py-0.5 rounded ${
+                                          seg.role === 'OMIT'
+                                            ? 'bg-amber-950/50 text-amber-300 border border-amber-900/60'
+                                            : seg.role === 'OPEN'
+                                              ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-900/60'
+                                              : 'bg-zinc-800 text-zinc-300'
+                                        }`}
+                                      >
+                                        {USAGE_ROLE_LABELS_SK[seg.role]}
+                                      </span>
+                                      <span className="text-zinc-400">
+                                        „{seg.text.length > 90 ? `${seg.text.slice(0, 90)}…` : seg.text}“ — {seg.whySk}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {whyNotList(contentMap, 6).length > 0 && (
+                          <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-900/50 text-[11px] text-amber-200 space-y-1">
+                            <div className="font-semibold">Prečo nie (vzorka)</div>
+                            {whyNotList(contentMap, 6).map((w, i) => (
+                              <div key={i}>• {w}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-zinc-500">
+                        Mapa sa ešte nepočítala. Klikni na „Vypočítať Content Map“ — použijú sa titulky z projektu
+                        (médium bez tituliek dostane dôvod, nič sa nedomýšľa).
+                      </div>
+                    )}
+                  </div>
+
                   {indexData.dataQuality?.semantic_units === 'NOT_AVAILABLE' || !(indexData.semanticUnits?.length > 0) ? (
                     <div className="p-4 bg-amber-950/20 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-1">
                       <div className="font-semibold flex items-center gap-2">
